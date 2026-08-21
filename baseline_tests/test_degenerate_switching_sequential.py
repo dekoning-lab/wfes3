@@ -36,6 +36,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BIN_DIR = os.path.join(REPO_ROOT, "wfes-cli", "build-cx2", "bin")
@@ -287,6 +288,24 @@ def is_number(token):
         return False
 
 
+def write_initial_distribution(tmpdir, n_states, active_index=0):
+    """A minimal, valid --initial file: a delta function on one state.
+
+    load_csv_col_vector (wfes-lib/source/utils/parsing.cpp) reads one
+    probability per line, no header. The delta sums to exactly 1.0 so
+    load_initial_distribution's own renormalisation warning -- whose message
+    is "...renormalising", which also contains the substring "normalis" --
+    never fires; a file that merely summed close to 1 would make the
+    no-warning assertion below ambiguous between "the -p warning correctly
+    stayed silent" and "the --initial warning fired instead".
+    """
+    path = os.path.join(tmpdir, "initial_%d.csv" % n_states)
+    with open(path, "w") as f:
+        for i in range(n_states):
+            f.write("1.0\n" if i == active_index else "0.0\n")
+    return path
+
+
 def check_csv_header(r, what, empty_ok=()):
     """Check header/data shape: a header line, then data line(s) with one
     field per header column -- counted by splitting on ',', which counts
@@ -347,6 +366,43 @@ def test_csv_output_has_a_header():
           "sequential --starting-copies -p 1,1 --csv: "
           "no renormalisation warning for an unused -p", context(r))
     check_csv_header(r, "sequential --starting-copies --csv", empty_ok=("p0", "p1"))
+
+    # --initial is the other -p-replacing rule (see
+    # test_json_parameters_record_the_values_used above), and it covers both
+    # tools: it supplies a whole distribution over the concatenated state
+    # space, so -p is equally dead input here -- same schema fix, different
+    # trigger. -p 1,1 is included as dead input for the same reason as the
+    # --starting-copies case above: it would normally warn about
+    # renormalising a vector that summed to 2, and must not, because
+    # --initial means the run never reads it.
+    #
+    # wfes_switching --fixation --initial spans the concatenated states of
+    # all models, counts 0..2N_i-1 per model: 2*sum(N_i) = 2*(8+8) = 32 for
+    # SWITCHING_BASE (wfes_switching_main.cpp FIXATION branch, `llong size =
+    # (2 * population_sizes.sum())`). wfes_sequential --initial spans the
+    # concatenated TRANSIENT states of all epochs: 2*sum(N_i) - n_models =
+    # 32 - 2 = 30 for SEQUENTIAL_BASE (wfes_sequential_main.cpp, `llong size
+    # = (2 * population_sizes.sum()) - n_models`) -- the same BOTH_ABSORBING
+    # count switching's own --absorption branch uses.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        switching_initial = write_initial_distribution(tmpdir, 32)
+        r = run("wfes_switching",
+                ["--fixation"] + SWITCHING_BASE +
+                ["--initial", switching_initial, "-p", "1,1", "--csv"])
+        check("normalis" not in r.stderr.lower(),
+              "switching --fixation --initial --csv: "
+              "no renormalisation warning for an unused -p", context(r))
+        check_csv_header(r, "switching --fixation --initial --csv",
+                         empty_ok=("p0", "p1"))
+
+        sequential_initial = write_initial_distribution(tmpdir, 30)
+        r = run("wfes_sequential",
+                SEQUENTIAL_BASE +
+                ["--initial", sequential_initial, "-p", "1,1", "--csv"])
+        check("normalis" not in r.stderr.lower(),
+              "sequential --initial --csv: "
+              "no renormalisation warning for an unused -p", context(r))
+        check_csv_header(r, "sequential --initial --csv", empty_ok=("p0", "p1"))
 
 
 # ---------------------------------------------------------------------------
