@@ -420,7 +420,33 @@ function setupIpcHandlers(): void {
         alpha: firstFinite(params.alpha, 1e-20),
         n_threads: threadCount(params.n_threads, params.numThreads),
         integration_cutoff: firstFinite(params.integration_cutoff, params.integrationCutoff, 1e-10),
-        starting_copies: firstFinite(params.starting_copies, params.startingCopies)
+        starting_copies: firstFinite(params.starting_copies, params.startingCopies),
+        // Everything below was collected by the view, printed in its copyable
+        // preview, and then dropped here.
+        //
+        // --force and --library are the two the run actually noticed: ticking
+        // Force did nothing, and choosing a solver library other than the
+        // platform default silently ran the default instead, while the preview
+        // named the chosen one. Both flags exist on wfes_sweep.
+        force: params.force ?? false,
+        library: params.library,
+        // The sweep view is fixation-only today (modelType is a constant), so
+        // this changes no command line; it is forwarded because a handler that
+        // drops what the view sends is how the two above went unnoticed.
+        model_type: params.model_type,
+        // The write flags. Forwarding them does not yet emit --output-Q/R/N/B:
+        // the builder reads output_options.writeQ..writeB while the view sends
+        // these flat keys, a key-map mismatch left for the reconciliation task.
+        // The handler is now transparent, which that task needs.
+        output_Q: params.output_Q,
+        output_R: params.output_R,
+        output_N: params.output_N,
+        output_B: params.output_B
+        // params.solver is deliberately NOT forwarded: no WFES binary declares
+        // --solver (wfes_sweep_main.cpp lists no such flag, and passing one is
+        // a fatal parse error), which is why the phase-type handler drops it
+        // too. Forwarding it would arm exactly that abort for whichever future
+        // change teaches the builder to read it.
       }
       
       // Execute using backend service
@@ -744,8 +770,21 @@ function setupIpcHandlers(): void {
         backward_mutations: params.backward_mutations,
         forward_mutations: params.forward_mutations,
         starting_probabilities: params.starting_probabilities,
+        // The fixed starting count. Dropped here until now: the view sends it,
+        // the builder emits --starting-copies from it and the copyable preview
+        // printed it, but it never crossed this boundary -- so choosing "Fixed
+        // p" ran the integration over starting copies instead, and the numbers
+        // on screen belonged to a model the user had not asked for. At N =
+        // 100/1000 with p = 50 that is P_fix = 0.000537 reported where the
+        // requested model gives 0.0422, a factor of 79.
+        starting_copies: firstFinite(params.starting_copies),
         alpha: firstFinite(params.alpha, 1e-20),
-        integration_cutoff: firstFinite(params.integration_cutoff, 1e-10),
+        // No 1e-10 fallback. The parser's own default is 1e-10, so omitting
+        // the flag computes the identical model -- but injecting it here put
+        // --integration-cutoff into every command line, including the fixed-p
+        // and initial-file runs whose preview does not show it. The cutoff is
+        // now sent only by the view, and only in the mode that integrates.
+        integration_cutoff: firstFinite(params.integration_cutoff),
         n_threads: threadCount(params.execution_options?.threads),
         library: params.execution_options?.library || 'Accelerate',
         force: params.execution_options?.force || false,

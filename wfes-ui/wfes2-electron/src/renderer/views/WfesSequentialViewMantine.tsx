@@ -239,6 +239,35 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
     setEpochs(newEpochs)
   }
   
+  /**
+   * The two starting-state flags, resolved in one place and read by BOTH the
+   * parameters sent over IPC and the command-line preview, so the two cannot
+   * describe different models.
+   *
+   * They are mutually exclusive, matching the CLI's own precedence
+   * (--initial, then --starting-copies, then the integration over starting
+   * copies): "Fixed p" sends a count and no cutoff, "Integrate over p" sends
+   * the cutoff and no count, and a custom distribution file sends neither.
+   * This view previously sent -c in every mode while showing --starting-copies
+   * in the preview, so choosing "Fixed p" advertised one model and ran
+   * another.
+   */
+  const startingCopiesArg = (): number | undefined => {
+    if (initialMode !== 'fixed') return undefined
+    const p = parseInt(startingCopies)
+    return Number.isFinite(p) ? p : undefined
+  }
+
+  /**
+   * 1e-10 is the parser's own default for -c and this view offers no cutoff
+   * field, so integrating means integrating at that default -- and the
+   * file and fixed-count modes, which do not integrate at all, omit the flag
+   * rather than passing a value the run ignores or, worse, a value the preview
+   * does not mention.
+   */
+  const integrationCutoffArg = (): number | undefined =>
+    initialMode === 'integrate' ? 1e-10 : undefined
+
   const handleExecute = async () => {
     setIsExecuting(true)
     setProgress(0)
@@ -289,9 +318,9 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
         dominance_coefficients: dominanceCoeffs,
         backward_mutations: backwardMutations,
         forward_mutations: forwardMutations,
-        starting_copies: initialMode === 'fixed' ? parseInt(startingCopies) : undefined,
+        starting_copies: startingCopiesArg(),
         alpha: parseFloat(alpha) || 1e-20,
-        integration_cutoff: 1e-10,
+        integration_cutoff: integrationCutoffArg(),
         output_options: outputOptions,
         execution_options: executionOptions
       }
@@ -456,8 +485,12 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
     parts.push(`--dominance ${epochs.map(e => parseFloat(e.h) || 0.5).join(',')}`)
     parts.push(`--backward-mu ${epochs.map((e, i) => raw(e.u, 4, i)).join(',')}`)
     parts.push(`--forward-mu ${epochs.map((e, i) => raw(e.v, 4, i)).join(',')}`)
-    if (initialMode === 'fixed') parts.push(`--starting-copies ${parseInt(startingCopies) || 1}`)
-    parts.push(`--integration-cutoff 1e-10`)
+    // Same two helpers the run reads, so the preview cannot promise a flag the
+    // run omits (or omit one it passes).
+    const startingCopiesFlag = startingCopiesArg()
+    if (startingCopiesFlag !== undefined) parts.push(`--starting-copies ${startingCopiesFlag}`)
+    const integrationCutoffFlag = integrationCutoffArg()
+    if (integrationCutoffFlag !== undefined) parts.push(`--integration-cutoff ${integrationCutoffFlag}`)
     parts.push(`--alpha ${parseFloat(alpha) || 1e-20}`)
     parts.push(`--num-threads ${executionOptions.threads}`)
     const dir = (outputOptions as any).outputDirectory || '~/Downloads'
