@@ -85,12 +85,15 @@ Only fixation is absorbing; calculates substitution rates.
   refused unless `--force` is given. At the 1e-20 default this is not a no-op: for N=100 it stores 23,015 of the 39,601 entries a fully dense row set would hold, discarding 42% of the entries while removing at most 1e-20 of the mass from each row.
 - `-i, --initial <path>`: Initial state distribution, as a CSV column of sum over models of (2N_i - 1) probabilities over the concatenated transient states of all models. It replaces however the starting state would otherwise be set -- a fixed count, or the integration over the copy numbers a new mutation produces -- and is renormalised if it does not sum to 1. A point mass reproduces the corresponding fixed-count run exactly.
 - `-c, --integration-cutoff <float>`: Starting-copy integration cutoff (default:
-  1e-10). When the starting state is not fixed with `-p`, the solver integrates
-  over the number of copies a new mutation produces. That distribution is the
-  zero-copy row of the transition matrix conditioned on at least one copy
-  arising, and this cutoff truncates its tail: starting copy numbers whose
-  probability falls below it are not integrated over. It has no effect when `-p`
-  is given, or when the forward mutation rate is zero.
+  1e-10). Unless the starting state is fixed with `-i, --initial` (a point
+  mass), the solver integrates over the number of copies a new mutation
+  produces. That distribution is the zero-copy row of the transition matrix
+  conditioned on at least one copy arising, and this cutoff truncates its
+  tail: starting copy numbers whose probability falls below it are not
+  integrated over. It has no effect when `-i` is given, or when the forward
+  mutation rate is zero. (`-p, --starting-prob` sets the distribution over
+  which *state* the population starts in — a different thing from the
+  starting copy number within a state.)
 
 ### Execution Parameters
 - `--num-threads <int>`: Number of threads

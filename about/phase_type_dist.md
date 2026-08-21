@@ -65,18 +65,16 @@ From the phase-type distribution:
   cut rather than a floor on individual entries -- at the default, stored entries
   as small as 1e-43 remain. Raising it makes the matrix sparser and the solve
   faster while discarding real probability mass; values much above 1e-3 are
-  refused unless `--force` is given. At the 1e-20 default this is not a no-op: for N=100 it stores 23,015 of the 39,601 entries a fully dense row set would hold, discarding 42% of the entries while removing at most 1e-20 of the mass from each row.
+  refused outright, with no override flag to bypass that check. At the 1e-20 default this is not a no-op: for N=100 it stores 23,015 of the 39,601 entries a fully dense row set would hold, discarding 42% of the entries while removing at most 1e-20 of the mass from each row.
 - `-i, --initial <path>`: Initial state distribution, as a CSV column of 2N probabilities over allele counts 0..2N-1 in the fixation-only model. It replaces however the starting state would otherwise be set -- a fixed count, or the integration over the copy numbers a new mutation produces -- and is renormalised if it does not sum to 1. A point mass reproduces the corresponding fixed-count run exactly.
 
   (Not to be confused with the alpha in the phase-type equations above,
   which is the initial state probability vector.)
-- `-c, --distribution-cutoff <float>`: Stop when CDF reaches this value (default: 0.99999)
-- `-t, --max-t <int>`: Maximum time to compute (default: 1000000)
+- `-d, --distribution-cutoff <float>`: Stop when CDF reaches this value (default: 0.99999). `-c, --integration-cutoff` is a deprecated alias for this same flag in `phase_type_dist` (unlike in the WFES/WFAFS tools, where `--integration-cutoff` instead bounds the starting-copy integration).
+- `-m, --max-t <int>`: Maximum time to compute (default: 1000000)
 
 ### Computational Parameters
-- `--sampling-frequency <int>`: Sample every nth time point for output (default: 1)
 - `--num-threads <int>`: Number of threads
-- `--force`: Skip parameter validation
 - `--library <string>`: Linear algebra backend: `Pardiso` (Intel MKL; the default on Linux), `Accelerate` (the macOS default), `SuiteSparse`, or `ParU` (parallel SuiteSparse). Note that on macOS `Accelerate` names the matrix backend only: matrices are held in Accelerate format, but the LU factorization and solves are performed by SuiteSparse's UMFPACK. Apple's own sparse solver is used only as a build-time fallback when SuiteSparse is not linked. ViennaCL requires OpenCL support not compiled into the shipped binaries.
 
 ### Output Options
@@ -95,9 +93,6 @@ time,P(t),CDF
 3,3.4e-5,6.9e-5
 ...
 ```
-
-### With Sampling Frequency
-If `--sampling-frequency 100` is specified, only every 100th time point is output, reducing file size while maintaining distribution shape.
 
 ### Summary Statistics (stderr)
 ```
@@ -120,14 +115,14 @@ phase_type_dist -N 1000 -s 0.01
 phase_type_dist -N 10000 -u 1e-8 -v 1e-8
 ```
 
-### Nearly neutral with sampling
+### Nearly neutral
 ```bash
-phase_type_dist -N 5000 -s 0.001 -h 0.2 --sampling-frequency 1000
+phase_type_dist -N 5000 -s 0.001 -h 0.2
 ```
 
 ### Extended time range
 ```bash
-phase_type_dist -N 1000 -s 0.0001 -t 100000000 -c 0.999999
+phase_type_dist -N 1000 -s 0.0001 -m 100000000 -c 0.999999
 ```
 
 ### Output to file with matrices
@@ -140,8 +135,7 @@ phase_type_dist -N 500 -s 0.01 --output-P dist.csv --output-Q gen.csv
 1. **Non-Absorbing Extinction**: Key difference from standard time distributions
 2. **Automatic Starting**: Typically starts from 0 copies with mutation
 3. **Matrix Exponential**: Computed using uniformization and scaling methods
-4. **Sampling**: Reduces output size for long distributions
-5. **Numerical Stability**: High precision for rare events and long times
+4. **Numerical Stability**: High precision for rare events and long times
 
 ## Biological Interpretation
 

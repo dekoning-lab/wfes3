@@ -52,7 +52,7 @@ The model tracks three outcomes:
 
 ### Required Parameters (comma-separated lists)
 - `-N, --pop-sizes <int,...>`: Population sizes for each epoch
-- `-G, --generations <int,...>`: Duration in generations for each epoch
+- `-t, --exp-time <float,...>`: Expected duration in generations for each epoch
 
 ### Optional Parameters (comma-separated)
 - `-s, --selection <float,...>`: Selection coefficients (default: all 0)
@@ -78,14 +78,16 @@ The model tracks three outcomes:
   new mutation produces. That distribution is the
   zero-copy row of the transition matrix conditioned on at least one copy
   arising, and this cutoff truncates its tail: starting copy numbers whose
-  probability falls below it are not integrated over. It has no effect when `-p`
-  is given, or when the forward mutation rate is zero.
+  probability falls below it are not integrated over. It has no effect when
+  `--starting-copies` or `--initial` is given, or when the forward mutation
+  rate is zero. (`-p, --starting-prob` sets the distribution over which
+  *epoch* the population starts in — a different thing from the starting
+  copy number.)
 
 ### Execution Parameters
 - `--num-threads <int>`: Number of threads
 - `--force`: Skip parameter validation
 - `--library <string>`: Linear algebra backend: `Pardiso` (Intel MKL; the default on Linux), `Accelerate` (the macOS default), `SuiteSparse`, or `ParU` (parallel SuiteSparse). Note that on macOS `Accelerate` names the matrix backend only: matrices are held in Accelerate format, but the LU factorization and solves are performed by SuiteSparse's UMFPACK. Apple's own sparse solver is used only as a build-time fallback when SuiteSparse is not linked. ViennaCL requires OpenCL support not compiled into the shipped binaries.
-- `--max-t <int>`: Maximum total generations before timeout
 
 ### Output Options
 - `--output-Q <file>`: Write transition matrices
@@ -94,7 +96,9 @@ The model tracks three outcomes:
 - `--output-B <file>`: Write absorption probability matrix
 - `--output-N-ext <file>`: Write expected times to extinction
 - `--output-N-fix <file>`: Write expected times to fixation
+- `--output-N-tmo <file>`: Write expected times to timeout
 - `--csv`: Output in CSV format
+- `--json`: Output in JSON format
 
 ## Output Format
 
@@ -141,7 +145,7 @@ wfes_sequential -N 1000,5000 --exp-time 100,200 -p "0.9,0.1"
 1. **Geometric Timing**: Each epoch's duration is geometrically distributed with mean `--exp-time`; the process leaves epoch i with probability 1/t_i per generation
 2. **No Back-Migration**: Sequential progression only (no returning to previous states)
 3. **Frequency Preservation**: Allele frequencies are maintained during size changes
-4. **Timeout Handling**: Computation stops at max-t generations if no absorption
+4. **Timeout Handling**: There is no generation cap flag; after the final epoch, the process exits to the timeout state (`P_tmo`) at rate 1/`--exp-time` for that epoch, the same geometric mechanism that carries it between earlier epochs
 5. **Memory Efficiency**: Only stores current state, not full trajectory
 
 ## Biological Applications

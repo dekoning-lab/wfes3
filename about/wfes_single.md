@@ -84,7 +84,9 @@ needs the whole matrix, so requesting it computes N in full even when `-p` names
 a single row.
 
 ### 4. Establishment Properties (--establishment)
-Calculates probabilities and times related to allele establishment thresholds.
+Calculates probabilities and times related to allele establishment thresholds,
+defined by `-k, --odds-ratio`: an allele is considered established once the
+odds of eventual fixation over extinction reach this ratio.
 
 ### 5. Allele Age (--allele-age)
 Computes exact moments of the allele age distribution, conditional on the

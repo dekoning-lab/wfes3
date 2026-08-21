@@ -86,8 +86,7 @@ The allele frequency distribution at the final time point is extracted from the 
 
 ### Output Options
 - `--output-Q`: Write transition matrices
-- `--output-R`: Write sampling matrices
-- `--output-SFS <file>`: Write site frequency spectrum
+- `--output-R`: Write absorption matrix (the transient-to-absorbing sub-matrix)
 - `--verbose`: Detailed progress output
 
 ## Output Format
@@ -140,8 +139,7 @@ wfafs_stochastic -N 5000,500,50,1000,10000 -G 200,100,20,200,500 \
 
 ### Starting from specific allele count
 ```bash
-wfafs_stochastic -N 1000,5000,10000 -G 100,500,1000 -f 1,1,1 \
-                -p 10 --output-file afs_output.txt
+wfafs_stochastic -N 1000,5000,10000 -G 100,500,1000 -f 1,1,1 -p 10
 ```
 
 ## Technical Notes

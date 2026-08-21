@@ -58,16 +58,18 @@ $$M(s) = \alpha \, (sI - Q)^{-1} (-Q) \, \mathbf{1}$$
 - `-u, --backward-mu <float>`: Backward mutation rate (default: 1e-9)
 - `-v, --forward-mu <float>`: Forward mutation rate (default: 1e-9)
 
-### Starting Frequency
-- `-a, --starting-frequency <float>`: Initial allele frequency (default: 1/(2N))
-
 ### Computational Parameters
+- `-a, --alpha <float>`: Tail truncation weight for the transition matrix — the
+  same mechanism described under `-a, --alpha` in `phase_type_dist` and
+  `wfes_single`. There is no starting-frequency control for this tool; the
+  only way to set a non-default starting state is `-i, --initial` (below).
 - `--num-threads <int>`: Number of threads
 - `--force`: Skip parameter validation
+- `-m, --no-recurrent-mu`: Exclude recurrent mutation (included by default)
 - `--library <string>`: Linear algebra backend: `Pardiso` (Intel MKL; the default on Linux), `Accelerate` (the macOS default), `SuiteSparse`, or `ParU` (parallel SuiteSparse). Note that on macOS `Accelerate` names the matrix backend only: matrices are held in Accelerate format, but the LU factorization and solves are performed by SuiteSparse's UMFPACK. Apple's own sparse solver is used only as a build-time fallback when SuiteSparse is not linked. ViennaCL requires OpenCL support not compiled into the shipped binaries.
 
 ### Output Options
-- `--output-Res <file>`: Write results to file
+- `--output-N <file>`: Write moments to file
 - `--json`: Output in JSON format
 - `-i, --initial <path>`: Initial state distribution, as a CSV column of 2N probabilities over the transient states of the fixation-only model. It replaces however the starting state would otherwise be set, and is renormalised if it does not sum to 1. A point mass reproduces the corresponding fixed-count run exactly.
 
@@ -94,7 +96,6 @@ Moments:
     "h": 0.5,
     "u": 1e-9,
     "v": 1e-9,
-    "starting_frequency": 0.0005,
     "n_moments": 20,
     "recurrent_mutation": true
   },
@@ -133,22 +134,22 @@ phase_type_moments -N 5000 -s 0.001 -k 50
 phase_type_moments -N 10000 -u 1e-8 -v 1e-8 -k 20
 ```
 
-### Starting from higher frequency
+### Coarser truncation for a faster, less precise solve
 ```bash
-phase_type_moments -N 1000 -s 0.01 -a 0.01 -k 30
+phase_type_moments -N 1000 -s 0.01 -a 1e-6 -k 30
 ```
 
 ### Output to file with JSON
 ```bash
-phase_type_moments -N 1000 -s 0.01 -k 100 --json --output-Res moments.json
+phase_type_moments -N 1000 -s 0.01 -k 100 --json --output-N moments.json
 ```
 
 ## Technical Notes
 
 1. **Computational Efficiency**: O(k) sparse solves vs O(T) for full distribution
 2. **Numerical Stability**: Stable for moments up to ~100 depending on parameters
-3. **Recurrent Mutation**: Always enabled (biological realism)
-4. **Starting Frequency**: Can specify non-zero starting frequency
+3. **Recurrent Mutation**: Included by default; disable with `-m, --no-recurrent-mu`
+4. **Starting State**: Default is 0 copies with mutation; a non-default starting state requires `-i, --initial`
 5. **Sparse Methods**: Exploits sparsity for large N
 
 ## Applications

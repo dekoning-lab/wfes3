@@ -76,6 +76,10 @@ $$f_{sub}(t) = \int f_{equil}(t_1) \, \pi(i \mid equil) \, f_{fix}(t-t_1 \mid i)
 
 ### Output Options
 - `--json`: Output in JSON format
+- `--csv`: Output in CSV format
+- `--verbose`: Verbose solver output
+
+Other real flags not detailed here (`--output-Q`, `--output-R`, `--output-P`, `--force`, `-b/--block-size`, `-c/--integration-cutoff`): see `--help`.
 
 ## Output Format
 

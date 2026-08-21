@@ -65,12 +65,12 @@ $$H_{exp} = 2 \sum_i \pi_i \, \frac{i}{2N} \left(1 - \frac{i}{2N}\right)$$
   cut rather than a floor on individual entries -- at the default, stored entries
   as small as 1e-43 remain. Raising it makes the matrix sparser and the solve
   faster while discarding real probability mass; values much above 1e-3 are
-  refused unless `--force` is given. At the 1e-20 default this is not a no-op: for N=100 it stores 23,015 of the 39,601 entries a fully dense row set would hold, discarding 42% of the entries while removing at most 1e-20 of the mass from each row.
+  refused outright, with no override flag to bypass that check. At the 1e-20 default this is not a no-op: for N=100 it stores 23,015 of the 39,601 entries a fully dense row set would hold, discarding 42% of the entries while removing at most 1e-20 of the mass from each row.
 - `--num-threads <int>`: Number of threads
 - `--library <string>`: Linear algebra backend: `Pardiso` (Intel MKL; the default on Linux), `Accelerate` (the macOS default), `SuiteSparse`, or `ParU` (parallel SuiteSparse). Note that on macOS `Accelerate` names the matrix backend only: matrices are held in Accelerate format, but the LU factorization and solves are performed by SuiteSparse's UMFPACK. Apple's own sparse solver is used only as a build-time fallback when SuiteSparse is not linked. ViennaCL requires OpenCL support not compiled into the shipped binaries.
 
 ### Output Options
-- `--output-Q`: Write transition matrices
+- `-o, --output-file <file>`: Write output to this file (omit to print to stdout, as shown below)
 - `--csv`: Output in CSV format
 - `--verbose`: Detailed progress output
 
