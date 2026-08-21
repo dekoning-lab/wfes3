@@ -19,7 +19,11 @@ Contract under test — "refuse, don't substitute":
     Wright-Fisher matrix built from the published model definitions) and must
     agree with the CLI. One case has P_fix ~ 1e-18: below the 2.2e-16 noise
     floor of the old "B_fix = 1 - B_ext" subtraction, so it separates a real
-    solve from a derived complement.
+    solve from a derived complement;
+  * --csv is exercised too, not just --json: a healthy case must exit 0 with
+    no bare nan/inf token and the same field count as the shipped binary's
+    --csv for that case, and the -c 1 degenerate case must still refuse under
+    --csv.
 
 Standalone, stdlib-only.
 
@@ -84,8 +88,8 @@ def check(ok: bool, label: str, detail: str = "") -> bool:
     return bool(ok)
 
 
-def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run([str(binary), *args, "--json"],
+def run(binary: Path, args: list[str], fmt: str = "--json") -> subprocess.CompletedProcess:
+    return subprocess.run([str(binary), *args, fmt],
                           capture_output=True, text=True, timeout=600)
 
 
@@ -382,6 +386,33 @@ def section_underflow(new_bin: Path):
         check(f in results, f"{f} is still reported")
 
 
+def section_csv(new_bin: Path, shipped: Path):
+    print("\n== --csv output: healthy case and degenerate refusal ==")
+    # The suite above exercises --json exclusively; --csv is a separate
+    # OutputFormatter code path (and, for a run with an omitted field, a
+    # separate print_absorption_results_partial branch) that could silently
+    # diverge from it. Healthy case reuses "abs N=100 s=0.02" from SPREAD.
+    label = "abs N=100 s=0.02 (csv)"
+    proc = run(new_bin, ["--absorption", "-N", "100", "-s", "0.02"], fmt="--csv")
+    check(proc.returncode == 0, f"{label}: exits 0", f"exit={proc.returncode}")
+    m = BAD_TOKEN.search(proc.stdout)
+    check(m is None, f"{label}: no bare nan/inf token on stdout",
+          m.group(0) if m else "")
+
+    new_lines = proc.stdout.strip().splitlines()
+    new_fields = new_lines[0].split(",") if new_lines else []
+    shipped_proc = run(shipped, ["--absorption", "-N", "100", "-s", "0.02"], fmt="--csv")
+    shipped_lines = shipped_proc.stdout.strip().splitlines()
+    shipped_fields = shipped_lines[0].split(",") if shipped_lines else []
+    check(len(new_fields) == len(shipped_fields) and len(new_fields) > 0,
+          f"{label}: field count matches shipped binary's --csv",
+          f"new={new_fields} shipped={shipped_fields}")
+
+    proc = run(new_bin, ["--absorption", "-N", "10", "-c", "1"], fmt="--csv")
+    check(proc.returncode != 0, "csv degenerate -c 1 exits nonzero",
+          f"exit={proc.returncode}")
+
+
 def section_dense_reference(new_bin: Path):
     print("\n== independent dense-LU reference ==")
     cases = [
@@ -439,6 +470,7 @@ def main() -> int:
     section_degenerate_cutoff(new_bin)
     section_v0(new_bin, opts.shipped)
     section_underflow(new_bin)
+    section_csv(new_bin, opts.shipped)
     if opts.skip_dense:
         print("\n(dense reference section skipped on request)")
     else:

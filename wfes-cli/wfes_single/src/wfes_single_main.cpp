@@ -121,14 +121,16 @@ void enforce_probability_range(dvec& B, const char* name) {
     }
     if (lo < 0.0 || hi > 1.0) {
         const double worst = std::max(hi - 1.0, -lo);
+        llong n_clamped = 0;
         for (llong i = 0; i < B.size(); i++) {
-            if (B(i) < 0.0) B(i) = 0.0;
-            else if (B(i) > 1.0) B(i) = 1.0;
+            if (B(i) < 0.0) { B(i) = 0.0; ++n_clamped; }
+            else if (B(i) > 1.0) { B(i) = 1.0; ++n_clamped; }
         }
-        std::cerr << "Note: " << name << " entries exceeded [0,1] by up to "
-                  << worst << " (solver roundoff, within tolerance "
-                  << PROB_RANGE_TOL << "); clamped to the boundary."
-                  << std::endl;
+        std::cerr << "Note: " << name << ": " << n_clamped << " of "
+                  << B.size() << (n_clamped == 1 ? " entry" : " entries")
+                  << " exceeded [0,1], worst excursion " << worst
+                  << " (solver roundoff, within tolerance " << PROB_RANGE_TOL
+                  << "); clamped to the boundary." << std::endl;
     }
 }
 
@@ -540,17 +542,31 @@ int main(int argc, char const *argv[]) {
                 dvec B_ext = solver->solve(R_ext, false);
                 dvec B_fix = solver->solve(R_fix, false);
 
-                // B_ext + B_fix = 1 is now a residual DIAGNOSTIC of the solve,
-                // not the definition of either vector.
+                // B_ext + B_fix = 1 is a residual DIAGNOSTIC of the solve, not
+                // the definition of either vector -- but a large residual is a
+                // real failure mode of its own: B_ext and B_fix are solved
+                // independently against their own RHS column, so both can
+                // individually land inside [0,1] (and so pass
+                // enforce_probability_range below) while the pair is still
+                // arbitrarily wrong. Hold the residual to the same evidence
+                // standard enforce_probability_range refuses on: refuse,
+                // don't warn-and-continue.
                 {
                     const double one_residual =
                         (B_ext + B_fix - dvec::Ones(size)).cwiseAbs().maxCoeff();
-                    if (!(one_residual <= PROB_RANGE_TOL)) {
-                        std::cerr << "Warning: |B_ext + B_fix - 1| reaches "
-                                  << one_residual
-                                  << ": the absorption solve is losing precision "
-                                     "for these parameters; treat the results "
-                                     "with caution." << std::endl;
+                    if (one_residual > PROB_RANGE_TOL) {
+                        std::ostringstream os;
+                        os << std::setprecision(std::numeric_limits<double>::max_digits10)
+                           << "|B_ext + B_fix - 1| = " << one_residual
+                           << ", exceeding the roundoff tolerance " << PROB_RANGE_TOL
+                           << ". B_ext solves (I - Q) x = R_ext and B_fix solves "
+                              "(I - Q) x = R_fix independently against the same "
+                              "factorization (integrity audit section 1.1 fix): "
+                              "a residual this large means that solve failed for "
+                              "these parameters even though B_ext and B_fix may "
+                              "each individually lie inside [0,1]. Refusing to "
+                              "print results that cannot be trusted.";
+                        throw std::runtime_error(os.str());
                     }
                 }
 
@@ -686,8 +702,11 @@ int main(int argc, char const *argv[]) {
                     out_T_fix, out_T_fix_std;
 
                 // A probability is reportable only as a positive normal
-                // double: below DBL_MIN the computed value is underflow, not
-                // the (positive) probability itself.
+                // double. Below DBL_MIN the computed value is not
+                // trustworthy at full precision -- and it is not necessarily
+                // positive either: at parameter corners where the event is
+                // genuinely unreachable (e.g. u=1, v=0), the true value is
+                // exactly 0, and the solve can return exactly 0.0 here too.
                 auto report_probability =
                     [](double value, const char* name) -> std::optional<double> {
                     if (value > 1.0) {
@@ -711,13 +730,17 @@ int main(int argc, char const *argv[]) {
                     }
                     if (value < PROB_UNDERFLOW) {
                         std::cerr << "Note: " << name
-                                  << " is positive but not representable in "
-                                     "double precision (computed value "
+                                  << " is not representable as a positive "
+                                     "normal double (computed value "
                                   << value
-                                  << " is below the smallest positive normal "
-                                     "double, 2.2250738585072014e-308). "
-                                     "Omitting " << name
-                                  << " rather than printing 0." << std::endl;
+                                  << " is at or below the smallest positive "
+                                     "normal double, 2.2250738585072014e-308): "
+                                     "the true value may be a tiny positive "
+                                     "probability indistinguishable from zero "
+                                     "at this precision, or genuinely exactly "
+                                     "zero at these parameters. Omitting "
+                                  << name << " rather than printing 0."
+                                  << std::endl;
                         return std::nullopt;
                     }
                     return value;
@@ -800,7 +823,7 @@ int main(int argc, char const *argv[]) {
                         // Normalize N_ext (same expression as always)
                         N_ext /= influx_wait + T_ext;
                         out_N_ext = N_ext;
-                    } else {
+                    } else if (options.forward_mutation == 0.0) {
                         std::cerr << "Note: N_ext is undefined when the forward "
                                      "mutation rate is 0 (-v 0): it is the "
                                      "stationary mean number of segregating "
@@ -808,6 +831,19 @@ int main(int argc, char const *argv[]) {
                                      "at rate 2Nv, and with v = 0 there is no "
                                      "influx and no stationary regime. "
                                      "Omitting N_ext." << std::endl;
+                    } else {
+                        // v is nonzero but small enough that 2*N*v underflows
+                        // toward the smallest denormals, so its reciprocal
+                        // overflows a double -- a numerical overflow, not the
+                        // v=0 undefined-model case above.
+                        std::cerr << "Note: N_ext is not representable in "
+                                     "double precision at this forward "
+                                     "mutation rate (v = " << options.forward_mutation
+                                  << "): the mean renewal-cycle length "
+                                     "1/(2Nv) overflows, because v is nonzero "
+                                     "but too small for that reciprocal to "
+                                     "fit in a double. Omitting N_ext."
+                                  << std::endl;
                     }
                 }
 
