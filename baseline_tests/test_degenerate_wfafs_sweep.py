@@ -127,6 +127,31 @@ def test_sweep_degenerate_refuses(sweep: Path) -> None:
         check(f"[{label}] diagnostic mentions the cutoff",
               "cutoff" in proc.stderr.decode("utf-8", "replace").lower(),
               f"stderr: {proc.stderr.decode('utf-8', 'replace').strip()[:400]}")
+        # Belt and braces on the refusal itself: a regression that printed
+        # results to stdout and THEN exited nonzero (e.g. a check added after
+        # the output block instead of before it) would still pass the two
+        # checks above, since exit code and inf/nan-freedom say nothing about
+        # whether results were printed. T_fix is the one token common to all
+        # three output formats' results section, so its absence from stdout
+        # is direct evidence no results were printed.
+        stdout_only = proc.stdout.decode("utf-8", "replace")
+        check(f"[{label}] stdout contains no T_fix token (no results were printed)",
+              "T_fix" not in stdout_only,
+              f"stdout: {stdout_only.strip()[:400]}")
+
+
+def test_sweep_degenerate_output_I_no_file(sweep: Path, tmp: Path) -> None:
+    # --output-I used to be written before the z == 0 refusal, so a refused
+    # degenerate run left the initial-distribution file behind even though
+    # the run itself produced no results -- contradicting "a refused run
+    # writes no file". The write must happen only after the refusal check.
+    print("wfes_sweep: --output-I writes no file on the degenerate refusal")
+    path = tmp / "sweep_I_degenerate.txt"
+    proc = run(sweep, SWEEP_DEGENERATE + ["--json", "--output-I", str(path)])
+    check("exits nonzero", proc.returncode != 0,
+          f"exit {proc.returncode}: {text(proc)[:400]}")
+    check("--output-I file was not created", not path.exists(),
+          f"{path} was created despite the run being refused")
 
 
 def test_sweep_normal_still_works(sweep: Path) -> None:
@@ -154,9 +179,11 @@ def test_sweep_normal_still_works(sweep: Path) -> None:
 def test_sweep_output_B(sweep: Path, tmp: Path) -> None:
     # Disposition: WRITTEN. wfes_sweep's model has exactly one absorbing state
     # (fixation), held in R, so B = (I-Q)^-1 R exists and is one absorption
-    # probability per transient state. Every entry is 1 up to the probability
-    # mass discarded by the alpha tail truncation, which is what makes the
-    # vector worth writing: it is a direct read-out of that truncation loss.
+    # probability per transient state. Every entry is 1 in exact arithmetic
+    # (row sums of [Q|R] are exactly 1.0, so no alpha tail truncation mass is
+    # missing); the small observed deviation from 1 is solver
+    # conditioning/roundoff, not truncation loss -- see the tolerance
+    # comment below for the derivation.
     print("wfes_sweep: --output-B is written")
     path = tmp / "sweep_B.txt"
     proc = run(sweep, SWEEP_MODEL + ["--json", "--output-B", str(path)])
@@ -171,11 +198,15 @@ def test_sweep_output_B(sweep: Path, tmp: Path) -> None:
           f"got {len(values)} entries")
     check("all entries finite", all(v == v and abs(v) != float("inf") for v in values))
     # Fixation is the only absorbing state, so every entry is 1 in exact
-    # arithmetic (less the mass the alpha truncation discards, ~1e-20 here).
-    # The tolerance is not arbitrary: (I-Q)^-1 has entries of order T_fix, which
-    # is ~2.4e8 for this model, so double-precision roundoff reaches the solved
-    # vector at about T_fix * eps ~ 5e-8. Observed max |B-1| is 1.2e-8. A
-    # mis-wired B (wrong vector, wrong transpose) would not land near 1 at all.
+    # arithmetic -- row sums of [Q|R] are exactly 1.0, so there is no alpha
+    # truncation mass unaccounted for. The tolerance is not arbitrary:
+    # (I-Q)^-1 has entries of order T_fix, which is ~2.4e8 for this model, so
+    # double-precision roundoff reaches the solved vector at about
+    # T_fix * eps ~ 5e-8. Measured directly: 40 of these 41 entries land
+    # strictly ABOVE 1 (max 1.0000000121, none below) -- truncation can only
+    # discard probability mass, which would pull entries below 1, so an
+    # above-1 deviation is solver roundoff, not truncation. A mis-wired B
+    # (wrong vector, wrong transpose) would not land near 1 at all.
     check("absorption into the single absorbing state is 1 within solver tolerance",
           all(abs(v - 1.0) < 1e-6 for v in values),
           f"max deviation {max(abs(v - 1.0) for v in values)}" if values else "empty")
@@ -261,6 +292,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         test_sweep_degenerate_refuses(sweep)
+        test_sweep_degenerate_output_I_no_file(sweep, tmp)
         test_sweep_normal_still_works(sweep)
         test_sweep_output_B(sweep, tmp)
         test_wfafs_unsupported_outputs(wfafs, tmp)

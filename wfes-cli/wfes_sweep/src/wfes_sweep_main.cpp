@@ -270,10 +270,13 @@ int main(int argc, char const *argv[]) {
         dvec starting_copies_p = first_row.tail(first_row.size() - 1);
         starting_copies_p /= 1 - first_row(0); // renormalize
 
-        // Output initial distribution if requested
-        if (output_I_f) {
-            CLI::OutputFormatter::write_vector_to_file(starting_copies_p, args::get(output_I_f));
-        }
+        // Snapshot the freshly-computed distribution for --output-I. The
+        // actual file write happens after the z == 0 refusal below (so a
+        // refused run leaves no file), but it must still write exactly what
+        // this call would have written before that move: the raw computed
+        // distribution, not whatever starting_copies_p becomes if the
+        // "no integration" branch just below overwrites it in place.
+        const dvec initial_distribution_for_output = starting_copies_p;
 
         // Determine integration range
         llong z = 0;
@@ -313,6 +316,16 @@ int main(int argc, char const *argv[]) {
             return EXIT_FAILURE;
         }
 
+        // Output initial distribution if requested. Written here, after the
+        // z == 0 refusal above, rather than at the point of computation: a
+        // refused degenerate run (e.g. -c 1 exceeding every starting-copy
+        // probability) must leave no file behind, not even the initial
+        // distribution. See initial_distribution_for_output above for why
+        // the content is unaffected by the move.
+        if (output_I_f) {
+            CLI::OutputFormatter::write_vector_to_file(initial_distribution_for_output, args::get(output_I_f));
+        }
+
         // Create Wright-Fisher matrix
         WF::Matrix wf = WF::NonAbsorbingToFixationOnly(population_size, selection_coefficient, h, u, v, switching, a, verbose_f, 1, library);
         
@@ -334,11 +347,19 @@ int main(int argc, char const *argv[]) {
         // B = (I - Q)^-1 R: the probability of ending in the one absorbing
         // state (fixation, in phase 2) from each transient state, the same
         // quantity and the same call wfes_single writes for its --output-B.
-        // This model has a single absorbing state, so every entry is 1 less
-        // whatever mass the alpha tail truncation discarded -- which is what
-        // makes the vector worth having: it reads that truncation loss out
-        // directly. The flag was parsed and then never used, so asking for it
-        // silently produced no file.
+        // This model has a single absorbing state, so every entry is 1 in
+        // exact arithmetic -- row sums of [Q|R] are exactly 1.0, so no alpha
+        // tail truncation mass is missing. Measured for -N 10: 40 of 41
+        // entries land strictly ABOVE 1 (max 1.0000000121, none below) --
+        // truncation loss can only discard probability mass, which would
+        // pull entries below 1, so an above-1 deviation cannot be truncation
+        // and is instead solver conditioning/roundoff: (I-Q)^-1 has entries
+        // of order T_fix, so double-precision error reaches the solved
+        // vector at about T_fix * eps. That is what makes the vector worth
+        // having: not a truncation-loss readout, but the absorption
+        // probabilities themselves, accurate to solver tolerance. The flag
+        // was parsed and then never used, so asking for it silently
+        // produced no file.
         if (output_B_f) {
             if (wf.R.cols() < 1) {
                 std::cerr << "Error: this model has no absorbing state, so there "
@@ -423,6 +444,20 @@ int main(int argc, char const *argv[]) {
         }
 
         double rate = 1.0 / T_fix;
+
+        // Belt and braces. The check above requires T_fix finite and > 0,
+        // but that does not guarantee 1.0 / T_fix is finite: a subnormal
+        // T_fix (denormal, near the ~1e-308 bottom of double's normal range)
+        // divides out to inf despite passing every prior test. Catch that
+        // edge too, before rate reaches any output format.
+        if (!std::isfinite(rate)) {
+            std::cerr << "Error: the substitution rate 1/T_fix is not a usable "
+                         "finite number (T_fix = " << T_fix << ", rate = " << rate
+                      << "). T_fix is likely a subnormal value from a degenerate "
+                         "solve; no substitution rate can be reported." << std::endl;
+            delete solver;
+            return EXIT_FAILURE;
+        }
 
         // Output results
         if (output_N_f) {
