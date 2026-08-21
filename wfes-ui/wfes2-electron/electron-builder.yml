@@ -48,6 +48,13 @@ extraResources:
     to: bin
     filter:
       - '**/*'
+  # For Windows and Linux only, where BrowserWindow's `icon` option is honoured
+  # and src/main/index.ts resolves it against process.resourcesPath. macOS
+  # ignores that option and uses mac.icon (icon.icns) for the window, dock and
+  # Finder, so this copy is unused there; extraResources is not per-platform, so
+  # it ships anyway rather than risk a platform override dropping bin/ or about/.
+  - from: build/icon.png
+    to: icon.png
   - from: ../../about
     to: about
     filter:

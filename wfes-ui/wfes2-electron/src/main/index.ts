@@ -143,6 +143,27 @@ async function uninstallCliTools(parent: BrowserWindow): Promise<void> {
   })
 }
 
+/**
+ * Absolute path to the window icon, or undefined on platforms that ignore it.
+ *
+ * macOS takes both the window and dock icon from the bundle's CFBundleIconFile
+ * (build/icon.icns, set as mac.icon in electron-builder.yml) and ignores
+ * BrowserWindow's `icon` option entirely, so passing one there is at best a
+ * no-op. It was worse than a no-op: `build/` is not in electron-builder's
+ * `files` list, so in a packaged app join(__dirname, '../../build/icon.png')
+ * resolved to a path inside app.asar that does not exist.
+ *
+ * Windows and Linux DO honour the option, so keep it for them -- resolved
+ * against the source tree in dev and against resourcesPath when packaged (see
+ * the icon.png entry in electron-builder.yml's extraResources).
+ */
+function windowIconPath(): string | undefined {
+  if (process.platform === 'darwin') return undefined
+  return is.dev
+    ? join(__dirname, '../../build/icon.png')
+    : join(process.resourcesPath, 'icon.png')
+}
+
 function createWindow(): void {
   // Create the main browser window
   const mainWindow = new BrowserWindow({
@@ -153,7 +174,7 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: false,
-    icon: join(__dirname, '../../build/icon.png'),
+    icon: windowIconPath(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -910,13 +931,23 @@ app.setName('WFES3')
 
 app.whenReady().then(() => {
   
-  // Set dock icon for macOS
-  if (process.platform === 'darwin') {
-    // Use different path for development vs production
-    const iconPath = is.dev 
-      ? join(__dirname, '../../build/icon.png')
-      : join(process.resourcesPath, 'icon.png')
-    
+  // Set the dock icon for macOS -- in DEVELOPMENT ONLY.
+  //
+  // A packaged build does not need this: the dock and Finder both read
+  // CFBundleIconFile from the bundle, which electron-builder populates from
+  // mac.icon (build/icon.icns). It used to run in packaged builds too, against
+  // a Resources/icon.png that nothing shipped, so every launch logged a
+  // "Failed to set dock icon" warning -- while the icon itself was already
+  // correct, from the .icns. Resources/icon.png does exist now, for the Windows
+  // and Linux window icons, but calling setIcon here would still only re-load an
+  // icon macOS has already applied.
+  //
+  // Dev still needs it, because there is no bundle of our own: electron-vite
+  // runs the stock Electron binary, whose Info.plist scripts/brand-dev-electron.sh
+  // rebrands but leaves carrying Electron's own icon.
+  if (process.platform === 'darwin' && is.dev) {
+    const iconPath = join(__dirname, '../../build/icon.png')
+
     try {
       if (app.dock) {
         app.dock.setIcon(iconPath)
