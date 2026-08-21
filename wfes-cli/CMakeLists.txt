@@ -32,6 +32,34 @@ endif()
 
 project(WFES_CMD VERSION 1.0)
 
+# ---------------------------------------------------------------------------
+# Default build type
+#
+# This project never set one. With CMAKE_BUILD_TYPE empty, CMake adds NEITHER
+# an optimisation flag NOR -DNDEBUG, so `cmake -S wfes-cli -B build` -- the
+# command in every build script, README and CI note here -- produced -O0
+# binaries with assertions live. That is what shipped in the macOS release:
+# the solvers ran unoptimised, and Eigen's internal assertions were compiled
+# in, which is a correctness hazard as well as a speed one (an Eigen assert
+# aborts the process rather than reporting an error).
+#
+# Release is safe for this codebase *now*: the remediation replaced the
+# parameter and dimension guards that mattered with explicit `if (...) throw`
+# checks, none of which is an assert(), so none of them disappears under
+# -DNDEBUG. Do not reintroduce assert()-based validation without revisiting
+# this default.
+#
+# An explicit -DCMAKE_BUILD_TYPE=... on the command line still wins, and
+# multi-config generators (Xcode, Visual Studio) ignore the variable entirely.
+# ---------------------------------------------------------------------------
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING
+        "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)" FORCE)
+    message(STATUS "CMAKE_BUILD_TYPE was not set; defaulting to Release")
+endif()
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+             Debug Release RelWithDebInfo MinSizeRel)
+
 if(APPLE)
     # Global compile options - ensure complete Homebrew C++ stack
     add_compile_options(
