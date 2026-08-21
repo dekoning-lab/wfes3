@@ -72,6 +72,31 @@ dead helper functions in wfafs_deterministic_main.cpp -- cannot quietly move
 the healthy path with it. A mismatch means either that regression or an
 unrelated change to how this tool formats output; check which before assuming
 the worst.
+
+Two such formatting changes have since landed, from the shared-parser work
+(task CX6). Neither touches a computed value, and this suite is arranged so
+that the numbers stay locked to the original recording anyway:
+
+  plain   this tool was the one of the eleven whose parse function never
+          called displayBanner, so a plain run began straight at the spectrum's
+          first row. It now prints the banner the other ten print. The recorded
+          md5 is UNCHANGED and still checked -- strip_banner() removes the
+          banner first, and the remainder is byte-identical to both the
+          original recording and the shipped binary. That is a stronger
+          statement than a re-recorded digest would be: it proves the numeric
+          payload did not move.
+
+  csv     was printed at the stream default of 6 significant figures while the
+          --json branch beside it printed 17, so the same tool disagreed with
+          itself about how much of a computed double was worth keeping, and 6
+          figures cannot be converted back to the double that was computed.
+          Both structured formats now carry round-trip precision. This is the
+          one recorded digest that had to be re-recorded; the reference-binary
+          comparison for csv is numeric rather than byte-wise as a result, so
+          the shipped binary still checks the VALUES.
+
+  json    unchanged, byte for byte, against both the recording and the shipped
+          binary.
 """
 from __future__ import annotations
 
@@ -81,6 +106,7 @@ import json
 import re
 import subprocess
 import sys
+from decimal import Decimal, InvalidOperation
 import tempfile
 from pathlib import Path
 
@@ -104,9 +130,25 @@ HEALTHY_N_STATES = 21
 # md5 of raw stdout for HEALTHY in each format (see module docstring).
 HEALTHY_MD5 = {
     "json": "6efe032b585a3548704eb72249368ffc",
-    "csv": "db4e7458d2edd6616e6bd60c39cbfe53",
+    # Re-recorded when csv gained round-trip precision (see the docstring).
+    # Was db4e7458d2edd6616e6bd60c39cbfe53 at 6 significant figures.
+    "csv": "123cc680d4484d71cb980609bce2452d",
+    # Unchanged: this is the digest of the output with the banner stripped.
     "plain": "b946c18f78e2bd4eff1a481378a90916",
 }
+
+# The banner displayBanner() prints ends with a 60-character rule and a blank
+# line. Everything before and including it is identification, not result.
+BANNER_END = ("=" * 60 + "\n\n").encode()
+
+
+def strip_banner(stdout: bytes) -> bytes:
+    """The result payload of a plain-format run, with any banner removed.
+
+    Lets the recorded md5s and the shipped-binary comparison keep checking the
+    numbers across the addition of the banner, instead of being re-recorded.
+    """
+    return stdout.split(BANNER_END, 1)[-1]
 
 FORMATS = (("json", ["--json"]), ("csv", ["--csv"]), ("plain", []))
 
@@ -317,6 +359,8 @@ def test_healthy_unchanged(tool: Path) -> dict[str, str]:
         check(f"{tag} no nan/inf token anywhere in the output",
               not NONFINITE_RE.findall(both_text(proc)),
               f"output: {both_text(proc)[:400]}")
+        if fmt_name == "plain":
+            stdout_bytes = strip_banner(stdout_bytes)
         digest = hashlib.md5(stdout_bytes).hexdigest()
         digests[fmt_name] = digest
         check(f"{tag} stdout is byte-identical to the recorded pre-fix output",
@@ -403,6 +447,45 @@ def test_guard_does_not_over_refuse(tool: Path) -> None:
               f"output: {both_text(proc)[:400]}")
 
 
+def parse_csv_spectrum(stdout: str) -> list[str]:
+    """The probability column of a `count,probability` csv, as printed."""
+    out: list[str] = []
+    for line in stdout.splitlines():
+        parts = line.split(",")
+        if len(parts) != 2:
+            continue
+        try:
+            int(parts[0].strip())
+            Decimal(parts[1].strip())
+        except (ValueError, InvalidOperation):
+            continue
+        out.append(parts[1].strip())
+    return out
+
+
+def half_ulp(printed: str) -> Decimal:
+    """Half a unit in the last decimal place of `printed`.
+
+    Same convention as validate_baselines.py: a comparison between two decimal
+    representations can be no tighter than the coarser of the two, and the
+    rounding interval a printed value implies is half a unit in its own last
+    place. Using this rather than one blanket relative tolerance matters here,
+    because a 6-significant-figure value's relative precision ranges over an
+    order of magnitude with its leading digit -- 5e-7 at a leading 9, 5e-6 at a
+    leading 1 -- and a single constant is either too loose for most rows or too
+    tight for some.
+    """
+    exponent = Decimal(printed).as_tuple().exponent
+    if not isinstance(exponent, int):  # 'n'/'N'/'F' for NaN/Infinity
+        raise ValueError(f"non-finite value: {printed!r}")
+    return Decimal(1).scaleb(exponent) / 2
+
+
+# Set by test_matches_reference_binary's caller so the csv branch can re-run the
+# build under test; kept module-level rather than threaded through every caller.
+REFERENCE_UNDER_TEST: Path | None = None
+
+
 def test_matches_reference_binary(tool: Path, reference: Path,
                                   digests: dict[str, str]) -> None:
     """Byte-compare the healthy run against a second, independently built
@@ -411,6 +494,8 @@ def test_matches_reference_binary(tool: Path, reference: Path,
         print(f"wfafs_deterministic: reference binary {reference} not present "
               f"-- skipping byte comparison (md5s above still apply)")
         return
+    global REFERENCE_UNDER_TEST
+    REFERENCE_UNDER_TEST = tool
     print(f"wfafs_deterministic: healthy output matches {reference}")
     for fmt_name, fmt_args in FORMATS:
         ref = run(reference, HEALTHY + fmt_args)
@@ -418,7 +503,38 @@ def test_matches_reference_binary(tool: Path, reference: Path,
             check(f"[{fmt_name}] reference binary runs", False,
                   f"exit {ref.returncode}: {both_text(ref)[:200]}")
             continue
-        ref_digest = hashlib.md5(ref.stdout).hexdigest()
+
+        if fmt_name == "csv":
+            # The reference predates round-trip csv precision, so it prints the
+            # same values at 6 significant figures. Byte-comparing them would
+            # only re-assert that the formatting changed. Compare the NUMBERS
+            # instead, each to the rounding interval its own printed reference
+            # value implies -- agreement to the full precision the reference
+            # actually carries, which is all a 6-figure artifact can support.
+            got = parse_csv_spectrum(out_text(
+                subprocess.run([str(REFERENCE_UNDER_TEST), *HEALTHY, *fmt_args],
+                               capture_output=True)))
+            want = parse_csv_spectrum(out_text(ref))
+            if not check("[csv] same row count as the reference binary",
+                         len(got) == len(want), f"{len(got)} vs {len(want)}"):
+                continue
+            worst_row = worst_excess = None
+            for i, (a, b) in enumerate(zip(got, want)):
+                diff = abs(Decimal(a) - Decimal(b))
+                excess = diff - half_ulp(b)
+                if worst_excess is None or excess > worst_excess:
+                    worst_excess, worst_row = excess, (i, a, b)
+            check("[csv] every value agrees with the reference binary to the "
+                  "full precision the reference prints",
+                  worst_excess is None or worst_excess <= 0,
+                  f"worst row {worst_row}, exceeds its half-ulp by "
+                  f"{worst_excess}")
+            continue
+
+        # plain: the reference has no banner, and the build under test's digest
+        # was taken with the banner stripped, so these compare like for like.
+        ref_bytes = strip_banner(ref.stdout) if fmt_name == "plain" else ref.stdout
+        ref_digest = hashlib.md5(ref_bytes).hexdigest()
         check(f"[{fmt_name}] byte-identical to the reference binary",
               digests.get(fmt_name) == ref_digest,
               f"under test {digests.get(fmt_name)}, reference {ref_digest}")
