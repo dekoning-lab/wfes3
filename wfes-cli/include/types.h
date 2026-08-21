@@ -133,7 +133,11 @@ struct CommandLineOptions {
         n_threads(1),
         integration_cutoff(1e-10),
         starting_copies(0),
-        observed_copies(0),
+        observed_copies(-1), // -1 = "no -x given" (args_parser.cpp), matching
+                              // wfes_single_main.cpp's `< 0` sentinel check;
+                              // 0 is now a real stored value (x = 1, the
+                              // first valid observed-copy count, one-based
+                              // count minus one)
         odds_ratio(1.0),
         num_threads(1),
         max_t(100000),
