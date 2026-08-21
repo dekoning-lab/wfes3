@@ -21,9 +21,6 @@ export {
 export { WfesViewLayout } from './WfesViewLayout'
 export { SolverWarnings } from './SolverWarnings'
 
-// Technical details component with LaTeX support
-export { default as TechnicalDetailsPanel, Math } from '../TechnicalDetailsPanel'
-
 // About content panel that loads from markdown files
 export { default as AboutContentPanel } from '../AboutContentPanel'
 export { default as SwitchingStateDiagram } from './SwitchingStateDiagram'

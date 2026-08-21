@@ -33,7 +33,7 @@ import {
   generateFilename
 } from '../components/shared'
 import { WfafsParams, WfesResultItem } from '../types/wfes'
-import { Math as MathTeX, SolverWarnings } from '../components/shared'
+import { SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import SwitchingStateDiagram from '../components/shared/SwitchingStateDiagram'
 import { wfafsDiagram } from '../utils/switchingDiagrams'

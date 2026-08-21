@@ -37,7 +37,7 @@ import {
 } from '../components/shared'
 import { WfesSwitchingParams, WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
-import { Math as MathTeX, SolverWarnings } from '../components/shared'
+import { SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import SwitchingRatesMatrix from '../components/SwitchingRatesMatrix'
 import { useExecuteShortcut } from '../hooks/useExecuteShortcut'

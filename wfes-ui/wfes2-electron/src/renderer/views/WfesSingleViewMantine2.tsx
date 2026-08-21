@@ -44,7 +44,7 @@ import {
 import EquilibriumChartModal from '../components/EquilibriumChartModal'
 import EquilibriumChartModalNew from '../components/EquilibriumChartModalNew'
 import FundamentalMatrixModal from '../components/FundamentalMatrixModal'
-import { AboutContentPanel, Math as MathTeX, SolverWarnings } from '../components/shared'
+import { AboutContentPanel, SolverWarnings } from '../components/shared'
 import { numOrUndefined, intOrUndefined, finiteOrUndefined } from '../utils/numeric'
 import { useExecuteShortcut } from '../hooks/useExecuteShortcut'
 import WfesResultsTable from '../components/shared/WfesResultsTable'

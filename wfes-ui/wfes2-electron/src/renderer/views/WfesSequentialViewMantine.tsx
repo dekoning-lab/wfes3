@@ -36,7 +36,7 @@ import {
 } from '../components/shared'
 import { WfesSequentialParams, WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
-import { Math as MathTeX, SolverWarnings } from '../components/shared'
+import { SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import { useExecuteShortcut } from '../hooks/useExecuteShortcut'
 import SwitchingStateDiagram from '../components/shared/SwitchingStateDiagram'

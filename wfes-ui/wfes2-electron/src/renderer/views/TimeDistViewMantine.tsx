@@ -34,7 +34,7 @@ import { TimeDistParams, WfesResultItem } from '../types/wfes'
 import { qtyRow, sdRow } from '../utils/quantityLabels'
 import { wfesService } from '../services/wfesService'
 import TimeDistChartModal from '../components/TimeDistChartModal'
-import { Math as MathTeX, SolverWarnings } from '../components/shared'
+import { SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import { useExecuteShortcut } from '../hooks/useExecuteShortcut'
 

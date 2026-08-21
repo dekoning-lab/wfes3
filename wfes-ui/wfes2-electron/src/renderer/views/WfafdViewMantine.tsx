@@ -36,7 +36,7 @@ import {
 } from '../components/shared'
 import { WfafdParams, WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
-import { Math as MathTeX, SolverWarnings } from '../components/shared'
+import { SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import SwitchingStateDiagram from '../components/shared/SwitchingStateDiagram'
 import { wfafdDiagram } from '../utils/switchingDiagrams'
