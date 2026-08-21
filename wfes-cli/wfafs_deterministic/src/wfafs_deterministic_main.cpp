@@ -250,15 +250,24 @@ Options parse_arguments(int argc, char* argv[]) {
 
     args::HelpFlag help(parser, "help", "Display this help menu", {"help"});
     
-    args::ValueFlag<llong> arg_p(parser, "int", "Initial allele count", {'p', "initial-count"});
+    // --starting-copies is the canonical long name for an integer starting
+    // copy count in all four tools that take one; --initial-count stays
+    // accepted (the GUI emits it) but unadvertised. Likewise --pop-size, with
+    // --pop-sizes kept as a silent alias. See AliasedValueFlag in
+    // args_parser.hpp for why the alias has to live in the same matcher.
+    wfes::cli::AliasedValueFlag<llong> arg_p(parser, "int",
+        "Starting number of copies (initial allele count)",
+        {'p', "starting-copies", "initial-count"}, {"initial-count"});
     args::ValueFlag<double> arg_integration_cutoff(parser, "float",
         "Starting number of copies integration cutoff", {'c', "integration-cutoff"});
-    args::ValueFlag<string> arg_N_vec(parser, "int[k]", "Population sizes (comma-separated, required)", {'N', "pop-sizes"});
-    args::ValueFlag<string> arg_t_vec(parser, "int[k]", "Number of generations for each epoch (comma-separated, required)", {'G', "generations"});
-    args::ValueFlag<string> arg_s_vec(parser, "float[k]", "Selection coefficients (comma-separated)", {'s', "selection"});
-    args::ValueFlag<string> arg_h_vec(parser, "float[k]", "Dominance coefficients (comma-separated)", {'h', "dominance"});
-    args::ValueFlag<string> arg_u_vec(parser, "float[k]", "Backward mutation rates (comma-separated)", {'u', "backward-mu"});
-    args::ValueFlag<string> arg_v_vec(parser, "float[k]", "Forward mutation rates (comma-separated)", {'v', "forward-mu"});
+    wfes::cli::AliasedValueFlag<string> arg_N_vec(parser, "int[k]",
+        "Population sizes, comma-separated (one entry per epoch, required)",
+        {'N', "pop-size", "pop-sizes"}, {"pop-sizes"});
+    args::ValueFlag<string> arg_t_vec(parser, "int[k]", "Number of generations, comma-separated (one entry per epoch, required)", {'G', "generations"});
+    args::ValueFlag<string> arg_s_vec(parser, "float[k]", "Selection coefficients, comma-separated (one entry per epoch)", {'s', "selection"});
+    args::ValueFlag<string> arg_h_vec(parser, "float[k]", "Dominance coefficients, comma-separated (one entry per epoch)", {'h', "dominance"});
+    args::ValueFlag<string> arg_u_vec(parser, "float[k]", "Backward mutation rates, comma-separated (one entry per epoch)", {'u', "backward-mu"});
+    args::ValueFlag<string> arg_v_vec(parser, "float[k]", "Forward mutation rates, comma-separated (one entry per epoch)", {'v', "forward-mu"});
     args::ValueFlag<double> arg_alpha(parser, "float", "Tail truncation weight", {'a', "alpha"});
     args::ValueFlag<string> arg_initial(parser, "path",
         "Path to initial state distribution CSV (one probability per state)", {'i', "initial"});

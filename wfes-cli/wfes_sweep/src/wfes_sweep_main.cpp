@@ -86,18 +86,27 @@ int main(int argc, char const *argv[]) {
     // Required arguments
     args::ValueFlag<llong> population_size_f(parser, "int", "Size of the population", 
                                              {'N', "pop-size"}, args::Options::Required);
-    args::ValueFlag<std::string> selection_coefficient_f(parser, "s1,s2", "Selection coefficients (comma-separated)", 
-                                                          {'s', "selection"}, args::Options::Required);
-    args::ValueFlag<double> lambda_f(parser, "float", "Transition probability", 
-                                     {'l', "lambda"}, args::Options::Required);
+    // "float[2]", not "s1,s2": the value-name column is what
+    // scripts/check_flag_collisions.py compares across tools, and a spelling
+    // unique to this tool reads as a different type for the same flag. The
+    // two entries are the pre-sweep and sweep regimes, said out loud below
+    // rather than left to be inferred from the placeholder.
+    const char* const PER_REGIME = " (one entry per regime: pre-sweep, sweep)";
+    args::ValueFlag<std::string> selection_coefficient_f(parser, "float[2]",
+        std::string("Selection coefficients") + PER_REGIME,
+        {'s', "selection"}, args::Options::Required);
+    // -L, not -l: -l is --library in the nine tools that keep it, and this
+    // tool's -l took a probability. --library remains available in long form.
+    args::ValueFlag<double> lambda_f(parser, "float", "Transition probability",
+                                     {'L', "lambda"}, args::Options::Required);
 
     // Optional arguments with defaults
-    args::ValueFlag<std::string> dominance_f(parser, "h1,h2", "Dominance coefficients (comma-separated)", 
-                                              {'h', "dominance"});
-    args::ValueFlag<std::string> backward_mutation_f(parser, "u1,u2", "Backward mutation rates (comma-separated)", 
-                                                      {'u', "backward-mu"});
-    args::ValueFlag<std::string> forward_mutation_f(parser, "v1,v2", "Forward mutation rates (comma-separated)", 
-                                                     {'v', "forward-mu"});
+    args::ValueFlag<std::string> dominance_f(parser, "float[2]",
+        std::string("Dominance coefficients") + PER_REGIME, {'h', "dominance"});
+    args::ValueFlag<std::string> backward_mutation_f(parser, "float[2]",
+        std::string("Backward mutation rates") + PER_REGIME, {'u', "backward-mu"});
+    args::ValueFlag<std::string> forward_mutation_f(parser, "float[2]",
+        std::string("Forward mutation rates") + PER_REGIME, {'v', "forward-mu"});
     args::ValueFlag<double> alpha_f(parser, "float", "Tail truncation weight", {'a', "alpha"});
     args::ValueFlag<std::string> initial_f(parser, "path",
         "Path to initial state distribution CSV (one probability per state)", {'i', "initial"});
@@ -122,6 +131,16 @@ int main(int argc, char const *argv[]) {
     args::ValueFlag<std::string> library_f(parser, "library",
         CLI::Args_Parser::library_flag_help(), {"library"});
     args::HelpFlag help_f(parser, "help", "Display this help menu", {"help"});
+
+    // The letter this tool used to bind differently: -l was --lambda here and
+    // --library in nine other tools, so `-l 0.5` and `-l Accelerate` were both
+    // "valid" depending on which binary you had reached for. Rebinding it to
+    // --library would have made every existing `-l 0.5` an unknown-library
+    // error at best and a silently different run at worst, so it parses as
+    // nothing at all. See MovedShortFlag in args_parser.hpp.
+    CLI::MovedShortFlag moved_l(parser, "wfes_sweep", 'l', "--lambda",
+                                "--library",
+                                "use -L/--lambda, or --library in long form");
 
     // Parse arguments
     try {

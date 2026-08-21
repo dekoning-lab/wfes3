@@ -137,7 +137,26 @@ void advise_vector_tool(const CommandLineOptions& options, const char* unit,
     }
 }
 
+// The arity convention, stated out loud rather than left to be inferred from a
+// "[k]" in the value name. -N, -G, -s, -h, -u and -v are scalars in the
+// single-model tools and vectors here; §2 of the canonicalization keeps that
+// flip (the concept and the long name are identical, only the count changes)
+// on condition that every multi-model tool says so in its own help text. The
+// audit's "consistent" verdict missed this class precisely because nothing
+// wrote it down.
+const char* const PER_MODEL = " (one entry per model)";
+const char* const PER_EPOCH = " (one entry per epoch)";
+
 }  // namespace
+
+std::string moved_flag_message(const std::string& tool, char letter,
+                               const std::string& old_meaning,
+                               const std::string& new_meaning,
+                               const std::string& guidance) {
+    return std::string("-") + letter + " previously meant " + old_meaning +
+           " in " + tool + " and now means " + new_meaning +
+           " across WFES; " + guidance;
+}
 
 void Args_Parser::validate_alpha_advisory(double alpha, bool force_available) {
     if (!(alpha > MAX_ADVISED_ALPHA)) return;
@@ -407,8 +426,11 @@ CommandLineOptions Args_Parser::parse_wfes_single_args(int argc, char const *arg
                                                 {'u', "backward-mu"});
     args::ValueFlag<double> forward_mutation_f(parser, "float", "Forward mutation rate",
                                                {'v', "forward-mu"});
+    // -r, not -m: --no-recurrent-mu is on -r in the four distribution tools,
+    // and -m is --max-t there. wfes_single and phase_type_moments were the two
+    // tools that had them the other way round.
     args::Flag no_recurrent_mutation_f(parser, "bool", "Exclude recurrent mutation",
-                                       {'m', "no-recurrent-mu"});
+                                       {'r', "no-recurrent-mu"});
     args::ValueFlag<double> alpha_f(parser, "float", "Tail truncation weight", {'a', "alpha"});
     args::ValueFlag<llong> block_size_f(parser, "int", "Block size", {'b', "block-size"});
     args::ValueFlag<llong> n_threads_f(parser, "int", "Number of threads", {'t', "num-threads"});
@@ -424,9 +446,23 @@ CommandLineOptions Args_Parser::parse_wfes_single_args(int argc, char const *arg
     args::ValueFlag<llong> num_moments_f(parser, "int",
         "Number of allele-age moments to report (--allele-age only; default 2)",
         {"num-moments"});
+    // Long form only. -k is --n-moments in phase_type_moments, a moment COUNT;
+    // --odds-ratio is a rare, specialist, single-mode float, so it is the one
+    // that gives up the letter rather than the one that keeps it.
     args::ValueFlag<double> odds_ratio_f(parser, "float", "Odds ratio (--establishment only)",
-                                         {'k', "odds-ratio"});
-    
+                                         {"odds-ratio"});
+
+    // The two letters this tool used to bind differently. See MovedShortFlag:
+    // rebinding them silently would turn an existing `-m` into a --max-t this
+    // tool does not have and an existing `-k 1.5` into a moment count.
+    MovedShortFlag moved_m(parser, "wfes_single", 'm', "--no-recurrent-mu",
+                           "--max-t",
+                           "use -r/--no-recurrent-mu (wfes_single has no --max-t)");
+    MovedShortFlag moved_k(parser, "wfes_single", 'k', "--odds-ratio",
+                           "--n-moments",
+                           "use --odds-ratio, which is long form only in "
+                           "wfes_single (this tool has no --n-moments)");
+
     // Output options
     args::ValueFlag<std::string> output_Q_f(parser, "path", "Output Q matrix to file", {"output-Q"});
     args::ValueFlag<std::string> output_R_f(parser, "path", "Output R vectors to file", {"output-R"});
@@ -745,24 +781,39 @@ CommandLineOptions Args_Parser::parse_wfes_switching_args(int argc, char const *
                             "Both fixation and extinction states are absorbing", {"absorption"});
     args::Flag fixation_f(model_f, "fixation", "Only fixation state is absorbing", {"fixation"});
     
-    // Required arguments
-    args::ValueFlag<std::string> population_sizes_f(parser, "int[k]", "Sizes of the populations", 
-                                                    {'N', "pop-sizes"}, args::Options::Required);
-    
+    // Required arguments. --pop-size is the canonical long name in all eleven
+    // tools; --pop-sizes stays accepted (the GUI emits it) but unadvertised.
+    AliasedValueFlag<std::string> population_sizes_f(
+        parser, "int[k]", std::string("Sizes of the populations") + PER_MODEL,
+        {'N', "pop-size", "pop-sizes"}, {"pop-sizes"}, args::Options::Required);
+
     // Optional vector arguments
-    args::ValueFlag<std::string> selection_coefficients_f(parser, "float[k]", "Selection coefficients", 
-                                                          {'s', "selection"});
-    args::ValueFlag<std::string> dominance_coefficients_f(parser, "float[k]", "Dominance coefficients", 
-                                                          {'h', "dominance"});
-    args::ValueFlag<std::string> backward_mutations_f(parser, "float[k]", "Backward mutation rates", 
-                                                      {'u', "backward-mu"});
-    args::ValueFlag<std::string> forward_mutations_f(parser, "float[k]", "Forward mutation rates", 
-                                                     {'v', "forward-mu"});
-    args::ValueFlag<std::string> starting_probabilities_f(parser, "float[k]", "Starting probabilities", 
-                                                          {'p', "starting-prob"});
-    args::ValueFlag<std::string> switching_matrix_f(parser, "float[k][k]", "Switching parameters over models", 
-                                                    {'r', "switching"});
-    
+    args::ValueFlag<std::string> selection_coefficients_f(parser, "float[k]",
+        std::string("Selection coefficients") + PER_MODEL, {'s', "selection"});
+    args::ValueFlag<std::string> dominance_coefficients_f(parser, "float[k]",
+        std::string("Dominance coefficients") + PER_MODEL, {'h', "dominance"});
+    args::ValueFlag<std::string> backward_mutations_f(parser, "float[k]",
+        std::string("Backward mutation rates") + PER_MODEL, {'u', "backward-mu"});
+    args::ValueFlag<std::string> forward_mutations_f(parser, "float[k]",
+        std::string("Forward mutation rates") + PER_MODEL, {'v', "forward-mu"});
+    // -P, not -p: -p is an integer copy COUNT everywhere it survives, and a
+    // probability vector is a different kind of thing. The capital makes the
+    // difference visible at a glance in a command line.
+    args::ValueFlag<std::string> starting_probabilities_f(parser, "float[k]",
+        std::string("Starting probabilities") + PER_MODEL, {'P', "starting-prob"});
+    // -R, not -r: -r is --no-recurrent-mu in the six tools that have it.
+    args::ValueFlag<std::string> switching_matrix_f(parser, "float[k][k]", "Switching parameters over models",
+                                                    {'R', "switching"});
+
+    // The two letters this tool used to bind differently.
+    MovedShortFlag moved_p(parser, "wfes_switching", 'p', "--starting-prob",
+                           "--starting-copies (an integer copy count)",
+                           "use -P/--starting-prob");
+    MovedShortFlag moved_r(parser, "wfes_switching", 'r', "--switching",
+                           "--no-recurrent-mu",
+                           "use -R/--switching (wfes_switching has no "
+                           "--no-recurrent-mu)");
+
     // Single-value optional arguments
     args::ValueFlag<double> integration_cutoff_f(parser, "float", "Starting number of copies integration cutoff", 
                                                  {'c', "integration-cutoff"});
@@ -898,27 +949,46 @@ CommandLineOptions Args_Parser::parse_wfes_sequential_args(int argc, char const 
     // branch already printed 17 while its other five modes printed 6.
     if (structured_output) std::cout << std::setprecision(std::numeric_limits<double>::max_digits10);
     
-    // Required arguments
-    args::ValueFlag<std::string> population_sizes_f(parser, "int[k]", "Sizes of the populations", 
-                                                    {'N', "pop-sizes"}, args::Options::Required);
-    args::ValueFlag<std::string> expected_times_f(parser, "float[k]", "Expected time spent in each model", 
-                                                  {'t', "exp-time"}, args::Options::Required);
-    
+    // Required arguments. --pop-size is the canonical long name in all eleven
+    // tools; --pop-sizes stays accepted (the GUI emits it) but unadvertised.
+    AliasedValueFlag<std::string> population_sizes_f(
+        parser, "int[k]", std::string("Sizes of the populations") + PER_EPOCH,
+        {'N', "pop-size", "pop-sizes"}, {"pop-sizes"}, args::Options::Required);
+    // -e, not -t: -t is --num-threads in the other ten tools, and `-t 8` here
+    // used to mean an epoch of expected length 8. -e for "epoch expected time".
+    args::ValueFlag<std::string> expected_times_f(parser, "float[k]",
+        std::string("Expected time spent in each model") + PER_EPOCH,
+        {'e', "exp-time"}, args::Options::Required);
+
     // Optional vector arguments
-    args::ValueFlag<std::string> selection_coefficients_f(parser, "float[k]", "Selection coefficients", 
-                                                          {'s', "selection"});
-    args::ValueFlag<std::string> dominance_coefficients_f(parser, "float[k]", "Dominance coefficients", 
-                                                          {'h', "dominance"});
-    args::ValueFlag<std::string> backward_mutations_f(parser, "float[k]", "Backward mutation rates", 
-                                                      {'u', "backward-mu"});
-    args::ValueFlag<std::string> forward_mutations_f(parser, "float[k]", "Forward mutation rates", 
-                                                     {'v', "forward-mu"});
-    args::ValueFlag<std::string> starting_probabilities_f(parser, "float[k]", "Starting probabilities", 
-                                                          {'p', "starting-prob"});
-    
+    args::ValueFlag<std::string> selection_coefficients_f(parser, "float[k]",
+        std::string("Selection coefficients") + PER_EPOCH, {'s', "selection"});
+    args::ValueFlag<std::string> dominance_coefficients_f(parser, "float[k]",
+        std::string("Dominance coefficients") + PER_EPOCH, {'h', "dominance"});
+    args::ValueFlag<std::string> backward_mutations_f(parser, "float[k]",
+        std::string("Backward mutation rates") + PER_EPOCH, {'u', "backward-mu"});
+    args::ValueFlag<std::string> forward_mutations_f(parser, "float[k]",
+        std::string("Forward mutation rates") + PER_EPOCH, {'v', "forward-mu"});
+    // -P, not -p: see the note in parse_wfes_switching_args.
+    args::ValueFlag<std::string> starting_probabilities_f(parser, "float[k]",
+        std::string("Starting probabilities") + PER_EPOCH, {'P', "starting-prob"});
+
+    // Long form only: -p is the trap below, so the letter cannot be reused
+    // here even though a starting copy count is exactly what -p means
+    // elsewhere. It can be given the letter once the trap is retired.
     args::ValueFlag<llong> starting_copies_f(parser, "int",
         "Starting number of copies in the first epoch - no integration", {"starting-copies"});
-    
+
+    // The two letters this tool used to bind differently. Threads are
+    // available here through --num-threads only, for the same reason.
+    MovedShortFlag moved_t(parser, "wfes_sequential", 't', "--exp-time",
+                           "--num-threads",
+                           "use -e/--exp-time or --num-threads explicitly");
+    MovedShortFlag moved_p(parser, "wfes_sequential", 'p', "--starting-prob",
+                           "--starting-copies (an integer copy count)",
+                           "use -P/--starting-prob, or --starting-copies for a "
+                           "fixed first-epoch count");
+
     // Single-value optional arguments
     args::ValueFlag<double> integration_cutoff_f(parser, "float", "Starting number of copies integration cutoff", 
                                                  {'c', "integration-cutoff"});
@@ -1361,27 +1431,38 @@ CommandLineOptions Args_Parser::parse_time_dist_sgv_args(int argc, char const *a
     // Required arguments
     args::ValueFlag<llong> population_size_f(parser, "int", "Size of the population", 
                                              {'N', "pop-size"}, args::Options::Required);
-    args::ValueFlag<double> lambda_f(parser, "float", "Transition probability", 
-                                     {'l', "lambda"}, args::Options::Required);
-    args::ValueFlag<std::string> selection_coefficients_f(parser, "float[k]", "Selection coefficients", 
-                                                          {'s', "selection"}, args::Options::Required);
-    
+    // -L, not -l: -l is --library in the nine tools that keep it, and a
+    // transition probability and a solver name are about as far apart as two
+    // values can be. --library remains available here in long form.
+    args::ValueFlag<double> lambda_f(parser, "float", "Transition probability",
+                                     {'L', "lambda"}, args::Options::Required);
+    args::ValueFlag<std::string> selection_coefficients_f(parser, "float[k]",
+        std::string("Selection coefficients") + PER_MODEL,
+        {'s', "selection"}, args::Options::Required);
+
     // Optional vector arguments
-    args::ValueFlag<std::string> dominance_coefficients_f(parser, "float[k]", "Dominance coefficients", 
-                                                          {'h', "dominance"});
-    args::ValueFlag<std::string> backward_mutations_f(parser, "float[k]", "Backward mutation rates", 
-                                                      {'u', "backward-mu"});
-    args::ValueFlag<std::string> forward_mutations_f(parser, "float[k]", "Forward mutation rates", 
-                                                     {'v', "forward-mu"});
-    
+    args::ValueFlag<std::string> dominance_coefficients_f(parser, "float[k]",
+        std::string("Dominance coefficients") + PER_MODEL, {'h', "dominance"});
+    args::ValueFlag<std::string> backward_mutations_f(parser, "float[k]",
+        std::string("Backward mutation rates") + PER_MODEL, {'u', "backward-mu"});
+    args::ValueFlag<std::string> forward_mutations_f(parser, "float[k]",
+        std::string("Forward mutation rates") + PER_MODEL, {'v', "forward-mu"});
+
+    // The letter this tool used to bind differently.
+    MovedShortFlag moved_l(parser, "time_dist_sgv", 'l', "--lambda",
+                           "--library",
+                           "use -L/--lambda, or --library in long form");
+
     // Optional arguments
     args::ValueFlag<double> alpha_f(parser, "float", "Tail truncation weight", {'a', "alpha"});
     args::ValueFlag<std::string> initial_f(parser, "path",
         "Path to initial state distribution CSV (one probability per state)", {'i', "initial"});
     args::ValueFlag<llong> block_size_f(parser, "int", "Block size", {'b', "block-size"});
-    // "threads" stays as an alias: this tool shipped with it, but every other
-    // tool says --num-threads, which is also wfes2's name.
-    args::ValueFlag<llong> n_threads_f(parser, "int", "Number of threads", {'t', "num-threads", "threads"});
+    // The --threads alias is gone. It was never a second meaning -- it named
+    // the same int as --num-threads -- but it was a second SPELLING advertised
+    // in --help, which is the thing the canonical table exists to remove: one
+    // concept, one documented name, checked by scripts/check_flag_collisions.py.
+    args::ValueFlag<llong> n_threads_f(parser, "int", "Number of threads", {'t', "num-threads"});
     args::ValueFlag<double> integration_cutoff_f(parser, "float", "Stop once this probability mass is reached", 
                                                  {'c', "integration-cutoff"});
     args::ValueFlag<double> distribution_cutoff_f(parser, "float", "Stop once this probability mass is reached", 
@@ -1740,11 +1821,18 @@ CommandLineOptions Args_Parser::parse_phase_type_moments_args(int argc, char con
     args::Flag force_f(parser, "force", "Do not perform parameter checks", {"force"});
     // Every other tool that builds a Wright-Fisher matrix exposes this; here it
     // was hardcoded to "recurrent mutation on" in the main with no way to change it.
+    // -r, not -m: see the note in parse_wfes_single_args.
     args::Flag no_recurrent_mutation_f(parser, "bool", "Exclude recurrent mutation",
-                                       {'m', "no-recurrent-mu"});
-    args::ValueFlag<std::string> library_f(parser, "library", library_flag_help(), 
+                                       {'r', "no-recurrent-mu"});
+    args::ValueFlag<std::string> library_f(parser, "library", library_flag_help(),
                                            {'l', "library"});
     args::HelpFlag help_f(parser, "help", "Display this help menu", {"help"});
+
+    // The letter this tool used to bind differently.
+    MovedShortFlag moved_m(parser, "phase_type_moments", 'm', "--no-recurrent-mu",
+                           "--max-t",
+                           "use -r/--no-recurrent-mu (phase_type_moments has no "
+                           "--max-t)");
 
     try {
         parser.ParseCLI(argc, argv);
@@ -1872,30 +1960,41 @@ CommandLineOptions Args_Parser::parse_wfafs_stochastic_args(int argc, char const
     args::ArgumentParser parser("WFAFS-STOCHASTIC");
     setup_parser_params(parser);
     
-    // Required arguments
-    args::ValueFlag<std::string> population_sizes_f(parser, "int[k]", "Sizes of the populations", 
-                                                   {'N', "pop-sizes"}, args::Options::Required);
-    args::ValueFlag<std::string> generations_f(parser, "float[k]", "Expected number of generations spent in each model", 
-                                              {'G', "generations"}, args::Options::Required);
-    args::ValueFlag<std::string> factors_f(parser, "float[k]", "Matrix approximation factors", 
-                                         {'f', "factor"}, args::Options::Required);
-    
+    // Required arguments. --pop-size is the canonical long name in all eleven
+    // tools; --pop-sizes stays accepted (the GUI emits it) but unadvertised.
+    AliasedValueFlag<std::string> population_sizes_f(
+        parser, "int[k]", std::string("Sizes of the populations") + PER_MODEL,
+        {'N', "pop-size", "pop-sizes"}, {"pop-sizes"}, args::Options::Required);
+    args::ValueFlag<std::string> generations_f(parser, "float[k]",
+        std::string("Expected number of generations spent in each model") + PER_MODEL,
+        {'G', "generations"}, args::Options::Required);
+    args::ValueFlag<std::string> factors_f(parser, "float[k]",
+        std::string("Matrix approximation factors") + PER_MODEL,
+        {'f', "factor"}, args::Options::Required);
+
     // Optional vector arguments
-    args::ValueFlag<std::string> selection_coefficients_f(parser, "float[k]", "Selection coefficients", 
-                                                         {'s', "selection"});
-    args::ValueFlag<std::string> dominance_coefficients_f(parser, "float[k]", "Dominance coefficients", 
-                                                         {'h', "dominance"});
-    args::ValueFlag<std::string> backward_mutations_f(parser, "float[k]", "Backward mutation rates", 
-                                                     {'u', "backward-mu"});
-    args::ValueFlag<std::string> forward_mutations_f(parser, "float[k]", "Forward mutation rates", 
-                                                    {'v', "forward-mu"});
-    
+    args::ValueFlag<std::string> selection_coefficients_f(parser, "float[k]",
+        std::string("Selection coefficients") + PER_MODEL, {'s', "selection"});
+    args::ValueFlag<std::string> dominance_coefficients_f(parser, "float[k]",
+        std::string("Dominance coefficients") + PER_MODEL, {'h', "dominance"});
+    args::ValueFlag<std::string> backward_mutations_f(parser, "float[k]",
+        std::string("Backward mutation rates") + PER_MODEL, {'u', "backward-mu"});
+    args::ValueFlag<std::string> forward_mutations_f(parser, "float[k]",
+        std::string("Forward mutation rates") + PER_MODEL, {'v', "forward-mu"});
+
     // Single-value optional arguments
     args::ValueFlag<double> alpha_f(parser, "float", "Tail truncation weight", {'a', "alpha"});
     args::ValueFlag<llong> n_threads_f(parser, "int", "Number of threads", {'t', "num-threads"});
     args::ValueFlag<std::string> initial_f(parser, "path", "Path to initial probability distribution CSV", 
                                          {'i', "initial"});
-    args::ValueFlag<llong> initial_count_f(parser, "int", "Initial allele count", {'p', "initial-count"});
+    // --starting-copies is the canonical long name: it is the same concept as
+    // wfes_single's and wfes_sweep's -p, an integer count of copies the run
+    // starts from, and calling it --initial-count here made -p look like a
+    // third meaning in the collision map when it was only a third spelling.
+    // --initial-count stays accepted (the GUI emits it) but unadvertised.
+    AliasedValueFlag<llong> initial_count_f(parser, "int",
+        "Starting number of copies (initial allele count) - no integration",
+        {'p', "starting-copies", "initial-count"}, {"initial-count"});
     args::ValueFlag<double> integration_cutoff_f(parser, "float",
         "Starting number of copies integration cutoff", {'c', "integration-cutoff"});
     

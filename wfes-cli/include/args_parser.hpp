@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <functional>
 #include <string>
 #include <vector>
 #include "args.hpp"
@@ -7,6 +9,130 @@
 
 namespace wfes {
 namespace cli {
+
+/**
+ * @brief A ValueFlag that ACCEPTS extra long names without ADVERTISING them.
+ *
+ * The canonicalization renamed two long options -- wfafs' --initial-count to
+ * --starting-copies, and the vector tools' --pop-sizes to --pop-size -- and
+ * the deprecation policy for a long name is deliberately softer than for a
+ * short one: a displaced LETTER hard-errors because the same letter meant
+ * something else somewhere, whereas a renamed long name is unambiguous, so the
+ * old spelling keeps working indefinitely. The GUI depends on that; its
+ * argument builders emit --initial-count and --pop-sizes today.
+ *
+ * What it must NOT do is advertise both spellings. args renders every name in
+ * a matcher, so `{'N', "pop-size", "pop-sizes"}` prints
+ * "-N[int[k]], --pop-size=[int[k]], --pop-sizes=[int[k]]" -- two names for one
+ * concept in the one document (--help) that FLAGS.md is checked against, and
+ * an invitation for the next rename to be made against the alias.
+ *
+ * A separate hidden flag object cannot do the job: -N is Options::Required in
+ * all four vector tools, and args validates required-ness per flag object, so
+ * `--pop-sizes 100` would satisfy the alias object and then fail with
+ * "Flag '--pop-size' is required". The alias has to live in the SAME matcher,
+ * which leaves suppressing it from the help text as the only place to act.
+ */
+template <typename T>
+class AliasedValueFlag : public args::ValueFlag<T> {
+public:
+    AliasedValueFlag(args::Group& group, const std::string& name,
+                     const std::string& help, args::Matcher&& matcher,
+                     std::vector<std::string> hidden_long_names,
+                     args::Options options = {})
+        : args::ValueFlag<T>(group, name, help, std::move(matcher), options),
+          hidden_(std::move(hidden_long_names)) {}
+
+protected:
+    // Mirrors args::FlagBase::GetNameString, minus the hidden long names.
+    std::string GetNameString(const args::HelpParams& params) const override {
+        const std::string postfix =
+            (!params.showValueName || this->NumberOfArguments() == 0)
+                ? std::string() : this->Name();
+        std::string flags;
+        for (const auto& flag : this->GetMatcher().GetFlagStrings()) {
+            if (!flag.isShort &&
+                std::find(hidden_.begin(), hidden_.end(), flag.longFlag) !=
+                    hidden_.end()) {
+                continue;
+            }
+            if (!flags.empty()) flags += ", ";
+            flags += flag.isShort ? params.shortPrefix : params.longPrefix;
+            flags += flag.str();
+            if (!postfix.empty()) {
+                flags += flag.isShort ? params.shortSeparator
+                                      : params.longSeparator;
+                flags += params.valueOpen + postfix + params.valueClose;
+            }
+        }
+        return flags;
+    }
+
+private:
+    std::vector<std::string> hidden_;
+};
+
+/**
+ * @brief The wording every "this letter moved" error uses.
+ *
+ * One builder so the nine trap sites cannot drift into nine phrasings. The
+ * sentence has to carry BOTH halves: the meaning the letter used to have HERE,
+ * so the reader recognises the command they just typed, and the spelling that
+ * replaces it, so they know what to type instead. Naming only the new meaning
+ * would read as a plain "unknown flag" to someone whose script has worked for
+ * a year.
+ *
+ * Example (wfes_sequential, 't'):
+ *   "-t previously meant --exp-time in wfes_sequential and now means
+ *    --num-threads across WFES; use -e/--exp-time or --num-threads explicitly"
+ */
+std::string moved_flag_message(const std::string& tool, char letter,
+                               const std::string& old_meaning,
+                               const std::string& new_meaning,
+                               const std::string& guidance);
+
+/**
+ * @brief A short flag whose meaning MOVED: matching it is a hard parse error.
+ *
+ * The one absolute rule of the flag audit is that a flag must never silently
+ * change meaning. Six letters were re-purposed by the canonicalization, and in
+ * the tool that previously bound each one, simply REBINDING it would break that
+ * rule in the worst available way: `wfes_sequential -t 8` has always meant "an
+ * epoch whose expected length is 8 generations", and rebinding -t to
+ * --num-threads would have turned every such existing invocation into an
+ * eight-thread run of a DIFFERENT model, with no warning and a plausible
+ * answer. So in those tools the letter parses as nothing at all.
+ *
+ * Implemented as an args::ActionFlag because the action runs inside ParseCLI,
+ * before any value is stored and long before the model is built: the throw
+ * lands in each parser's existing `catch (args::Error&)` branch, which prints
+ * the message to stderr with the usage and exits nonzero. Nargs(0, 1) so that
+ * both `-t` and `-t 8` are caught -- the second is what a user's script
+ * actually contains, and leaving it to be re-parsed as a stray positional
+ * would report the wrong problem. Options::Hidden keeps it out of --help:
+ * a trap is a guard rail, not an option.
+ */
+class MovedShortFlag {
+public:
+    MovedShortFlag(args::ArgumentParser& parser, const std::string& tool,
+                   char letter, const std::string& old_meaning,
+                   const std::string& new_meaning,
+                   const std::string& guidance)
+        : flag_(parser, "moved", "", args::Matcher{letter}, args::Nargs(0, 1),
+                throw_action(moved_flag_message(tool, letter, old_meaning,
+                                                new_meaning, guidance)),
+                args::Options::Hidden) {}
+
+private:
+    static std::function<void(const std::vector<std::string>&)>
+    throw_action(std::string message) {
+        return [message](const std::vector<std::string>&) {
+            throw args::ParseError(message);
+        };
+    }
+
+    args::ActionFlag flag_;
+};
 
 /**
  * @brief Class that handles command-line argument parsing for WFES tools
