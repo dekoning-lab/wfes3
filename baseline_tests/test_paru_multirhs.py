@@ -41,6 +41,7 @@ import json
 import math
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -184,6 +185,60 @@ def agreement_case(binary: Path, args: list[str], label: str,
     compare_leaves(ref, got, label)
 
 
+def parse_matrix_file(path: Path) -> list[list[float]]:
+    """Parse a dump from OutputFormatter::write_matrix_to_file
+    (wfes-cli/src/core/output_formatter.cpp): one row per line, comma-separated
+    doubles at max_digits10 precision, no header, no trailing newline after the
+    last row. Row i is state i; column j is the solution for RHS j."""
+    return [[float(x) for x in line.split(",")]
+            for line in path.read_text().splitlines() if line.strip()]
+
+
+def output_N_orientation_case(binary: Path, args: list[str], label: str,
+                              order: int, n_rhs: int) -> None:
+    """--output-N under both libraries must (a) have shape order x n_rhs and
+    (b) agree elementwise at RTOL.
+
+    This is the strongest available regression lock for the ParUSolver::
+    solve_multiple orientation fix: it checks the raw solve_multiple result
+    (the full B matrix) directly, entry by entry, rather than only the
+    AFS-reduced summary the JSON-based cases above compare. That reduction
+    sums over many entries of B, so an orientation bug that happened to
+    preserve row/column sums could in principle slip past it; the full
+    matrix cannot alias that way.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        ref_path = Path(tmp) / "N_default.txt"
+        paru_path = Path(tmp) / "N_paru.txt"
+        ref_proc = run(binary, args + ["--output-N", str(ref_path)])
+        paru_proc = run(binary, args + ["--output-N", str(paru_path), "--library", "ParU"])
+        check(ref_proc.returncode == 0, f"{label}: default library exits 0",
+              f"exit={ref_proc.returncode} stderr={ref_proc.stderr.strip()[:200]!r}")
+        check(paru_proc.returncode == 0, f"{label}: --library ParU exits 0",
+              f"exit={paru_proc.returncode} stderr={paru_proc.stderr.strip()[:200]!r}")
+        if ref_proc.returncode != 0 or paru_proc.returncode != 0:
+            return
+        check(ref_path.is_file() and ref_path.stat().st_size > 0,
+              f"{label}: default --output-N file written non-empty")
+        check(paru_path.is_file() and paru_path.stat().st_size > 0,
+              f"{label}: ParU --output-N file written non-empty")
+
+        ref_mat = parse_matrix_file(ref_path)
+        paru_mat = parse_matrix_file(paru_path)
+        ref_shape = (len(ref_mat), len(ref_mat[0]) if ref_mat else 0)
+        paru_shape = (len(paru_mat), len(paru_mat[0]) if paru_mat else 0)
+        check(ref_shape == (order, n_rhs),
+              f"{label}: default --output-N shape is order x n_rhs ({order}x{n_rhs})",
+              f"got {ref_shape}")
+        check(paru_shape == (order, n_rhs),
+              f"{label}: ParU --output-N shape is order x n_rhs ({order}x{n_rhs})",
+              f"got {paru_shape}")
+
+        ref_flat = {f"{i}:{j}": v for i, row in enumerate(ref_mat) for j, v in enumerate(row)}
+        paru_flat = {f"{i}:{j}": v for i, row in enumerate(paru_mat) for j, v in enumerate(row)}
+        compare_leaves(ref_flat, paru_flat, f"{label} (full matrix)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     ap.add_argument("--bin", type=Path, default=DEFAULT_BIN_DIR,
@@ -208,10 +263,21 @@ def main() -> int:
     print("\n[2] wfafs_stochastic, unequal epochs: ParU vs default")
     agreement_case(wfafs, WFAFS_CASE_UNEQUAL, "wfafs unequal epochs")
 
-    print("\n[3] Non-regression: wfes_single --fixation under ParU vs default")
+    # WFAFS_CASE_UNEQUAL is -N 30,60 over 2 epochs: order = 2*(30+60) + 2 = 182,
+    # n_rhs = 2*30 + 1 = 61 (n_rhs is fixed by the FIRST epoch's population
+    # size). This is the exact case and shape the integrity audit validated
+    # ad hoc (182x61, 11102 entries, max rel diff ~2.8e-15); locking it in here
+    # so that evidence lives in the regression suite, not only in a report.
+    print("\n[3] wfafs_stochastic, unequal epochs, full --output-N matrix "
+          "(order x n_rhs): ParU vs default")
+    output_N_orientation_case(wfafs, WFAFS_CASE_UNEQUAL,
+                              "wfafs unequal epochs --output-N",
+                              order=182, n_rhs=61)
+
+    print("\n[4] Non-regression: wfes_single --fixation under ParU vs default")
     agreement_case(single, SINGLE_CASE, "wfes_single fixation")
 
-    print("\n[4] Non-regression: phase_type_moments under ParU vs default")
+    print("\n[5] Non-regression: phase_type_moments under ParU vs default")
     agreement_case(ptm, PTM_CASE, "phase_type_moments", csv=True)
 
     print(f"\n{checks_run} checks, {len(failures)} failure(s)")
