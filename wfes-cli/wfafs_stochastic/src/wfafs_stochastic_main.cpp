@@ -5,6 +5,10 @@
 #include <sstream>
 #include <utility>
 #include <chrono>
+#include <cmath>
+#include <iomanip>
+#include <limits>
+#include <stdexcept>
 #include "backend_config.h"
 #ifdef WFES_USE_MKL
 #include <mkl.h>
@@ -101,6 +105,143 @@ dvec parse_vector(const std::string& str) {
     return result;
 }
 
+/**
+ * Format a double at round-trip precision.
+ *
+ * std::to_string fixes 6 decimal places, which renders every realistic
+ * mutation rate as "0.000000" -- useless in a diagnostic whose whole job is to
+ * show the user the offending number. Matches num_str() in
+ * wfafs_deterministic_main.cpp and wfes_sequential_main.cpp.
+ */
+static std::string num_str(double x) {
+    std::ostringstream os;
+    os << std::setprecision(std::numeric_limits<double>::max_digits10) << x;
+    return os.str();
+}
+
+/**
+ * Refuse a model whose Wright-Fisher matrix cannot be built.
+ *
+ * Copied from require_usable_matrix() in wfafs_deterministic_main.cpp, where
+ * the same NON_ABSORBING failure mode was found first. (It is static there, so
+ * there is nothing to call; lifting it into a shared header is the clean move
+ * and is recorded as a wish rather than done here, because that header belongs
+ * to another change in flight.)
+ *
+ * Unlike the absorbing models, this tool builds every matrix with
+ * WF::NON_ABSORBING, which keeps all 2N+1 rows -- including the two boundary
+ * rows that wfes_single and friends drop out of Q. wfes-lib builds each row in
+ * log space (wrightFisher.cpp, binom_row): it starts from
+ * ld_binom(start, size, p), whose terms are k*log(p) and (size-k)*log1p(-p),
+ * and steps along the row by adding log(p) - log(1-p). Both are defined only
+ * for a success probability strictly inside (0, 1):
+ *
+ *   - p = 0 makes k*log(p) the product 0 * -inf, i.e. nan;
+ *   - p = 1 makes the row's first term -inf while the step is +inf, and
+ *     -inf + inf is nan.
+ *
+ * Either way the row sums to nan, `r.Q /= r.weight` turns every entry of the
+ * row nan, and the nan then reaches every state of the spectrum -- the sparse
+ * product multiplies the poisoned row by a coefficient of 0, and 0 * nan is
+ * nan, not 0.
+ *
+ * psi_diploid() returns exactly v for row 0 and exactly 1-u for row 2N, so the
+ * boundary rows are degenerate precisely when v is zero, or when 1-u rounds to
+ * 1.0. That second case is the one worth being careful about: it is NOT just
+ * u == 0. Any u below about 1.1e-16 -- 1e-17, 1e-30, values every range check
+ * in this tool accepts as an ordinary small mutation rate -- rounds 1-u to
+ * exactly 1.0 and produced an all-nan spectrum. So the test is on the psi
+ * value the matrix builder will actually see, not on u and v.
+ *
+ * Non-finite s or h are refused for a related but distinct reason: psi_diploid
+ * clamps the two fitnesses with fmax(w, 1e-30), and fmax returns its non-NaN
+ * operand, so `--selection nan` was silently computed as a lethal homozygote
+ * (s = -1) and reported at exit 0 as though it were the model asked for. An
+ * infinite s instead drives w_bar to inf and every psi to nan.
+ *
+ * `Nx` is narrowed to int here because WF::Single() takes int, so this checks
+ * exactly the value the builder will use.
+ *
+ * `where` carries the one thing a caller in THIS tool must get right: which
+ * set of rates it is checking. There are two matrices and they are built from
+ * different numbers -- see the two call sites in main().
+ */
+static void require_usable_matrix(llong Nx, double s, double h, double u,
+                                  double v, const std::string& where) {
+    auto bad = [&where](const std::string& msg) {
+        throw std::runtime_error("Cannot build the " + where +
+                                 " transition matrix: " + msg);
+    };
+
+    if (!std::isfinite(s)) {
+        bad("selection coefficient s = " + num_str(s) + " is not a finite "
+            "number. psi_diploid() clamps the fitnesses with fmax(), which "
+            "discards a NaN rather than propagating it, so this would be "
+            "computed as some other model's answer. Check --selection (-s).");
+    }
+    if (!std::isfinite(h)) {
+        bad("dominance coefficient h = " + num_str(h) + " is not a finite "
+            "number. psi_diploid() clamps the fitnesses with fmax(), which "
+            "discards a NaN rather than propagating it, so this would be "
+            "computed as some other model's answer. Check --dominance (-h).");
+    }
+    if (!std::isfinite(u)) {
+        bad("backward mutation rate u = " + num_str(u) +
+            " is not a finite number. Check --backward-mu (-u).");
+    }
+    if (!std::isfinite(v)) {
+        bad("forward mutation rate v = " + num_str(v) +
+            " is not a finite number. Check --forward-mu (-v).");
+    }
+
+    const int N = static_cast<int>(Nx);
+    const int last = 2 * N;
+
+    // Row 0: psi is exactly v. Zero forward mutation means a lost allele can
+    // never reappear, which is a perfectly sensible model -- but not one this
+    // matrix builder can express, so refuse rather than print its nan.
+    const double psi_lost = WF::psi_diploid(0, N, s, h, u, v);
+    if (!std::isfinite(psi_lost) || psi_lost <= 0.0) {
+        bad("the row for 0 copies has binomial success probability " +
+            num_str(psi_lost) + ", which is not strictly inside (0, 1), so "
+            "wfes-lib's log-space row construction yields nan for that row "
+            "and nan then spreads to the whole spectrum. That probability is "
+            "the forward mutation rate v = " + num_str(v) + " exactly; this "
+            "NON_ABSORBING model keeps the 0-copy row and so needs v > 0. "
+            "Give --forward-mu (-v) a positive rate.");
+    }
+
+    // Row 2N: psi is exactly 1-u, and 1-u == 1.0 for every u below ~1.1e-16.
+    const double psi_fixed = WF::psi_diploid(last, N, s, h, u, v);
+    if (!std::isfinite(psi_fixed) || psi_fixed >= 1.0) {
+        bad("the row for " + std::to_string(last) +
+            " copies has binomial success probability " + num_str(psi_fixed) +
+            ", which is not strictly inside (0, 1), so wfes-lib's log-space "
+            "row construction yields nan for that row and nan then spreads to "
+            "the whole spectrum. That probability is 1 - u for the backward "
+            "mutation rate u = " + num_str(u) + "; 1 - u rounds to exactly 1 "
+            "for any u below about 1.1e-16. This NON_ABSORBING model keeps "
+            "the fixed row and so needs a --backward-mu (-u) large enough "
+            "that 1 - u is representably below 1.");
+    }
+
+    // The interior rows cannot reach 0 or 1 for finite parameters, but they
+    // are cheap to check (O(N) against the builder's O(N^2)) and a bad one
+    // here would be exactly as invisible as the two above.
+    for (int i = 1; i < last; ++i) {
+        const double psi = WF::psi_diploid(i, N, s, h, u, v);
+        if (!std::isfinite(psi) || psi <= 0.0 || psi >= 1.0) {
+            bad("the row for " + std::to_string(i) +
+                " copies has binomial success probability " + num_str(psi) +
+                ", which is not strictly inside (0, 1), so wfes-lib's "
+                "log-space row construction yields nan for that row and nan "
+                "then spreads to the whole spectrum. Check --selection (-s), "
+                "--dominance (-h), --backward-mu (-u) and --forward-mu (-v) "
+                "for this model.");
+        }
+    }
+}
+
 dvec load_initial_distribution(const string& filename) {
     ifstream file(filename);
     if (!file.is_open()) {
@@ -178,6 +319,57 @@ int main(int argc, char const *argv[]) {
                       dvec::Constant(n_models, 1e-9) : 
                       parse_vector(options.forward_mutations_str);
         
+        // One value per model.
+        //
+        // Nothing checked these lengths, and this was the only multi-model
+        // tool in the suite where nothing did -- wfes_switching (:354),
+        // wfes_sequential (:304), wfafs_deterministic and time_dist_sgv all
+        // refuse a short vector by name. The shared parser knows about the
+        // gap and defers to a check here that did not exist
+        // ("Length disagreements are left to the main's require_len"), so the
+        // advisory pass returned silently and no one else looked.
+        //
+        // Every line below is an Eigen coefficient-wise op or an indexed read
+        // against n_models, so a short vector is an out-of-bounds read: an
+        // assert-enabled build aborts with a raw Eigen assertion (exit 134,
+        // naming no argument), and an NDEBUG build -- where that assert is
+        // compiled out -- reads garbage rates, writes a nan-bearing
+        // --output-Q file and then fails in the solver with "matrix is
+        // singular", which points at the wrong thing entirely.
+        //
+        // The test is equality, not ">=": a LONG vector was the worst case of
+        // the set, exiting 0 with plausible output and the extra value
+        // silently discarded.
+        auto require_len = [&](llong got, const char *flag, const char *name) {
+            if (got != n_models) {
+                throw std::runtime_error(
+                    std::string(name) + " (" + flag + ") has " +
+                    std::to_string(got) + " value(s) but there are " +
+                    std::to_string(n_models) + " models (-N gave " +
+                    std::to_string(n_models) + " population sizes). Supply one "
+                    "comma-separated value per model");
+            }
+        };
+        require_len(generations.size(), "-G", "Generations");
+        require_len(factors.size(),     "-f", "Factors");
+        require_len(s_unsc.size(),      "-s", "Selection coefficients");
+        require_len(h.size(),           "-h", "Dominance coefficients");
+        require_len(u_unsc.size(),      "-u", "Backward mutation rates");
+        require_len(v_unsc.size(),      "-v", "Forward mutation rates");
+
+        // Every factor divides N and G immediately below; a zero or
+        // non-finite factor makes that inf, and casting inf to llong is
+        // undefined behaviour (observed: exit 134 inside binom_row).
+        for (llong i = 0; i < n_models; ++i) {
+            if (!(factors(i) > 0) || !std::isfinite(factors(i))) {
+                throw std::runtime_error(
+                    "Scaling factor (-f) for model " + std::to_string(i + 1) +
+                    " is " + num_str(factors(i)) +
+                    "; each factor must be a finite positive number (N/f and "
+                    "G/f are the model this tool actually solves)");
+            }
+        }
+
         // Apply scaling factors
         dvec ps_tmp = population_sizes.cast<double>().array() / factors.array();
         population_sizes = ps_tmp.cast<llong>();
@@ -194,6 +386,61 @@ int main(int argc, char const *argv[]) {
         // The scaling is what can push a legitimate-looking rate out of range.
         Args_Parser::validate_model_domain_vectors(
             population_sizes, s, h, u, v, options.alpha);
+
+        // Psi boundary rows, at BOTH sites that build a matrix.
+        //
+        // Placement is load-bearing: --output-Q writes W.Q immediately after
+        // WF::Switching returns and before the solve, so a check any later
+        // still leaves a nan-bearing file on disk. It did: the four psi faults
+        // below each wrote 16 nan entries into --output-Q and only then failed
+        // with "matrix is singular".
+        //
+        // (A) The switching matrix, one call per model, on the -f-RESCALED
+        // rates. WF::Switching evaluates
+        // psi_diploid(im, N(i), s(j), h(j), u(j), v(j)) for every ordered pair
+        // of models -- state index and population size from model i, rates
+        // from model j -- so the boundary condition (psi is exactly v(j) at
+        // im == 0 and exactly 1 - u(j) at im == 2N(i)) is per-rate-model, one
+        // check per j. It has to be on the rescaled rates and not on what the
+        // user typed, because the two genuinely disagree: `-f 0.5 -u 1e-16` is
+        // degenerate (u*f = 5e-17) and a typed-value check MISSES it, while
+        // `-u 1e-17` with a rescaled u*f of 1e-15 is fine and a typed-value
+        // check would FALSELY REFUSE it.
+        //
+        // Scope, stated plainly: the two BOUNDARY rows are covered exactly,
+        // for every ordered pair, because psi there depends only on j. The
+        // interior sweep inside require_usable_matrix pairs each model's
+        // states with its own rates, so the n_models^2 - n_models MIXED
+        // interior pairs are not exhaustively checked. Interior psi cannot
+        // reach 0 or 1 for finite parameters, and the non-finite s/h/u/v that
+        // could break that are refused per model above, so the gap is
+        // theoretical -- but it is a gap, not a proof.
+        for (llong i = 0; i < n_models; ++i) {
+            require_usable_matrix(population_sizes(i), s(i), h(i), u(i), v(i),
+                                  "model " + std::to_string(i + 1) +
+                                  " (rates shown are -f-rescaled)");
+        }
+
+        // (B) The up-projection at the end builds a SECOND NON_ABSORBING
+        // matrix -- WF::Single(..., s_unsc[lt], h[lt], u_unsc[lt], v_unsc[lt])
+        // -- with the UNSCALED rates, because it maps onto the real
+        // population. Its boundary rows are degenerate independently of the
+        // rescaled ones, which is what makes this site easy to miss:
+        // `-N 1000 -G 10 -f 100 -u 1e-17` writes a completely CLEAN Q
+        // (u*f = 1e-15 passes (A)) and produced nan in the spectrum anyway.
+        // The factor test gates it so that an f == 1 run is not refused for a
+        // matrix it never builds -- it must match the condition on the
+        // projection block itself, at the bottom of main().
+        {
+            const llong lt = n_models - 1;
+            if (factors(lt) != 1.0) {
+                require_usable_matrix(population_sizes(lt), s_unsc(lt), h(lt),
+                                      u_unsc(lt), v_unsc(lt),
+                                      "up-projection (model " +
+                                      std::to_string(lt + 1) +
+                                      ", rates as typed, NOT -f-rescaled)");
+            }
+        }
 
         // Set thread count
 #ifdef OMP
