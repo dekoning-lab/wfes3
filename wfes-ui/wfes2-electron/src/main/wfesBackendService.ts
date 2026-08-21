@@ -126,10 +126,16 @@ export class WfesBackendService {
         // Remove --json flag for matrix output run
         // Drop --json AND any --output-N the builder already added (with its
         // value), so the re-run's own temp destination is the only one present.
+        //
+        // --output-I and --output-V are dropped for the same reason they are
+        // not re-added: the first run already wrote both to the user's chosen
+        // paths, and re-running them here would rewrite identical content --
+        // and in V's case pay for a second full N*N product.
+        const dropWithValue = new Set(['--output-N', '--output-I', '--output-V'])
         const matrixArgs: string[] = []
         for (let i = 0; i < args.length; i++) {
           if (args[i] === '--json') continue
-          if (args[i] === '--output-N') { i++; continue }
+          if (dropWithValue.has(args[i])) { i++; continue }
           matrixArgs.push(args[i])
         }
         matrixArgs.push('--output-N', matrixFile)
@@ -625,6 +631,21 @@ export class WfesBackendService {
       if (o.writeN)    args.push('--output-N',     this.outputPath(params, 'wfes_single', 'N'))
       if (o.writeNExt) args.push('--output-N-ext', this.outputPath(params, 'wfes_single', 'N_ext'))
       if (o.writeNFix) args.push('--output-N-fix', this.outputPath(params, 'wfes_single', 'N_fix'))
+      // --output-I is written in every model type: the CLI dumps the starting
+      // distribution before it branches on the model.
+      if (o.writeI)    args.push('--output-I',     this.outputPath(params, 'wfes_single', 'I'))
+      // --output-E and --output-V are mode-gated in the CLI -- the writes sit
+      // inside the --equilibrium and --fundamental branches respectively, so
+      // passing them in any other mode is accepted and then silently ignored.
+      // Gate them here as well, so a checkbox left ticked while the user
+      // switches modes cannot promise a file that never gets written. The view
+      // disables the same two checkboxes outside their mode.
+      if (o.writeE && params.model_type === 'equilibrium') {
+        args.push('--output-E', this.outputPath(params, 'wfes_single', 'E'))
+      }
+      if (o.writeV && params.model_type === 'fundamental') {
+        args.push('--output-V', this.outputPath(params, 'wfes_single', 'V'))
+      }
     }
 
     return args

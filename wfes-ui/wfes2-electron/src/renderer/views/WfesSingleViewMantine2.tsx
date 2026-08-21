@@ -158,7 +158,22 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   const [writeN, setWriteN] = useState(false)
   const [writeNExt, setWriteNExt] = useState(false)
   const [writeNFix, setWriteNFix] = useState(false)
+  const [writeI, setWriteI] = useState(false)
+  const [writeE, setWriteE] = useState(false)
+  const [writeV, setWriteV] = useState(false)
   const [writeRes, setWriteRes] = useState(false)
+
+  // --output-E is written only inside the CLI's --equilibrium branch and
+  // --output-V only inside its --fundamental branch; in any other mode the
+  // flag parses and is then ignored. The checkboxes are disabled outside
+  // their mode, and everything downstream reads emitE/emitV rather than the
+  // raw state, so a box left ticked while the mode changes never asks for a
+  // file the run will not produce. --output-I has no such restriction: the
+  // CLI writes the starting distribution before it branches on model type.
+  const canWriteE = modelType === 'equilibrium'
+  const canWriteV = modelType === 'fundamental'
+  const emitE = writeE && canWriteE
+  const emitV = writeV && canWriteV
 
   // Execution options
   const [force, setForce] = useState(false)
@@ -282,6 +297,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
         dominanceCoeff: numOrUndefined(dominanceCoefficient),
         outputOptions: {
           writeQ, writeR, writeB, writeN, writeNExt, writeNFix,
+          writeI, writeE: emitE, writeV: emitV,
           writeRes
         },
         executionOptions: {
@@ -398,6 +414,9 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     if (writeN) parts.push(`--output-N ${dir}/wfes_single_N.csv`)
     if (writeNExt) parts.push(`--output-N-ext ${dir}/wfes_single_N_ext.csv`)
     if (writeNFix) parts.push(`--output-N-fix ${dir}/wfes_single_N_fix.csv`)
+    if (writeI) parts.push(`--output-I ${dir}/wfes_single_I.csv`)
+    if (emitE) parts.push(`--output-E ${dir}/wfes_single_E.csv`)
+    if (emitV) parts.push(`--output-V ${dir}/wfes_single_V.csv`)
     parts.push('--json')
     return parts.join(' ')
   }
@@ -423,7 +442,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   }
 
   // Count active output options
-  const activeOutputOptions = [writeQ, writeR, writeB, writeN, writeNExt, writeNFix, writeRes].filter(Boolean).length
+  const activeOutputOptions = [writeQ, writeR, writeB, writeN, writeNExt, writeNFix, writeI, emitE, emitV, writeRes].filter(Boolean).length
 
   /**
    * The quantities this mode reports, in display order.
@@ -1167,6 +1186,40 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                 />
                 <Text size="xs" c="dimmed" ml={22}>
                   Fundamental matrix, conditioned on fixation
+                </Text>
+              </div>
+              <div>
+                <Checkbox 
+                  label="Write I" 
+                  checked={writeI} 
+                  onChange={(e) => setWriteI(e.currentTarget.checked)} 
+                />
+                <Text size="xs" c="dimmed" ml={22}>
+                  Initial probability distribution over starting states
+                </Text>
+              </div>
+              <div>
+                <Checkbox 
+                  label="Write E" 
+                  checked={writeE} 
+                  disabled={!canWriteE}
+                  onChange={(e) => setWriteE(e.currentTarget.checked)} 
+                />
+                <Text size="xs" c="dimmed" ml={22}>
+                  Equilibrium allele frequency distribution
+                  {!canWriteE && ' \u2014 requires the Equilibrium model'}
+                </Text>
+              </div>
+              <div>
+                <Checkbox 
+                  label="Write V" 
+                  checked={writeV} 
+                  disabled={!canWriteV}
+                  onChange={(e) => setWriteV(e.currentTarget.checked)} 
+                />
+                <Text size="xs" c="dimmed" ml={22}>
+                  Variance of sojourn times: V = N(2N_dg - I) - N_sq
+                  {!canWriteV && ' \u2014 requires the Fundamental model'}
                 </Text>
               </div>
               <div>
