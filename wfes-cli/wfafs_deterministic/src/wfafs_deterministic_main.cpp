@@ -225,7 +225,14 @@ static void require_normalisable(const dvec& p, const std::string& where) {
             "The allele frequency spectrum after " + where + " sums to " +
             num_str(total) + ", so it cannot be normalised into a probability "
             "distribution. The computation did not produce a usable result; "
-            "check -N, -G and --alpha.");
+            "if --initial was given, check that file: a malformed or "
+            "badly-scaled starting distribution can reach this point (the "
+            "up-front checks in load_initial_distribution only rule out a "
+            "non-positive or non-finite total, not one that later evolves "
+            "to zero). Otherwise suspect underflow: an extreme selection, "
+            "dominance or mutation-rate combination, run for enough "
+            "generations, can drive every remaining state to numerically "
+            "zero in double precision.");
     }
 }
 
