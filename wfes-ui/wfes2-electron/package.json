@@ -29,7 +29,8 @@
     "verify:projection": "node scripts/verify-projection.mjs",
     "postinstall": "node -e \"if(process.platform==='darwin'){require('child_process').execSync('bash scripts/brand-dev-electron.sh',{stdio:'inherit'})}\"",
     "bundle:bin:linux": "bash scripts/bundle-bin-linux.sh",
-    "verify:cli-install": "node scripts/verify-cli-install.mjs"
+    "verify:cli-install": "node scripts/verify-cli-install.mjs",
+    "verify:previews:app": "node scripts/verify-previews.mjs --app"
   },
   "keywords": [],
   "author": "",
