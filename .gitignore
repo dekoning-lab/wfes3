@@ -136,3 +136,4 @@ __pycache__/
 
 # Claude Code session config -- developer-local, never shipped
 .claude/
+.superpowers/
