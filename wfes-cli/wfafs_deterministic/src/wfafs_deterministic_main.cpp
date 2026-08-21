@@ -1,6 +1,7 @@
 #ifdef WFES_CLI
 #include <iostream>
 #include "backend_config.h"
+#include <cmath>
 #include <iomanip>
 #include <limits>
 #include <vector>
@@ -81,22 +82,150 @@ struct Options {
     bool csv_output = false;
 };
 
-// Helper function to iterate generations within an epoch
-void iterate_generations(dvec& x, llong N, llong t, double s, double h, double u, double v, double alpha, string library, llong block_size, bool verbose = false) {
-    if (t <= 0) return;
-    
-    WF::Matrix wf = WF::Single(N, N, WF::NON_ABSORBING, s, h, u, v, true, alpha, verbose, block_size, library);
-    wf.Q->multiplyInPlaceRep(x, t, true);
-    x = x / x.sum();  // Normalize
+/**
+ * Format a double at round-trip precision.
+ *
+ * std::to_string fixes 6 decimal places, which renders every realistic
+ * mutation rate as "0.000000" -- useless in a diagnostic whose whole job is to
+ * show the user the offending number. Matches num_str() in
+ * wfes_sequential_main.cpp.
+ */
+static std::string num_str(double x) {
+    std::ostringstream os;
+    os << std::setprecision(std::numeric_limits<double>::max_digits10) << x;
+    return os.str();
 }
 
-// Helper function to switch population size between epochs
-dvec switch_population_size(const dvec& x, llong Nx, llong Ny, double s, double h, double u, double v, double alpha, string library, llong block_size, bool verbose = false) {
-    WF::Matrix wf = WF::Single(Nx, Ny, WF::NON_ABSORBING, s, h, u, v, true, alpha, verbose, block_size, library);
-    dvec x_copy = x;  // Create a non-const copy
-    dvec next = wf.Q->multiply(x_copy, true);
-    next = next / next.sum();  // Normalize
-    return next;
+/**
+ * Refuse an epoch whose Wright-Fisher matrix cannot be built.
+ *
+ * Unlike the absorbing models, this tool builds every matrix with
+ * WF::NON_ABSORBING, which keeps all 2N+1 rows -- including the two boundary
+ * rows that wfes_single and friends drop out of Q. wfes-lib builds each row in
+ * log space (wrightFisher.cpp, binom_row): it starts from
+ * ld_binom(start, size, p), whose terms are k*log(p) and (size-k)*log1p(-p),
+ * and steps along the row by adding log(p) - log(1-p). Both are defined only
+ * for a success probability strictly inside (0, 1):
+ *
+ *   - p = 0 makes k*log(p) the product 0 * -inf, i.e. nan;
+ *   - p = 1 makes the row's first term -inf while the step is +inf, and
+ *     -inf + inf is nan.
+ *
+ * Either way the row sums to nan, `r.Q /= r.weight` turns every entry of the
+ * row nan, and the nan then reaches every state of the spectrum -- the sparse
+ * product multiplies the poisoned row by a coefficient of 0, and 0 * nan is
+ * nan, not 0.
+ *
+ * psi_diploid() returns exactly v for row 0 and exactly 1-u for row 2N, so the
+ * boundary rows are degenerate precisely when v is zero, or when 1-u rounds to
+ * 1.0. That second case is the one worth being careful about: it is NOT just
+ * u == 0. Any u below about 1.1e-16 -- 1e-17, 1e-30, values every range check
+ * in this tool accepts as an ordinary small mutation rate -- rounds 1-u to
+ * exactly 1.0 and produced an all-nan spectrum at exit 0. So the test is on
+ * the psi value the matrix builder will actually see, not on u and v.
+ *
+ * Non-finite s or h are refused for a related but distinct reason: psi_diploid
+ * clamps the two fitnesses with fmax(w, 1e-30), and fmax returns its non-NaN
+ * operand, so `--selection nan` was silently computed as a lethal homozygote
+ * (s = -1) and reported at exit 0 as though it were the model asked for. An
+ * infinite s instead drives w_bar to inf and every psi to nan.
+ *
+ * `Nx` is narrowed to int here because WF::Single() takes int, so this checks
+ * exactly the value the builder will use.
+ */
+static void require_usable_matrix(llong Nx, double s, double h, double u,
+                                  double v, const std::string& where) {
+    auto bad = [&where](const std::string& msg) {
+        throw std::runtime_error("Cannot build the " + where +
+                                 " transition matrix: " + msg);
+    };
+
+    if (!std::isfinite(s)) {
+        bad("selection coefficient s = " + num_str(s) + " is not a finite "
+            "number. psi_diploid() clamps the fitnesses with fmax(), which "
+            "discards a NaN rather than propagating it, so this would be "
+            "computed as some other model's answer. Check --selection (-s).");
+    }
+    if (!std::isfinite(h)) {
+        bad("dominance coefficient h = " + num_str(h) + " is not a finite "
+            "number. psi_diploid() clamps the fitnesses with fmax(), which "
+            "discards a NaN rather than propagating it, so this would be "
+            "computed as some other model's answer. Check --dominance (-h).");
+    }
+    if (!std::isfinite(u)) {
+        bad("backward mutation rate u = " + num_str(u) +
+            " is not a finite number. Check --backward-mu (-u).");
+    }
+    if (!std::isfinite(v)) {
+        bad("forward mutation rate v = " + num_str(v) +
+            " is not a finite number. Check --forward-mu (-v).");
+    }
+
+    const int N = static_cast<int>(Nx);
+    const int last = 2 * N;
+
+    // Row 0: psi is exactly v. Zero forward mutation means a lost allele can
+    // never reappear, which is a perfectly sensible model -- but not one this
+    // matrix builder can express, so refuse rather than print its nan.
+    const double psi_lost = wrightfisher::psi_diploid(0, N, s, h, u, v);
+    if (!std::isfinite(psi_lost) || psi_lost <= 0.0) {
+        bad("the row for 0 copies has binomial success probability " +
+            num_str(psi_lost) + ", which is not strictly inside (0, 1), so "
+            "wfes-lib's log-space row construction yields nan for that row "
+            "and nan then spreads to the whole spectrum. That probability is "
+            "the forward mutation rate v = " + num_str(v) + " exactly; this "
+            "NON_ABSORBING model keeps the 0-copy row and so needs v > 0. "
+            "Give --forward-mu (-v) a positive rate.");
+    }
+
+    // Row 2N: psi is exactly 1-u, and 1-u == 1.0 for every u below ~1.1e-16.
+    const double psi_fixed = wrightfisher::psi_diploid(last, N, s, h, u, v);
+    if (!std::isfinite(psi_fixed) || psi_fixed >= 1.0) {
+        bad("the row for " + std::to_string(last) +
+            " copies has binomial success probability " + num_str(psi_fixed) +
+            ", which is not strictly inside (0, 1), so wfes-lib's log-space "
+            "row construction yields nan for that row and nan then spreads to "
+            "the whole spectrum. That probability is 1 - u for the backward "
+            "mutation rate u = " + num_str(u) + "; 1 - u rounds to exactly 1 "
+            "for any u below about 1.1e-16. This NON_ABSORBING model keeps "
+            "the fixed row and so needs a --backward-mu (-u) large enough "
+            "that 1 - u is representably below 1.");
+    }
+
+    // The interior rows cannot reach 0 or 1 for finite parameters, but they
+    // are cheap to check (O(N) against the builder's O(N^2)) and a bad one
+    // here would be exactly as invisible as the two above.
+    for (int i = 1; i < last; ++i) {
+        const double psi = wrightfisher::psi_diploid(i, N, s, h, u, v);
+        if (!std::isfinite(psi) || psi <= 0.0 || psi >= 1.0) {
+            bad("the row for " + std::to_string(i) +
+                " copies has binomial success probability " + num_str(psi) +
+                ", which is not strictly inside (0, 1), so wfes-lib's "
+                "log-space row construction yields nan for that row and nan "
+                "then spreads to the whole spectrum. Check --selection (-s), "
+                "--dominance (-h), --backward-mu (-u) and --forward-mu (-v) "
+                "for this epoch.");
+        }
+    }
+}
+
+/**
+ * Refuse a normalisation whose denominator carries no probability.
+ *
+ * Every step of this tool ends in `p_vec /= p_vec.sum()`. A sum of zero makes
+ * that 0/0 = nan for all 2N+1 entries, and a non-finite sum makes it nan or 0
+ * across the board; either way the run has stopped computing a distribution
+ * and must say so where it happened rather than at the far end of the output.
+ */
+static void require_normalisable(const dvec& p, const std::string& where) {
+    const double total = p.sum();
+    if (!std::isfinite(total) || total <= 0.0) {
+        throw std::runtime_error(
+            "The allele frequency spectrum after " + where + " sums to " +
+            num_str(total) + ", so it cannot be normalised into a probability "
+            "distribution. The computation did not produce a usable result; "
+            "check -N, -G and --alpha.");
+    }
 }
 
 Options parse_arguments(int argc, char* argv[]) {
@@ -234,7 +363,32 @@ int main(int argc, char* argv[]) {
             mkl_set_num_threads(options.n_threads);
 #endif
         }
-        
+
+        // Every matrix this run will build has to be checked before anything
+        // is computed, not as each one is reached: the starting distribution
+        // below already calls binom_row() with the first epoch's parameters,
+        // so a check deferred to the epoch loop would be too late to stop the
+        // integration-cutoff branch from building a nan starting vector. (That
+        // branch's own `first(0) >= 1.0` test does not catch it either -- every
+        // comparison against nan is false, so a nan row walks straight past
+        // it.) There are two families of matrices: one per epoch, and one per
+        // size switch, which pairs the CURRENT epoch's population size with
+        // the NEXT epoch's model parameters.
+        for (size_t epoch = 0; epoch < options.N_vec.size(); ++epoch) {
+            require_usable_matrix(
+                options.N_vec[epoch], options.s_vec[epoch], options.h_vec[epoch],
+                options.u_vec[epoch], options.v_vec[epoch],
+                "epoch " + std::to_string(epoch + 1));
+            if (epoch + 1 < options.N_vec.size()) {
+                require_usable_matrix(
+                    options.N_vec[epoch], options.s_vec[epoch + 1],
+                    options.h_vec[epoch + 1], options.u_vec[epoch + 1],
+                    options.v_vec[epoch + 1],
+                    "epoch " + std::to_string(epoch + 1) + " -> " +
+                    std::to_string(epoch + 2) + " population size switch");
+            }
+        }
+
         // Starting distribution. --initial supplies the whole thing; otherwise
         // it is a point mass at p, which is what this has always used. The
         // range check applies only to p, since a supplied distribution carries
@@ -276,6 +430,7 @@ int main(int argc, char* argv[]) {
                 llong state = row.start + 1 + i;
                 if (state < p_vec.size()) p_vec(state) = tail(i);
             }
+            require_normalisable(p_vec, "the --integration-cutoff starting distribution");
             p_vec /= p_vec.sum();
         } else {
             if (options.p < 0) {
@@ -314,8 +469,9 @@ int main(int argc, char* argv[]) {
                 options.u_vec[epoch], options.v_vec[epoch], 
                 true, options.alpha, options.verbose, options.block_size, options.library);
             wf.Q->multiplyInPlaceRep(p_vec, options.t_vec[epoch], true);
+            require_normalisable(p_vec, "epoch " + std::to_string(epoch + 1));
             p_vec /= p_vec.sum();
-            
+
             // Switch population size for next epoch (if not last epoch)
             if (epoch + 1 < options.N_vec.size()) {
                 WF::Matrix wf_switch = WF::Single(
@@ -325,11 +481,40 @@ int main(int argc, char* argv[]) {
                     options.u_vec[epoch + 1], options.v_vec[epoch + 1], 
                     true, options.alpha, options.verbose, options.block_size, options.library);
                 dvec next = wf_switch.Q->multiply(p_vec, true);
+                require_normalisable(
+                    next, "the epoch " + std::to_string(epoch + 1) + " -> " +
+                    std::to_string(epoch + 2) + " population size switch");
                 next /= next.sum();
                 p_vec = next;
             }
         }
-        
+
+        // Last line of defence, and deliberately independent of every check
+        // above: whatever route a nan or an inf might take into the spectrum,
+        // it stops here rather than being published. The guards earlier in
+        // this run name a cause; this one only guarantees that nothing
+        // unprintable is printed, in any format. It has to sit ahead of ALL
+        // FOUR output branches -- a bare `nan` is not valid JSON (python's
+        // json.loads and node's JSON.parse both reject it, and jq silently
+        // coerces it to 1.797...e308, a plausible-looking fake number in any
+        // downstream pipeline), and it is no more meaningful in the csv, the
+        // plain two-column dump or the --output-file.
+        auto require_finite = [](double value, const std::string& name) {
+            if (!std::isfinite(value)) {
+                throw std::runtime_error(
+                    "Computed " + name + " = " + num_str(value) + ", which is "
+                    "not a number this tool can report. The computation did "
+                    "not produce a usable result, so no spectrum is written.");
+            }
+        };
+        for (llong i = 0; i < p_vec.size(); i++) {
+            require_finite(p_vec(i), "the probability of " +
+                                     std::to_string(i) + " copies");
+        }
+        // alpha is echoed into the JSON parameters block, so it is published
+        // too and is swept on the same terms as the spectrum itself.
+        require_finite(options.alpha, "alpha");
+
         // Output final allele frequency spectrum
         if (!options.output_file.empty()) {
             std::ofstream output_stream(options.output_file.c_str());

@@ -1,0 +1,468 @@
+#!/usr/bin/env python3
+"""
+Integrity checks for wfafs_deterministic.
+
+The defect
+----------
+    wfafs_deterministic -p 2 --pop-sizes 5,10 --generations 0,0 \\
+        --selection 0,0 --backward-mu 0,0 --forward-mu 0,0 --json
+
+exited 0 with completely empty stderr and printed 21 bare `nan` tokens as the
+allele frequency spectrum. A bare `nan` is not valid JSON -- python's
+json.loads and node's JSON.parse both reject it, and jq coerces it -- so the
+tool published an unparseable document as a clean success. Nothing in the tool
+looked at whether the numbers it printed were numbers.
+
+Root cause
+----------
+This tool builds every epoch matrix with WF::NON_ABSORBING, which keeps all
+2N+1 rows -- including the two boundary rows that the absorbing models
+(wfes_single and friends) drop from Q. wfes-lib builds each row in log space
+(wrightFisher.cpp binom_row: `ld_binom(start, size, p)` and
+`log(p) - log(1 - p)`), which is defined only for a success probability
+strictly inside (0, 1):
+
+  * p = 0 makes ld_binom's `k * log(pr)` term 0 * -inf = nan.
+  * p = 1 makes `log(1 - p)` = -inf while `log(p) - log(1 - p)` = +inf, so the
+    row recurrence adds -inf to +inf = nan.
+
+Either way the row's weight is nan, `r.Q /= r.weight` turns the whole row nan,
+and the sparse product spreads it to every state, because the nan row is
+multiplied by a coefficient of 0 and 0 * nan = nan.
+
+psi_diploid() returns *exactly* v for row 0 and *exactly* 1 - u for row 2N, so
+the two boundary rows are degenerate precisely when:
+
+  * v == 0                (no forward mutation), or
+  * 1 - u == 1.0 in double precision, i.e. u below about 1.1e-16 -- which
+    includes u == 0 but ALSO catches nonzero rates such as u = 1e-17 or
+    u = 1e-30, where the tool produced an all-nan spectrum with no warning.
+
+Non-finite s or h poison the interior rows the same way (`--selection inf` also
+yielded an all-nan spectrum at exit 0).
+
+What must happen instead
+------------------------
+Refuse, don't substitute. A run whose transition matrix cannot be built exits
+nonzero with a diagnostic naming the offending parameter, and prints no
+results in any output format. Additionally every published probability is
+swept for finiteness before any output is emitted, so any *other* route to a
+nan (a normalising sum of zero, say) is a refusal rather than a publication.
+
+Usage
+-----
+    python3 baseline_tests/test_degenerate_wfafs_deterministic.py [--bin DIR]
+                                                                 [--reference BIN]
+
+--bin is a DIRECTORY holding wfafs_deterministic (default:
+wfes-cli/build-cxdet/bin). --reference is an optional second wfafs_deterministic
+binary (default: the one inside an installed WFES3.app) whose healthy-run
+output is compared byte for byte against the build under test; it is skipped
+if absent. Exit status is 0 only if every check passes.
+
+Note on the recorded md5s
+-------------------------
+HEALTHY_MD5 locks the healthy-run stdout of all three output formats byte for
+byte. The values were recorded from a build of the PRE-FIX code on
+macOS/arm64 with the platform-default solver backend, and independently
+confirmed to equal the output of the shipped
+/Applications/WFES3.app/Contents/Resources/bin/wfafs_deterministic. They exist
+so that a guard added to the degenerate path -- or the deletion of the two
+dead helper functions in wfafs_deterministic_main.cpp -- cannot quietly move
+the healthy path with it. A mismatch means either that regression or an
+unrelated change to how this tool formats output; check which before assuming
+the worst.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cxdet" / "bin"
+DEFAULT_REFERENCE = Path(
+    "/Applications/WFES3.app/Contents/Resources/bin/wfafs_deterministic")
+
+# The validated reproducer, exactly as found.
+REPRO = ["-p", "2", "--pop-sizes", "5,10", "--generations", "0,0",
+         "--selection", "0,0", "--backward-mu", "0,0", "--forward-mu", "0,0"]
+
+# A healthy two-epoch run: same model, ordinary generation counts and the
+# tool's own default mutation rates (1e-9).
+HEALTHY = ["-p", "2", "--pop-sizes", "5,10", "--generations", "10,10",
+           "--selection", "0,0"]
+
+# 2*10 + 1 states in the final epoch.
+HEALTHY_N_STATES = 21
+
+# md5 of raw stdout for HEALTHY in each format (see module docstring).
+HEALTHY_MD5 = {
+    "json": "6efe032b585a3548704eb72249368ffc",
+    "csv": "db4e7458d2edd6616e6bd60c39cbfe53",
+    "plain": "b946c18f78e2bd4eff1a481378a90916",
+}
+
+FORMATS = (("json", ["--json"]), ("csv", ["--csv"]), ("plain", []))
+
+# `inf`, `-inf`, `infinity`, `nan` as standalone tokens. Bounded on both sides
+# so that ordinary words ("info") and exponents ("1e-09") do not match.
+NONFINITE_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])-?(?:inf(?:inity)?|nan)(?![A-Za-z0-9_])", re.IGNORECASE)
+
+# A printed spectrum row, in any of the three formats:
+#   json   {"count": 0, "probability": 0.5}
+#   csv    0,0.5
+#   plain  0<TAB>0.5
+SPECTRUM_ROW_RE = {
+    "json": re.compile(r'"probability"\s*:'),
+    "csv": re.compile(r"^\s*\d+\s*,\s*\S+\s*$", re.MULTILINE),
+    "plain": re.compile(r"^\s*\d+\t\S+\s*$", re.MULTILINE),
+}
+
+failures: list[str] = []
+checks_run = 0
+
+
+def check(label: str, ok: bool, detail: str = "") -> bool:
+    global checks_run
+    checks_run += 1
+    if ok:
+        print(f"  PASS  {label}")
+    else:
+        print(f"  FAIL  {label}" + (f"\n          {detail}" if detail else ""))
+        failures.append(label)
+    return ok
+
+
+def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess:
+    """Run the tool, capturing raw bytes so output can be hashed exactly."""
+    return subprocess.run([str(binary), *args], capture_output=True)
+
+
+def out_text(proc: subprocess.CompletedProcess) -> str:
+    return proc.stdout.decode("utf-8", "replace")
+
+
+def err_text(proc: subprocess.CompletedProcess) -> str:
+    return proc.stderr.decode("utf-8", "replace")
+
+
+def both_text(proc: subprocess.CompletedProcess) -> str:
+    return out_text(proc) + err_text(proc)
+
+
+def assert_refusal(tool: Path, label: str, model: list[str],
+                   wanted_in_stderr: tuple[str, ...]) -> None:
+    """A degenerate run must refuse identically in all three output formats.
+
+    Four independent properties are asserted, because no one of them implies
+    the others: a nonzero exit says nothing about what reached stdout, and an
+    output free of nan tokens says nothing about whether a *wrong but finite*
+    spectrum was printed. The fourth -- no spectrum row on stdout -- is what
+    actually rules out "printed results, then exited nonzero", which is what a
+    guard placed after the output block instead of before it would do.
+
+    The nan/inf sweep is scoped to STDOUT, deliberately. stdout is the
+    published artifact and the place where a bare `nan` is invalid JSON;
+    stderr is a diagnostic, and a diagnostic whose job is to name the offending
+    quantity has to be free to print it. That is already the house pattern --
+    wfes_sequential's own refusal reads "Computed T_ext = nan, which is not a
+    number this tool can report", and test_degenerate_switching_sequential.py
+    correspondingly runs its BAD_JSON_TOKEN check against r.stdout alone.
+    Widening this check to stdout+stderr would not make the tool safer; it
+    would only force the diagnostics to stop naming the value that broke the
+    run.
+    """
+    for fmt_name, fmt_args in FORMATS:
+        proc = run(tool, model + fmt_args)
+        stdout = out_text(proc)
+        stderr = err_text(proc)
+        tag = f"{label} [{fmt_name}]"
+
+        check(f"{tag} exits nonzero", proc.returncode != 0,
+              f"exit {proc.returncode}; stdout: {stdout.strip()[:400]}")
+        hits = NONFINITE_RE.findall(stdout)
+        check(f"{tag} no nan/inf token on stdout", not hits,
+              f"found {sorted(set(hits))} in: {stdout.strip()[:400]}")
+        check(f"{tag} stderr carries a diagnostic", stderr.strip() != "",
+              "stderr was empty")
+        lowered = stderr.lower()
+        named = [w for w in wanted_in_stderr if w.lower() in lowered]
+        check(f"{tag} diagnostic names the offending parameter "
+              f"(one of {list(wanted_in_stderr)})", bool(named),
+              f"stderr: {stderr.strip()[:400]}")
+        check(f"{tag} stdout printed no spectrum row",
+              SPECTRUM_ROW_RE[fmt_name].search(stdout) is None,
+              f"stdout: {stdout.strip()[:400]}")
+
+
+# --------------------------------------------------------------------------
+# The reproducer
+# --------------------------------------------------------------------------
+
+def test_repro_refuses(tool: Path) -> None:
+    print("wfafs_deterministic: the validated reproducer (u = v = 0)")
+    # u = 0 and v = 0 are both degenerate here; the diagnostic must name at
+    # least one of them by flag.
+    assert_refusal(tool, "repro", REPRO,
+                   ("--backward-mu", "--forward-mu"))
+
+
+def test_repro_json_is_not_parseable_garbage(tool: Path) -> None:
+    """The headline symptom: stdout was a JSON document no parser accepts."""
+    print("wfafs_deterministic: the reproducer publishes no unparseable JSON")
+    proc = run(tool, REPRO + ["--json"])
+    stdout = out_text(proc).strip()
+    if stdout == "":
+        check("stdout is empty, so there is no unparseable document", True)
+        return
+    try:
+        json.loads(stdout[stdout.find("{"):])
+        parsed = True
+    except (json.JSONDecodeError, ValueError):
+        parsed = False
+    check("any JSON left on stdout parses with json.loads", parsed,
+          f"stdout: {stdout[:400]}")
+
+
+def test_repro_output_file_not_written(tool: Path, tmp: Path) -> None:
+    """--output-file must not leave a file of nans behind on a refused run."""
+    print("wfafs_deterministic: a refused run writes no --output-file")
+    path = tmp / "wfafs_det_refused.tsv"
+    proc = run(tool, REPRO + ["--output-file", str(path)])
+    check("exits nonzero", proc.returncode != 0,
+          f"exit {proc.returncode}: {both_text(proc)[:400]}")
+    if path.exists():
+        body = path.read_text("utf-8", "replace")
+        check("--output-file was not created", False,
+              f"{path} exists; contents: {body[:200]}")
+        check("--output-file holds no nan/inf",
+              not NONFINITE_RE.findall(body), f"contents: {body[:200]}")
+    else:
+        check("--output-file was not created", True)
+        check("--output-file holds no nan/inf", True)
+
+
+# --------------------------------------------------------------------------
+# Each degenerate axis on its own
+# --------------------------------------------------------------------------
+
+def test_each_degenerate_axis(tool: Path) -> None:
+    """Bisected from the reproducer: each of these alone yielded an all-nan
+    spectrum at exit 0 in the pre-fix build (verified against both the shipped
+    binary and a build of this branch)."""
+    cases = [
+        ("v = 0 (no forward mutation), single epoch",
+         ["-p", "2", "--pop-sizes", "5", "--generations", "10",
+          "--selection", "0", "--backward-mu", "1e-9", "--forward-mu", "0"],
+         ("--forward-mu",)),
+        ("u = 0 (no backward mutation), single epoch",
+         ["-p", "2", "--pop-sizes", "5", "--generations", "10",
+          "--selection", "0", "--backward-mu", "0", "--forward-mu", "1e-9"],
+         ("--backward-mu",)),
+        # NOT zero, and accepted by every range check in the tool -- but
+        # 1 - 1e-17 == 1.0 in double precision, so row 2N is still degenerate.
+        # This is the case a naive `if (u == 0)` guard would miss.
+        ("u = 1e-17 (nonzero, but 1 - u rounds to exactly 1)",
+         ["-p", "2", "--pop-sizes", "5", "--generations", "10",
+          "--selection", "0", "--backward-mu", "1e-17", "--forward-mu", "1e-9"],
+         ("--backward-mu",)),
+        ("u = 1e-30 (nonzero, same rounding)",
+         ["-p", "2", "--pop-sizes", "5", "--generations", "10",
+          "--selection", "0", "--backward-mu", "1e-30", "--forward-mu", "1e-9"],
+         ("--backward-mu",)),
+        # A degenerate epoch anywhere in the chain must be caught, not just
+        # the first: the epoch-2 matrix and the size-switch matrix both use
+        # epoch 2's rates.
+        ("u = 0 in the SECOND epoch only",
+         ["-p", "2", "--pop-sizes", "5,10", "--generations", "10,10",
+          "--selection", "0,0", "--backward-mu", "1e-9,0",
+          "--forward-mu", "1e-9,1e-9"],
+         ("--backward-mu",)),
+        ("s = inf",
+         ["-p", "2", "--pop-sizes", "5", "--generations", "10",
+          "--selection", "inf"],
+         ("--selection", "-s")),
+        ("h = inf",
+         ["-p", "2", "--pop-sizes", "5", "--generations", "10",
+          "--selection", "0.1", "--dominance", "inf"],
+         ("--dominance", "-h")),
+    ]
+    for label, model, wanted in cases:
+        print(f"wfafs_deterministic: {label}")
+        assert_refusal(tool, label, model, wanted)
+
+
+# --------------------------------------------------------------------------
+# The healthy path must be untouched
+# --------------------------------------------------------------------------
+
+def test_healthy_unchanged(tool: Path) -> dict[str, str]:
+    print("wfafs_deterministic: a healthy run is unaffected")
+    digests: dict[str, str] = {}
+    for fmt_name, fmt_args in FORMATS:
+        proc = run(tool, HEALTHY + fmt_args)
+        stdout_bytes = proc.stdout
+        stdout = out_text(proc)
+        tag = f"healthy [{fmt_name}]"
+        if not check(f"{tag} exits 0", proc.returncode == 0,
+                     f"exit {proc.returncode}: {both_text(proc)[:400]}"):
+            continue
+        check(f"{tag} no nan/inf token anywhere in the output",
+              not NONFINITE_RE.findall(both_text(proc)),
+              f"output: {both_text(proc)[:400]}")
+        digest = hashlib.md5(stdout_bytes).hexdigest()
+        digests[fmt_name] = digest
+        check(f"{tag} stdout is byte-identical to the recorded pre-fix output",
+              digest == HEALTHY_MD5[fmt_name],
+              f"md5 {digest}, expected {HEALTHY_MD5[fmt_name]}")
+        rows = SPECTRUM_ROW_RE[fmt_name].findall(stdout)
+        check(f"{tag} printed all {HEALTHY_N_STATES} spectrum rows",
+              len(rows) == HEALTHY_N_STATES, f"found {len(rows)} rows")
+    return digests
+
+
+def test_healthy_json_parses(tool: Path) -> None:
+    print("wfafs_deterministic: the healthy JSON document is well formed")
+    proc = run(tool, HEALTHY + ["--json"])
+    stdout = out_text(proc)
+    if not check("exits 0", proc.returncode == 0,
+                 f"exit {proc.returncode}: {both_text(proc)[:400]}"):
+        return
+    start = stdout.find("{")
+    try:
+        doc = json.loads(stdout[start:]) if start >= 0 else None
+    except (json.JSONDecodeError, ValueError) as exc:
+        doc = None
+        detail = f"{exc}: {stdout[:400]}"
+    else:
+        detail = stdout[:400]
+    if not check("stdout parses with json.loads", doc is not None, detail):
+        return
+    spectrum = doc.get("spectrum", [])
+    check(f"spectrum has {HEALTHY_N_STATES} entries",
+          len(spectrum) == HEALTHY_N_STATES, f"got {len(spectrum)}")
+    probs = [entry.get("probability") for entry in spectrum]
+    check("every probability is a finite float",
+          all(isinstance(p, float) and p == p and abs(p) != float("inf")
+              for p in probs),
+          f"probabilities: {probs[:5]}")
+    if all(isinstance(p, float) for p in probs):
+        total = sum(probs)
+        check("the spectrum is a probability distribution (sums to 1)",
+              abs(total - 1.0) < 1e-9, f"sum {total}")
+
+
+def test_healthy_output_file(tool: Path, tmp: Path) -> None:
+    print("wfafs_deterministic: a healthy --output-file is written and finite")
+    path = tmp / "wfafs_det_healthy.tsv"
+    proc = run(tool, HEALTHY + ["--output-file", str(path)])
+    if not check("exits 0", proc.returncode == 0,
+                 f"exit {proc.returncode}: {both_text(proc)[:400]}"):
+        return
+    if not check("--output-file was created", path.exists(), str(path)):
+        return
+    body = path.read_text("utf-8", "replace")
+    check("--output-file holds no nan/inf", not NONFINITE_RE.findall(body),
+          f"contents: {body[:200]}")
+    rows = [ln for ln in body.splitlines() if ln.strip()]
+    check(f"--output-file holds {HEALTHY_N_STATES} rows",
+          len(rows) == HEALTHY_N_STATES, f"found {len(rows)}")
+
+
+def test_guard_does_not_over_refuse(tool: Path) -> None:
+    """The guard rejects a degenerate matrix, not merely a small rate. These
+    runs are numerically fine in the pre-fix build and must stay fine: a guard
+    written as `u < 1e-9` or `v == 0 || v < eps` would wrongly reject them."""
+    print("wfafs_deterministic: legitimate small rates are still accepted")
+    cases = [
+        ("v = 1e-30 with u = 1e-9 (psi(0) = 1e-30 is strictly positive)",
+         ["-p", "2", "--pop-sizes", "5", "--generations", "10",
+          "--selection", "0", "--backward-mu", "1e-9",
+          "--forward-mu", "1e-30"]),
+        ("u = 1e-15 (1 - u is representably below 1)",
+         ["-p", "2", "--pop-sizes", "5", "--generations", "10",
+          "--selection", "0", "--backward-mu", "1e-15",
+          "--forward-mu", "1e-9"]),
+        ("zero generations with healthy rates",
+         ["-p", "2", "--pop-sizes", "5,10", "--generations", "0,0",
+          "--selection", "0,0"]),
+    ]
+    for label, model in cases:
+        proc = run(tool, model + ["--json"])
+        check(f"accepted: {label}", proc.returncode == 0,
+              f"exit {proc.returncode}: {both_text(proc)[:400]}")
+        check(f"finite output: {label}",
+              not NONFINITE_RE.findall(both_text(proc)),
+              f"output: {both_text(proc)[:400]}")
+
+
+def test_matches_reference_binary(tool: Path, reference: Path,
+                                  digests: dict[str, str]) -> None:
+    """Byte-compare the healthy run against a second, independently built
+    wfafs_deterministic (by default the one shipped inside WFES3.app)."""
+    if not reference.is_file():
+        print(f"wfafs_deterministic: reference binary {reference} not present "
+              f"-- skipping byte comparison (md5s above still apply)")
+        return
+    print(f"wfafs_deterministic: healthy output matches {reference}")
+    for fmt_name, fmt_args in FORMATS:
+        ref = run(reference, HEALTHY + fmt_args)
+        if ref.returncode != 0:
+            check(f"[{fmt_name}] reference binary runs", False,
+                  f"exit {ref.returncode}: {both_text(ref)[:200]}")
+            continue
+        ref_digest = hashlib.md5(ref.stdout).hexdigest()
+        check(f"[{fmt_name}] byte-identical to the reference binary",
+              digests.get(fmt_name) == ref_digest,
+              f"under test {digests.get(fmt_name)}, reference {ref_digest}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Integrity checks for wfafs_deterministic.")
+    ap.add_argument("--bin", type=Path, default=DEFAULT_BIN_DIR,
+                    help=f"directory holding wfafs_deterministic "
+                         f"(default: {DEFAULT_BIN_DIR})")
+    ap.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE,
+                    help="a second wfafs_deterministic to byte-compare the "
+                         f"healthy run against (default: {DEFAULT_REFERENCE}; "
+                         "skipped if absent)")
+    opts = ap.parse_args()
+
+    tool = opts.bin / "wfafs_deterministic"
+    if not tool.is_file():
+        print(f"error: {tool} not found (build it first, or pass --bin)")
+        return 2
+
+    print(f"Binary: {tool}\n")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        test_repro_refuses(tool)
+        test_repro_json_is_not_parseable_garbage(tool)
+        test_repro_output_file_not_written(tool, tmp)
+        test_each_degenerate_axis(tool)
+        digests = test_healthy_unchanged(tool)
+        test_healthy_json_parses(tool)
+        test_healthy_output_file(tool, tmp)
+        test_guard_does_not_over_refuse(tool)
+        test_matches_reference_binary(tool, opts.reference, digests)
+
+    print()
+    if failures:
+        print(f"FAILED {len(failures)}/{checks_run} checks:")
+        for label in failures:
+            print(f"  - {label}")
+        return 1
+    print(f"PASSED {checks_run}/{checks_run} checks")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
