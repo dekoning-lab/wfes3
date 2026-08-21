@@ -112,6 +112,19 @@ Two names differ from WFES2. Its `wfafle` corresponds to
 `wfafs_deterministic` and `wfafs_stochastic` here, and
 `doc/WFES_MODE_NAMING_MAP.md` maps the remaining mode names.
 
+### Using the programs from a terminal
+
+The application ships the same eleven programs inside its bundle, and it can
+put them on your PATH: choose **Tools > Install Command-Line Programs**, which
+links them into `/usr/local/bin`. The application also offers this the first
+time it runs. The links point into the bundle, so moving or deleting the
+application breaks them, and **Tools > Remove Command-Line Programs** undoes
+the installation.
+
+If you would rather not install the application at all, each release carries a
+`wfes3-cli-<version>-macos-arm64.tar.gz` holding the same signed programs as a
+self-contained directory. Put it anywhere and add that directory to your PATH.
+
 ## Building
 
 ### Command-line programs on macOS
