@@ -335,6 +335,33 @@ def test_each_degenerate_axis(tool: Path) -> None:
          ["-p", "2", "--pop-sizes", "5", "--generations", "10",
           "--selection", "0.1", "--dominance", "inf"],
          ("--dominance", "-h")),
+        # This tool parses -s/-h by hand with std::stod, which accepts "nan"
+        # as an ordinary value, so these are as reachable from the command
+        # line as the inf cases above -- and worse in the pre-fix build:
+        # psi_diploid() clamps fitnesses with fmax(w, 1e-30), and fmax()
+        # RETURNS THE NON-NAN OPERAND, so a NaN selection coefficient was not
+        # propagated (which the row-probability checks below would catch the
+        # same way they catch inf) -- it was silently substituted with
+        # s = -1, a lethal homozygote, and reported as the model asked for.
+        # Locked here as a nonzero-exit regression test for the two-layer
+        # fix landed in commit 2e52f3f ("Refuse the model parameters that
+        # psi_diploid silently substitutes for"): parse_arguments() now runs
+        # the shared Args_Parser::validate_model_domain per epoch, which
+        # gained an explicit isfinite() check on s/h/u/v/alpha in that
+        # commit and fires first (confirmed empirically against this build:
+        # stderr is "Invalid model parameters (epoch 1): ... Check
+        # --selection (-s)" / "... Check --dominance (-h)", exit 1, stdout
+        # empty in all three formats) -- ahead of this file's own
+        # require_usable_matrix(), whose independent isfinite(s)/isfinite(h)
+        # checks are the second layer if the shared one is ever bypassed.
+        ("s = nan",
+         ["-p", "2", "--pop-sizes", "5", "--generations", "10",
+          "--selection", "nan"],
+         ("--selection", "-s")),
+        ("h = nan",
+         ["-p", "2", "--pop-sizes", "5", "--generations", "10",
+          "--selection", "0.1", "--dominance", "nan"],
+         ("--dominance", "-h")),
     ]
     for label, model, wanted in cases:
         print(f"wfafs_deterministic: {label}")
