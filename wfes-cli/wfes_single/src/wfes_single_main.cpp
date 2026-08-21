@@ -1094,10 +1094,21 @@ int main(int argc, char const *argv[]) {
             }
             
             case CLI::ModelType::ALLELE_AGE: {
-                if (options.observed_copies == 0) {
-                    throw std::runtime_error("--observed-copies parameter required for allele age calculation");
+                // -1, not 0, is the parser's "flag not supplied" sentinel. It
+                // used to be 0, which is a legal transient index -- the one for
+                // a single observed copy -- so `-x 1` was reported as a missing
+                // flag. The parser now range-checks -x against 1..2N-1 and
+                // stores count-1, so every supplied value lands in 0..2N-2 and
+                // cannot collide with the sentinel.
+                if (options.observed_copies < 0) {
+                    throw std::runtime_error(
+                        "--observed-copies (-x) is required for --allele-age: "
+                        "the age of an allele is conditional on the number of "
+                        "copies it is observed at. Give a count between 1 and "
+                        "2N-1 = " +
+                        std::to_string(2 * options.population_size - 1));
                 }
-                
+
                 llong x = options.observed_copies; // Already 0-based from args parser
                 llong size = (2 * options.population_size) - 1;
                 

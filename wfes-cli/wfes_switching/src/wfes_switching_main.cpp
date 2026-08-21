@@ -401,11 +401,14 @@ int main(int argc, char const *argv[]) {
         // honest way to honour it here -- p0 is degenerate in this mode, so a
         // cutoff could only ever mean "keep the one state" or "keep none". So
         // refuse. The parser collapses "not supplied" and "supplied as the
-        // default 1e-10" into one value (CommandLineOptions has no
-        // was-it-supplied flag), so a -c equal to the default is accepted as
-        // the no-op it is; any other value is refused.
+        // default" into one value (CommandLineOptions has no was-it-supplied
+        // flag), so a -c equal to the default is accepted as the no-op it is;
+        // any other value is refused. The comparison uses the shared
+        // DEFAULT_INTEGRATION_CUTOFF rather than a second copy of the literal:
+        // while the two were independent, changing the parser's default would
+        // have silently turned every ordinary --fixation run into a refusal.
         if (options.model_type == CLI::ModelType::FIXATION &&
-            options.integration_cutoff != 1e-10) {
+            options.integration_cutoff != CLI::Args_Parser::DEFAULT_INTEGRATION_CUTOFF) {
             throw std::runtime_error(
                 "--integration-cutoff (-c) is not applicable to --fixation: "
                 "that model has no distribution over starting copy numbers to "
