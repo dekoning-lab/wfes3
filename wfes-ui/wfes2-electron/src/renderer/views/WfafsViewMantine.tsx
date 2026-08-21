@@ -57,6 +57,21 @@ interface WfafsViewProps {
   hideBackButton?: boolean
 }
 
+// Single source for the spectrum table and its TSV export, so the two
+// cannot drift out of sync with each other again (audit 2.13: they used to
+// share the same wrong headers, independently). Each row from
+// parseWfafsOutput (wfesBackendService.ts) carries `frequency`/`count` as
+// the SAME allele copy-number integer and `expected` as the raw per-row
+// probability from the solver; `proportion` renormalises `expected` over the
+// total of every row in this spectrum -- not necessarily the full 0..2N
+// state space, since e.g. alpha-trimming can exclude tail mass -- i.e. it is
+// the proportion "of shown", not a claim about the whole distribution.
+const SPECTRUM_COLUMNS: { header: string; format: (row: any) => string }[] = [
+  { header: 'Copies', format: (row) => String(row.frequency) },
+  { header: 'Proportion (of shown)', format: (row) => row.proportion.toFixed(6) },
+  { header: 'Probability', format: (row) => row.expected.toFixed(6) }
+]
+
 const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = false }) => {
   const theme = useMantineTheme()
   // How the starting state is specified. This tool offers 2 of the three.
@@ -179,19 +194,24 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
         const u = parseFloat(comp.u) || 0
         const v = parseFloat(comp.v) || 0
         const s = parseFloat(comp.s) || 0
-        
-        newComp.u = (u * 4 * N).toExponential(5)
-        newComp.v = (v * 4 * N).toExponential(5)
-        newComp.s = (s * 2 * N).toFixed(5)
+
+        // Exact string conversion -- no toFixed/toExponential. Rounding here
+        // silently corrupted the selection coefficient (and mutation rates)
+        // once N was large enough that the true value fell below the
+        // rounded precision; see the execute-path conversion below for the
+        // copy of this bug that actually reached the CLI.
+        newComp.u = u === 0 ? '0' : (u * 4 * N).toString()
+        newComp.v = v === 0 ? '0' : (v * 4 * N).toString()
+        newComp.s = s === 0 ? '0' : (s * 2 * N).toString()
       } else {
         // Converting to unscaled values
         const u = parseFloat(comp.u) || 0
         const v = parseFloat(comp.v) || 0
         const s = parseFloat(comp.s) || 0
-        
-        newComp.u = (u / (4 * N)).toExponential(5)
-        newComp.v = (v / (4 * N)).toExponential(5)
-        newComp.s = (s / (2 * N)).toFixed(5)
+
+        newComp.u = u === 0 ? '0' : (u / (4 * N)).toString()
+        newComp.v = v === 0 ? '0' : (v / (4 * N)).toString()
+        newComp.s = s === 0 ? '0' : (s / (2 * N)).toString()
       }
       
       return newComp
@@ -216,11 +236,15 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
           const v = parseFloat(comp.v) || 0
           const s = parseFloat(comp.s) || 0
           
+          // Exact string conversion, matching the toggle handler above --
+          // this is the value that actually ships to the CLI. toFixed(5)
+          // here rounded 2Ns=0.1 at N=100000 (s=5e-7) to "0.00000", silently
+          // sending the neutral model instead of the requested one.
           return {
             ...comp,
-            u: (u / (4 * N)).toExponential(5),
-            v: (v / (4 * N)).toExponential(5),
-            s: (s / (2 * N)).toFixed(5)
+            u: u === 0 ? '0' : (u / (4 * N)).toString(),
+            v: v === 0 ? '0' : (v / (4 * N)).toString(),
+            s: s === 0 ? '0' : (s / (2 * N)).toString()
           }
         })
       }
@@ -276,8 +300,12 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
         if (result.spectrum && Array.isArray(result.spectrum)) {
           const spectrumData = result.spectrum
             .map((row: any) => ({
+              // `frequency` is the allele COPY NUMBER (0..2N). The backend
+              // (parseWfafsOutput in wfesBackendService.ts) also sends the
+              // identical integer under `count` -- not a second quantity,
+              // just the same one twice -- so only one field is kept here;
+              // see SPECTRUM_COLUMNS for how it's labeled.
               frequency: Number(row.frequency ?? row.count),
-              count: Number(row.count),
               proportion: Number(row.proportion ?? 0),
               expected: Number(row.expected ?? row.probability ?? 0)
             }))
@@ -338,19 +366,12 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
   
   const handleExportData = () => {
     if (!spectrum || spectrum.length === 0) return
-    
-    const headers = ['Frequency', 'Count', 'Proportion', 'Expected']
-    
+
     const data = [
-      headers,
-      ...spectrum.map(row => [
-        row.frequency,
-        row.count,
-        row.proportion.toFixed(6),
-        row.expected.toFixed(6)
-      ])
+      SPECTRUM_COLUMNS.map(col => col.header),
+      ...spectrum.map(row => SPECTRUM_COLUMNS.map(col => col.format(row)))
     ]
-    
+
     const content = data.map(row => row.join('\t')).join('\n')
     // Through the main process: an <a download> is silently dropped here.
     void saveTextFile(content, generateFilename('wfafs', 'tsv'))
@@ -794,19 +815,17 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '2px solid var(--mantine-color-dark-4)' }}>
-                  <th style={{ padding: '8px', textAlign: 'left' }}>Frequency</th>
-                  <th style={{ padding: '8px', textAlign: 'right' }}>Count</th>
-                  <th style={{ padding: '8px', textAlign: 'right' }}>Proportion</th>
-                  <th style={{ padding: '8px', textAlign: 'right' }}>Expected</th>
+                  {SPECTRUM_COLUMNS.map((col, i) => (
+                    <th key={col.header} style={{ padding: '8px', textAlign: i === 0 ? 'left' : 'right' }}>{col.header}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {spectrum.map((row, index) => (
                   <tr key={index} style={{ borderBottom: '1px solid var(--mantine-color-dark-6)' }}>
-                    <td style={{ padding: '8px' }}>{row.frequency}</td>
-                    <td style={{ padding: '8px', textAlign: 'right' }}>{row.count}</td>
-                    <td style={{ padding: '8px', textAlign: 'right' }}>{row.proportion.toFixed(6)}</td>
-                    <td style={{ padding: '8px', textAlign: 'right' }}>{row.expected.toFixed(6)}</td>
+                    {SPECTRUM_COLUMNS.map((col, i) => (
+                      <td key={col.header} style={{ padding: '8px', textAlign: i === 0 ? 'left' : 'right' }}>{col.format(row)}</td>
+                    ))}
                   </tr>
                 ))}
               </tbody>

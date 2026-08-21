@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 import InitialStateSelector, { InitialMode } from '../components/shared/InitialStateSelector'
 import { saveTextFile } from '../utils/saveFile'
 import { 
@@ -149,13 +149,18 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
     if (newValue !== populationScaled) {
       setComponents(components.map(c => {
         const N = parseInt(c.N) || 100
-        const conv = (val: string, factor: number, fixed: boolean) => {
+        // Exact string conversion -- no toFixed/toExponential. handleExecute
+        // sends `components` straight through to the CLI, unmodified, so
+        // whatever rounding happened here used to be exactly what shipped;
+        // toFixed(5) on `s` silently zeroed small population-scaled
+        // selection coefficients at large N.
+        const conv = (val: string, factor: number) => {
           const x = parseFloat(val) || 0
           if (x === 0) return '0'
           const y = newValue ? x * factor * N : x / (factor * N)
-          return fixed ? y.toFixed(5) : y.toExponential(5)
+          return y.toString()
         }
-        return { ...c, u: conv(c.u, 4, false), v: conv(c.v, 4, false), s: conv(c.s, 2, true) }
+        return { ...c, u: conv(c.u, 4), v: conv(c.v, 4), s: conv(c.s, 2) }
       }))
     }
     setPopulationScaled(newValue)
@@ -365,27 +370,21 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
     navigator.clipboard.writeText(command)
   }
   
-  
-  
-  
-  // Set up progress listener
-  useEffect(() => {
-    const handleProgress = (event: any, data: any) => {
-      if (data.tool === 'wfafs_deterministic') {
-        setProgress(data.progress || 0)
-        setProgressMessage(data.message || '')
-      }
-    }
-    
-    // Subscribe to progress updates
-    window.api?.on?.('wfes:progress', handleProgress)
-    
-    return () => {
-      // Unsubscribe on cleanup
-      window.api?.off?.('wfes:progress', handleProgress)
-    }
-  }, [])
-  
+
+
+
+  // A progress listener used to live here, subscribing to 'wfes:progress'
+  // through optional-chained calls onto a window.api surface the preload
+  // never exposes that pair of methods on (only wfes.onProgress /
+  // removeProgressListener exist), so the subscribe and the cleanup were
+  // both silent no-ops. Deleted rather than rewired to the real API: the CLI
+  // emits no progress lines for this tool, so there is nothing to subscribe
+  // to yet. `progress` and `progressMessage` state are left in place --
+  // WfesExecutionPanel and the "Processing..." loading text below still read
+  // them -- but now only ever move 0 -> 100 around handleExecute, with no
+  // step in between. A later task removes the progress UI machinery
+  // entirely; this is the render code it still needs to touch.
+
   // Count active output options for badge
   const activeOutputOptions = Object.values(outputOptions).filter(Boolean).length + 
     (executionOptions.force ? 1 : 0)
