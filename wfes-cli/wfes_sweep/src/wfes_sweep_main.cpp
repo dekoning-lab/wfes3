@@ -1,6 +1,8 @@
+#include <cmath>
 #include <iostream>
 #include <limits>
 #include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <chrono>
@@ -109,7 +111,8 @@ int main(int argc, char const *argv[]) {
     args::ValueFlag<std::string> output_Q_f(parser, "path", "Output Q matrix to file", {"output-Q"});
     args::ValueFlag<std::string> output_R_f(parser, "path", "Output R vectors to file", {"output-R"});
     args::ValueFlag<std::string> output_N_f(parser, "path", "Output N matrix to file", {"output-N"});
-    args::ValueFlag<std::string> output_B_f(parser, "path", "Output B vectors to file", {"output-B"});
+    args::ValueFlag<std::string> output_B_f(parser, "path",
+        "Output absorption probability vector B to file", {"output-B"});
     args::ValueFlag<std::string> output_I_f(parser, "path", "Output Initial probability distribution", {"output-I"});
 
     args::Flag csv_f(parser, "csv", "Output results in CSV format", {"csv"});
@@ -285,6 +288,31 @@ int main(int argc, char const *argv[]) {
         }
         if (starting_copies_f) z = 1;
 
+        // Refuse rather than integrate over nothing. When -c sits above every
+        // starting-copy probability the loop above leaves z == 0, the fill loop
+        // further down never runs, and the "initial distribution" handed to the
+        // solver is all zeros -- which solves to all zeros, so T_fix = 0 and
+        // rate = 1/0 = inf were printed as if they were results, with exit 0
+        // and an empty stderr. Only the integration path consumes z; --initial
+        // and -p supply their own starting state and are unaffected.
+        if (!initial_f && !starting_copies_f && z == 0) {
+            const double largest = starting_copies_p.size() > 0
+                                 ? starting_copies_p.maxCoeff() : 0.0;
+            // Full precision for both numbers: the largest probability is
+            // typically just under 1 here, and at the stream default of six
+            // significant figures it prints as "1", which makes the comparison
+            // the message is explaining look like a contradiction.
+            std::ostringstream detail;
+            detail << std::setprecision(std::numeric_limits<double>::max_digits10)
+                   << "-c " << integration_cutoff << " exceeds every starting-copy "
+                      "probability (the largest is " << largest << ")";
+            std::cerr << "Error: no state above the integration cutoff -- "
+                      << detail.str() << ", so there is nothing to integrate "
+                         "over. Lower -c, or give a fixed starting count with -p."
+                      << std::endl;
+            return EXIT_FAILURE;
+        }
+
         // Create Wright-Fisher matrix
         WF::Matrix wf = WF::NonAbsorbingToFixationOnly(population_size, selection_coefficient, h, u, v, switching, a, verbose_f, 1, library);
         
@@ -302,6 +330,27 @@ int main(int argc, char const *argv[]) {
         // Create solver
         solver::Solver* solver = solver::SolverFactory::createSolver(library, *wf.Q, MKL_PARDISO_MATRIX_TYPE_REAL_UNSYMMETRIC, msg_level);
         solver->preprocess();
+
+        // B = (I - Q)^-1 R: the probability of ending in the one absorbing
+        // state (fixation, in phase 2) from each transient state, the same
+        // quantity and the same call wfes_single writes for its --output-B.
+        // This model has a single absorbing state, so every entry is 1 less
+        // whatever mass the alpha tail truncation discarded -- which is what
+        // makes the vector worth having: it reads that truncation loss out
+        // directly. The flag was parsed and then never used, so asking for it
+        // silently produced no file.
+        if (output_B_f) {
+            if (wf.R.cols() < 1) {
+                std::cerr << "Error: this model has no absorbing state, so there "
+                             "is no absorption probability vector B to write"
+                          << std::endl;
+                delete solver;
+                return EXIT_FAILURE;
+            }
+            dvec R_fix = wf.R.col(0);
+            dvec B = solver->solve(R_fix, false);
+            CLI::OutputFormatter::write_vector_to_file(B, args::get(output_B_f));
+        }
 
         // The NonAbsorbingToFixationOnly system has (2N+1) + 2N = 4N+1 states:
         //   indices 0 .. 2N       phase 1 (pre-adaptive), counts 0..2N
@@ -344,7 +393,6 @@ int main(int argc, char const *argv[]) {
         // independent dense reference and against time_dist_sgv, which builds
         // the same matrix.
         double T_fix = N.sum();
-        double rate = 1.0 / T_fix;
 
         // Per-regime decomposition of the substitution time: phase 1 spans
         // indices 0..2N (counts 0..2N, pre-adaptive), phase 2 spans
@@ -354,6 +402,27 @@ int main(int argc, char const *argv[]) {
         // exists to separate.
         double T_regime1 = N.head(2 * population_size + 1).sum();
         double T_regime2 = N.tail(2 * population_size).sum();
+
+        // Never divide blindly, and never let a non-finite value reach an
+        // output format. An expected sojourn time that is zero, negative or
+        // non-finite means the solve failed or the model is degenerate, and
+        // 1/T_fix then prints as a bare `inf`: not valid JSON -- python's
+        // json.load and node's JSON.parse both reject it -- while jq silently
+        // coerces it to 1.7976931348623157e+308, a plausible-looking number
+        // that is not a result. Refuse rather than publish one.
+        if (!std::isfinite(T_fix) || T_fix <= 0 ||
+            !std::isfinite(T_regime1) || !std::isfinite(T_regime2)) {
+            std::cerr << "Error: the expected time to fixation is not a usable "
+                         "positive finite number (T_fix = " << T_fix
+                      << ", T_regime1 = " << T_regime1
+                      << ", T_regime2 = " << T_regime2
+                      << "). The linear solve failed or the model is degenerate; "
+                         "no substitution rate can be reported." << std::endl;
+            delete solver;
+            return EXIT_FAILURE;
+        }
+
+        double rate = 1.0 / T_fix;
 
         // Output results
         if (output_N_f) {
