@@ -4,6 +4,7 @@ import { promises as fsPromises } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { wfesBackendService } from './wfesBackendService'
 import { AboutContentService } from './aboutContentService'
+import * as cliInstaller from './cliInstaller'
 
 /**
  * Returns the first argument that is a finite number, otherwise undefined.
@@ -59,6 +60,95 @@ function threadCount(...values: unknown[]): number {
  * @returns {void}
  * @remarks Sets up window dimensions, menu, and loads the appropriate content
  */
+/**
+ * Ask the user, once, whether the command-line programs should go on the PATH.
+ *
+ * A DMG is a disk image, not an installer: dragging the app to /Applications
+ * runs no script, so there is no install step in which to do this. Offering it
+ * at first launch is the closest equivalent, and it is how the user reaches the
+ * programs from a terminal without knowing they live inside the bundle.
+ */
+async function offerCliInstallOnFirstRun(parent: BrowserWindow): Promise<void> {
+  if (process.platform !== 'darwin' || !app.isPackaged) return
+
+  const marker = join(app.getPath('userData'), 'cli-install-offered')
+  try {
+    await fsPromises.access(marker)
+    return // already asked; never nag again
+  } catch {
+    // not yet asked
+  }
+
+  const current = await cliInstaller.status()
+  if (current.installed) {
+    await fsPromises.writeFile(marker, '')
+    return
+  }
+
+  const { response } = await dialog.showMessageBox(parent, {
+    type: 'question',
+    buttons: ['Install', 'Not Now'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'Install the WFES3 command-line programs?',
+    detail:
+      `The eleven programs this application runs can also be used directly from a terminal. ` +
+      `Installing them links them into ${current.installDir}, which is already on your PATH, ` +
+      `so you can run wfes_single and the others by name.\n\n` +
+      `You can do this later from the Tools menu. Administrator permission may be required.`
+  })
+
+  // Record the offer whichever way it goes, so declining is respected.
+  await fsPromises.writeFile(marker, '')
+  if (response === 0) await installCliTools(parent)
+}
+
+async function installCliTools(parent: BrowserWindow): Promise<void> {
+  const result = await cliInstaller.install()
+  if (result.cancelled) return
+
+  if (result.ok) {
+    await dialog.showMessageBox(parent, {
+      type: 'info',
+      message: 'Command-line programs installed.',
+      detail:
+        `${result.installed.length} programs are linked into ${result.installDir}.\n\n` +
+        `Open a new terminal and try:\n    wfes_single --help\n\n` +
+        `The links point into the application, so moving or deleting WFES3 will ` +
+        `break them. Use Tools > Remove Command-Line Programs to undo this.`
+    })
+  } else {
+    await dialog.showMessageBox(parent, {
+      type: 'error',
+      message: 'The command-line programs could not be installed.',
+      detail: `${result.error ?? 'Unknown error.'}\n\nThey remain available inside the application.`
+    })
+  }
+}
+
+async function uninstallCliTools(parent: BrowserWindow): Promise<void> {
+  const before = await cliInstaller.status()
+  if (!before.linked.length) {
+    await dialog.showMessageBox(parent, {
+      type: 'info',
+      message: 'Nothing to remove.',
+      detail: `No programs in ${before.installDir} point to this copy of WFES3.`
+    })
+    return
+  }
+
+  const result = await cliInstaller.uninstall()
+  if (result.cancelled) return
+
+  await dialog.showMessageBox(parent, {
+    type: result.ok ? 'info' : 'error',
+    message: result.ok ? 'Command-line programs removed.' : 'They could not all be removed.',
+    detail: result.ok
+      ? `The links in ${result.installDir} are gone. The programs are still inside the application.`
+      : (result.error ?? 'Unknown error.')
+  })
+}
+
 function createWindow(): void {
   // Create the main browser window
   const mainWindow = new BrowserWindow({
@@ -78,6 +168,9 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+    // After the window is up, so the dialog has a parent and does not appear
+    // before the user has seen the application.
+    void offerCliInstallOnFirstRun(mainWindow)
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -139,10 +232,29 @@ function createWindow(): void {
       ]
     },
     {
+      label: 'Tools',
+      submenu: [
+        {
+          label: 'Install Command-Line Programs…',
+          enabled: process.platform === 'darwin',
+          click: () => {
+            void installCliTools(mainWindow)
+          }
+        },
+        {
+          label: 'Remove Command-Line Programs…',
+          enabled: process.platform === 'darwin',
+          click: () => {
+            void uninstallCliTools(mainWindow)
+          }
+        }
+      ]
+    },
+    {
       label: 'Help',
       submenu: [
         {
-          label: 'About WFES2',
+          label: 'About WFES3',
           click: () => {
             // TODO: Open about dialog
           }
