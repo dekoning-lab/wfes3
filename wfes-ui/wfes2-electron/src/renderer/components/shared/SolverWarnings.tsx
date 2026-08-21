@@ -26,14 +26,14 @@
  * hard-coded here.
  */
 import React from 'react'
-import { Alert, Code, Text } from '@mantine/core'
+import { Alert, Code, MantineSpacing, Text } from '@mantine/core'
 import { IconAlertTriangle } from '@tabler/icons-react'
 
 interface SolverWarningsProps {
   /** Verbatim stderr lines from a run that exited 0. */
   warnings?: string[] | null
   /** Bottom margin, matching whatever the surrounding results section uses. */
-  mb?: string
+  mb?: MantineSpacing
 }
 
 export const SolverWarnings: React.FC<SolverWarningsProps> = ({ warnings, mb = 'md' }) => {
@@ -59,5 +59,3 @@ export const SolverWarnings: React.FC<SolverWarningsProps> = ({ warnings, mb = '
     </Alert>
   )
 }
-
-export default SolverWarnings

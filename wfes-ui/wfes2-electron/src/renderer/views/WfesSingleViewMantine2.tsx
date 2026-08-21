@@ -255,6 +255,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   const executeModel = async () => {
     setIsExecuting(true)
     setProgress(0)
+    clearResults()
     setProgressMessage('Starting execution...')
     const startTime = Date.now()
 

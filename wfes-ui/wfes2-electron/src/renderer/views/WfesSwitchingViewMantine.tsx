@@ -543,12 +543,12 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
           // the results table holds model quantities only.
         }
         
+        setWarnings(result.warnings || [])
         if (resultItems.length === 0) {
           console.warn('No results extracted from response')
           setError('No results were returned from the computation')
         } else {
           setResults(resultItems)
-          setWarnings(result.warnings || [])
           setExecutionTime(result.executionTime || '0s')
         }
         
