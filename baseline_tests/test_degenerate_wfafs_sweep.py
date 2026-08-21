@@ -54,7 +54,7 @@ REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cx4" / "bin"
 
 # A degenerate sweep: -c 1 is above every starting-copy probability.
-SWEEP_MODEL = ["--fixation", "-N", "10", "-s", "0.1,0.2", "-l", "0.5"]
+SWEEP_MODEL = ["--fixation", "-N", "10", "-s", "0.1,0.2", "-L", "0.5"]
 SWEEP_DEGENERATE = SWEEP_MODEL + ["-c", "1"]
 
 # Two epochs with a scaling factor != 1 in the last epoch, so the projection

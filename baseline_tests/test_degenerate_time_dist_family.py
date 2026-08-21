@@ -107,7 +107,7 @@ def assert_clean_json(label: str, proc: subprocess.CompletedProcess):
 
 def test_sgv_output_P_does_not_suppress_streams():
     print("\n=== time_dist_sgv: --output-P must not suppress --json/--csv ===")
-    base = ["-N", "20", "-l", "0.5", "-s", "0.1,0.1",
+    base = ["-N", "20", "-L", "0.5", "-s", "0.1,0.1",
             "-u", "0.01,0.01", "-v", "0.01,0.01", "-d", "0.9"]
     with tempfile.TemporaryDirectory() as tmp:
         for flag, name in (("--json", "json"), ("--csv", "csv")):
@@ -178,7 +178,7 @@ def test_truncated_runs_disclose():
           proc.stderr.strip()[:80])
 
     # time_dist_sgv
-    proc = run("time_dist_sgv", ["-N", "50", "-l", "0.5", "-s", "0,0.01",
+    proc = run("time_dist_sgv", ["-N", "50", "-L", "0.5", "-s", "0,0.01",
                                  "-m", "40", "--json"])
     label = "time_dist_sgv -m 40"
     check(f"{label}: exit 0", proc.returncode == 0, f"exit={proc.returncode}")
@@ -203,7 +203,7 @@ def test_converged_runs_still_normalise():
                             "-d", "0.9", "--json"],
          lambda d: d["distribution"][-1]["cdf_total"],
          lambda d: d["statistics"]["reached_cutoff"]),
-        ("time_dist_sgv", ["-N", "10", "-l", "0.5", "-s", "0.1,0.1",
+        ("time_dist_sgv", ["-N", "10", "-L", "0.5", "-s", "0.1,0.1",
                            "-u", "0.01,0.01", "-v", "0.01,0.01",
                            "-d", "0.9", "--json"],
          lambda d: d["distribution"]["cdf"][-1],
@@ -225,8 +225,8 @@ def test_converged_runs_still_normalise():
 def test_degenerate_cutoff_refuses():
     print("\n=== degenerate --distribution-cutoff: refuse, do not print an empty table ===")
     cases = [
-        ("time_dist_sgv", ["-N", "20", "-l", "0.5", "-s", "0,0.01", "-d", "-1", "--csv"]),
-        ("time_dist_sgv", ["-N", "20", "-l", "0.5", "-s", "0,0.01", "-d", "0", "--csv"]),
+        ("time_dist_sgv", ["-N", "20", "-L", "0.5", "-s", "0,0.01", "-d", "-1", "--csv"]),
+        ("time_dist_sgv", ["-N", "20", "-L", "0.5", "-s", "0,0.01", "-d", "0", "--csv"]),
         ("time_dist", ["-N", "20", "-d", "0", "--csv"]),
         ("time_dist_dual", ["-N", "20", "-d", "0", "--csv"]),
     ]
@@ -283,7 +283,7 @@ def test_phase_type_moments_safe_k():
 
 def test_sgv_rejects_unwired_recurrent_mutation_flag():
     print("\n=== time_dist_sgv: -r is not wired into the model, so refuse it ===")
-    args = ["-N", "20", "-l", "0.5", "-s", "0.1,0.1", "-u", "0.01,0.01",
+    args = ["-N", "20", "-L", "0.5", "-s", "0.1,0.1", "-u", "0.01,0.01",
             "-v", "0.01,0.01", "-d", "0.9"]
     proc = run("time_dist_sgv", args + ["-r", "--json"])
     check("sgv -r: nonzero exit", proc.returncode != 0, f"exit={proc.returncode}")
@@ -316,7 +316,7 @@ def test_no_stale_integration_cutoff_echo():
     verbose_cases = [
         ("time_dist", ["-N", "20", "-m", "5", "-c", "0.9", "--verbose"]),
         ("time_dist_dual", ["-N", "20", "-m", "5", "-c", "0.9", "--verbose"]),
-        ("time_dist_sgv", ["-N", "20", "-l", "0.5", "-s", "0,0.01",
+        ("time_dist_sgv", ["-N", "20", "-L", "0.5", "-s", "0,0.01",
                            "-m", "5", "-c", "0.9", "--verbose"]),
     ]
     for tool, args in verbose_cases:

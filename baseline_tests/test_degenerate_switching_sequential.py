@@ -42,8 +42,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BIN_DIR = os.path.join(REPO_ROOT, "wfes-cli", "build-cx2", "bin")
 
 # A two-model switching run small enough to solve instantly.
-SWITCHING_BASE = ["-N", "8,8", "-r", "0.9,0.1;0.1,0.9"]
-SEQUENTIAL_BASE = ["-N", "8,8", "-t", "100,100"]
+SWITCHING_BASE = ["-N", "8,8", "-R", "0.9,0.1;0.1,0.9"]
+SEQUENTIAL_BASE = ["-N", "8,8", "-e", "100,100"]
 
 # The parser's own default for -c.  Supplying exactly this value is
 # indistinguishable from not supplying it, which is why --fixation accepts it.
@@ -120,35 +120,35 @@ def parse_json(r, what):
 
 def test_negative_starting_probability_refused():
     print("test_negative_starting_probability_refused")
-    expect_refusal(run("wfes_switching", ["--absorption"] + SWITCHING_BASE + ["-p", "-2,1", "--json"]),
-                   "switching --absorption -p -2,1", ["-p"])
-    expect_refusal(run("wfes_switching", ["--fixation"] + SWITCHING_BASE + ["-p", "-2,1", "--json"]),
-                   "switching --fixation -p -2,1", ["-p"])
-    expect_refusal(run("wfes_sequential", SEQUENTIAL_BASE + ["-p", "-2,1", "--json"]),
-                   "sequential -p -2,1", ["-p"])
+    expect_refusal(run("wfes_switching", ["--absorption"] + SWITCHING_BASE + ["-P", "-2,1", "--json"]),
+                   "switching --absorption -P -2,1", ["-p"])
+    expect_refusal(run("wfes_switching", ["--fixation"] + SWITCHING_BASE + ["-P", "-2,1", "--json"]),
+                   "switching --fixation -P -2,1", ["-p"])
+    expect_refusal(run("wfes_sequential", SEQUENTIAL_BASE + ["-P", "-2,1", "--json"]),
+                   "sequential -P -2,1", ["-p"])
 
 
 def test_zero_starting_probability_refused():
     print("test_zero_starting_probability_refused")
-    expect_refusal(run("wfes_switching", ["--absorption"] + SWITCHING_BASE + ["-p", "0,0", "--json"]),
-                   "switching --absorption -p 0,0", ["-p"])
-    r = run("wfes_switching", ["--fixation"] + SWITCHING_BASE + ["-p", "0,0", "--json"])
-    expect_refusal(r, "switching --fixation -p 0,0", ["-p"])
+    expect_refusal(run("wfes_switching", ["--absorption"] + SWITCHING_BASE + ["-P", "0,0", "--json"]),
+                   "switching --absorption -P 0,0", ["-p"])
+    r = run("wfes_switching", ["--fixation"] + SWITCHING_BASE + ["-P", "0,0", "--json"])
+    expect_refusal(r, "switching --fixation -P 0,0", ["-p"])
     # This is the run that used to emit `"rate": inf`.
     check(BAD_JSON_TOKEN.search(r.stdout) is None,
           "switching --fixation -p 0,0: emits no inf/nan", context(r))
-    expect_refusal(run("wfes_sequential", SEQUENTIAL_BASE + ["-p", "0,0", "--json"]),
-                   "sequential -p 0,0", ["-p"])
+    expect_refusal(run("wfes_sequential", SEQUENTIAL_BASE + ["-P", "0,0", "--json"]),
+                   "sequential -P 0,0", ["-p"])
 
 
 def test_unnormalised_starting_probability_is_normalised_with_warning():
     print("test_unnormalised_starting_probability_is_normalised_with_warning")
 
-    r = run("wfes_switching", ["--absorption"] + SWITCHING_BASE + ["-p", "1,1", "--json"])
+    r = run("wfes_switching", ["--absorption"] + SWITCHING_BASE + ["-P", "1,1", "--json"])
     check(r.returncode == 0, "switching --absorption -p 1,1: exits 0", context(r))
     check("normalis" in r.stderr.lower(),
           "switching --absorption -p 1,1: warns on stderr about normalisation", context(r))
-    doc = parse_json(r, "switching --absorption -p 1,1")
+    doc = parse_json(r, "switching --absorption -P 1,1")
     if doc:
         res = doc["results"]
         p_ext, p_fix = res["P_ext"], res["P_fix"]
@@ -157,11 +157,11 @@ def test_unnormalised_starting_probability_is_normalised_with_warning():
         check(abs(p_ext + p_fix - 1.0) < 1e-9,
               "switching: P_ext + P_fix == 1", "sum=%.17g" % (p_ext + p_fix))
 
-    r = run("wfes_sequential", SEQUENTIAL_BASE + ["-p", "1,1", "--json"])
+    r = run("wfes_sequential", SEQUENTIAL_BASE + ["-P", "1,1", "--json"])
     check(r.returncode == 0, "sequential -p 1,1: exits 0", context(r))
     check("normalis" in r.stderr.lower(),
           "sequential -p 1,1: warns on stderr about normalisation", context(r))
-    doc = parse_json(r, "sequential -p 1,1")
+    doc = parse_json(r, "sequential -P 1,1")
     if doc:
         res = doc["results"]
         # wfes_sequential has a third absorbing outcome (timeout), so the
@@ -198,10 +198,10 @@ def test_non_finite_result_refused():
     0 by 0. The run used to report P_ext = 0.316 alongside T_ext = nan and
     exit 0 -- and `"T_ext": nan` is not valid JSON."""
     print("test_non_finite_result_refused")
-    r = run("wfes_sequential", ["-N", "2,2", "-t", "1,1", "--json"])
-    expect_refusal(r, "sequential -N 2,2 -t 1,1", ["T_ext"])
+    r = run("wfes_sequential", ["-N", "2,2", "-e", "1,1", "--json"])
+    expect_refusal(r, "sequential -N 2,2 -e 1,1", ["T_ext"])
     check(BAD_JSON_TOKEN.search(r.stdout) is None,
-          "sequential -N 2,2 -t 1,1: emits no nan/inf", context(r))
+          "sequential -N 2,2 -e 1,1: emits no nan/inf", context(r))
 
 
 def test_fixation_refuses_meaningful_integration_cutoff():
@@ -229,7 +229,7 @@ def approx_list(values, expected, tol=1e-12):
 def test_json_parameters_record_the_values_used():
     print("test_json_parameters_record_the_values_used")
 
-    r = run("wfes_switching", ["--fixation"] + SWITCHING_BASE + ["-p", "1,1", "-u", "1e-8,1e-8", "--json"])
+    r = run("wfes_switching", ["--fixation"] + SWITCHING_BASE + ["-P", "1,1", "-u", "1e-8,1e-8", "--json"])
     check(r.returncode == 0, "switching --fixation --json: exits 0", context(r))
     doc = parse_json(r, "switching --fixation --json")
     if doc:
@@ -247,7 +247,7 @@ def test_json_parameters_record_the_values_used():
         check(isinstance(rate, float) and math.isfinite(rate) and rate > 0,
               "switching --fixation --json: rate is finite and positive", "rate=%r" % (rate,))
 
-    r = run("wfes_sequential", SEQUENTIAL_BASE + ["-p", "1,1", "-u", "1e-8,1e-8", "--json"])
+    r = run("wfes_sequential", SEQUENTIAL_BASE + ["-P", "1,1", "-u", "1e-8,1e-8", "--json"])
     check(r.returncode == 0, "sequential --json: exits 0", context(r))
     doc = parse_json(r, "sequential --json")
     if doc:
@@ -361,7 +361,7 @@ def test_csv_output_has_a_header():
     # runs), but the data row must leave them empty rather than carry a
     # number that played no part in the result.
     r = run("wfes_sequential",
-            SEQUENTIAL_BASE + ["--starting-copies", "3", "-p", "1,1", "--csv"])
+            SEQUENTIAL_BASE + ["--starting-copies", "3", "-P", "1,1", "--csv"])
     check("normalis" not in r.stderr.lower(),
           "sequential --starting-copies -p 1,1 --csv: "
           "no renormalisation warning for an unused -p", context(r))
@@ -388,7 +388,7 @@ def test_csv_output_has_a_header():
         switching_initial = write_initial_distribution(tmpdir, 32)
         r = run("wfes_switching",
                 ["--fixation"] + SWITCHING_BASE +
-                ["--initial", switching_initial, "-p", "1,1", "--csv"])
+                ["--initial", switching_initial, "-P", "1,1", "--csv"])
         check("normalis" not in r.stderr.lower(),
               "switching --fixation --initial --csv: "
               "no renormalisation warning for an unused -p", context(r))
@@ -398,7 +398,7 @@ def test_csv_output_has_a_header():
         sequential_initial = write_initial_distribution(tmpdir, 30)
         r = run("wfes_sequential",
                 SEQUENTIAL_BASE +
-                ["--initial", sequential_initial, "-p", "1,1", "--csv"])
+                ["--initial", sequential_initial, "-P", "1,1", "--csv"])
         check("normalis" not in r.stderr.lower(),
               "sequential --initial --csv: "
               "no renormalisation warning for an unused -p", context(r))

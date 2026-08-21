@@ -151,7 +151,12 @@ CASES: list[tuple[str, list[str], dict[str, tuple[str, str]]]] = [
         # F_est and the whole T_seg family are UNCHANGED: the post-establishment
         # start state (c*+1) is Ivan's convention and is deliberately frozen.
         "N=5 ESTABLISHMENT [thesis reference; diverges from wfes2, see notes]",
-        ["--establishment", "-k", "1.5"],
+        # Spelling only: --odds-ratio is long form only since the short-flag
+        # canonicalization, because -k is --n-moments (a moment COUNT) in
+        # phase_type_moments and a letter may not mean two things. The odds
+        # ratio, the model and every recorded value below are unchanged;
+        # `-k 1.5` is now a hard error naming this spelling.
+        ["--establishment", "--odds-ratio", "1.5"],
         {
             "F_est":         ("est_freq", "5.0000000000e-01"),
             "P_est":         ("P_est", "2.2413131056e-01"),

@@ -110,12 +110,12 @@ def tool_invocations(n: str) -> list[tuple[str, list[str]]]:
     return [
         ("wfes_single", ["--absorption", "-N", n]),
         ("wfes_switching", ["--absorption", "-N", f"{n},{n}",
-                            "-r", "0.5,0.5;0.5,0.5"]),
-        ("wfes_sequential", ["-N", f"{n},{n}", "-t", "10,10"]),
-        ("wfes_sweep", ["--fixation", "-N", n, "-s", "0.01,0.02", "-l", "0.5"]),
+                            "-R", "0.5,0.5;0.5,0.5"]),
+        ("wfes_sequential", ["-N", f"{n},{n}", "-e", "10,10"]),
+        ("wfes_sweep", ["--fixation", "-N", n, "-s", "0.01,0.02", "-L", "0.5"]),
         ("time_dist", ["-N", n]),
         ("time_dist_dual", ["-N", n]),
-        ("time_dist_sgv", ["-N", n, "-l", "0.5", "-s", "0.01,0.01"]),
+        ("time_dist_sgv", ["-N", n, "-L", "0.5", "-s", "0.01,0.01"]),
         ("phase_type_dist", ["-N", n]),
         ("phase_type_moments", ["-N", n]),
         ("wfafs_stochastic", ["-N", f"{n},{n}", "-G", "10,10", "-f", "1,1"]),
@@ -189,7 +189,7 @@ def section_observed_copies(bindir: Path):
 def section_sgv_distribution_cutoff(bindir: Path):
     print("\n== time_dist_sgv -d/--distribution-cutoff is range checked ==")
     sgv = bindir / "time_dist_sgv"
-    base = ["-N", "20", "-l", "0.5", "-s", "0.01,0.01"]
+    base = ["-N", "20", "-L", "0.5", "-s", "0.01,0.01"]
 
     for d in ("-1", "0", "5"):
         proc = run(sgv, base + ["-d", d, "--csv"])
@@ -212,8 +212,8 @@ def section_advisories(bindir: Path):
     # 4 * 20 * 0.5 = 40, far past the diffusion limit these tools assume.
     cases = [
         ("wfes_switching", ["--absorption", "-N", "20,20", "-u", "0.5,0.5",
-                            "-r", "0.5,0.5;0.5,0.5"]),
-        ("wfes_sequential", ["-N", "20,20", "-t", "10,10", "-u", "0.5,0.5"]),
+                            "-R", "0.5,0.5;0.5,0.5"]),
+        ("wfes_sequential", ["-N", "20,20", "-e", "10,10", "-u", "0.5,0.5"]),
         ("wfafs_stochastic", ["-N", "20,20", "-G", "10,10", "-f", "1,1",
                               "-u", "0.5,0.5"]),
     ]
@@ -240,8 +240,8 @@ def section_advisories(bindir: Path):
     print("\n== 2Ns <= -100 advisory reaches the vector tools ==")
     strong = [
         ("wfes_switching", ["--absorption", "-N", "100,100", "-s", "-0.9,-0.9",
-                            "-r", "0.5,0.5;0.5,0.5"]),
-        ("wfes_sequential", ["-N", "100,100", "-t", "10,10", "-s", "-0.9,-0.9"]),
+                            "-R", "0.5,0.5;0.5,0.5"]),
+        ("wfes_sequential", ["-N", "100,100", "-e", "10,10", "-s", "-0.9,-0.9"]),
     ]
     for name, args in strong:
         proc = run(bindir / name, args)
@@ -290,23 +290,23 @@ def section_non_finite_parameters(bindir: Path):
     # table/spectrum, and the other three exited nonzero blaming an "invalid
     # column index" or a "singular matrix".
     cases = [
-        ("time_dist_sgv", ["-N", "10", "-l", "0.5", "-s", "nan,nan", "--csv"]),
+        ("time_dist_sgv", ["-N", "10", "-L", "0.5", "-s", "nan,nan", "--csv"]),
         ("wfafs_stochastic", ["-N", "10,10", "-G", "10,10", "-f", "1,1",
                               "-s", "nan,nan", "--csv"]),
         ("wfes_switching", ["--absorption", "-N", "10,10", "-s", "nan,nan",
-                            "-r", "0.5,0.5;0.5,0.5", "--json"]),
-        ("wfes_sequential", ["-N", "10,10", "-t", "10,10", "-s", "nan,nan",
+                            "-R", "0.5,0.5;0.5,0.5", "--json"]),
+        ("wfes_sequential", ["-N", "10,10", "-e", "10,10", "-s", "nan,nan",
                              "--json"]),
-        ("wfes_sweep", ["--fixation", "-N", "10", "-s", "nan,nan", "-l", "0.5",
+        ("wfes_sweep", ["--fixation", "-N", "10", "-s", "nan,nan", "-L", "0.5",
                         "--json"]),
         ("wfafs_deterministic", ["-N", "10", "-G", "10", "-s", "nan", "-p", "1",
                                  "--json"]),
         # inf takes the same path: 1.0 + inf < 0.0 is false, so it slipped
         # through the fitness range checks exactly as nan did.
         ("wfes_switching", ["--absorption", "-N", "10,10", "-s", "inf,inf",
-                            "-r", "0.5,0.5;0.5,0.5", "--json"]),
+                            "-R", "0.5,0.5;0.5,0.5", "--json"]),
         # ...and it is not only -s: u and v reach the same clamp.
-        ("time_dist_sgv", ["-N", "10", "-l", "0.5", "-s", "0.01,0.01",
+        ("time_dist_sgv", ["-N", "10", "-L", "0.5", "-s", "0.01,0.01",
                            "-u", "nan,nan", "--csv"]),
     ]
     for name, args in cases:
@@ -320,7 +320,7 @@ def section_non_finite_parameters(bindir: Path):
               text.strip().splitlines()[-1][:200] if text.strip() else "<empty>")
 
     # A finite parameter must cost nothing.
-    for name, args in (("time_dist_sgv", ["-N", "10", "-l", "0.5",
+    for name, args in (("time_dist_sgv", ["-N", "10", "-L", "0.5",
                                           "-s", "0.01,0.01", "--csv"]),
                        ("wfafs_stochastic", ["-N", "10,10", "-G", "10,10",
                                              "-f", "1,1", "--csv"])):
