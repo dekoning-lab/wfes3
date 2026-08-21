@@ -1,10 +1,30 @@
 #include "wrightFisher.h"
 #include <cmath>  // For std::exp
+#include <sstream>
+#include <stdexcept>
+#include <string>
 
 using namespace wfes::wrightfisher;
 // (Qt-era `using namespace wfes::config;` removed alongside the
 //  configWfesSingle.h include in wrightFisher.h -- nothing in this file
 //  referenced that namespace.)
+
+namespace {
+
+// Every validation check in this file is an explicit `throw`, never an
+// assert(). wfes-cli now builds Release (-DNDEBUG) by default, which deletes
+// assert() bodies outright; a guard that vanishes from the shipped binary is
+// not a guard. See the "Default build type" block in wfes-cli/CMakeLists.txt.
+//
+// Values are formatted through a stream rather than std::to_string, which
+// would print every mutation rate in these messages as "0.000000".
+std::string fmt_param(double x) {
+    std::ostringstream os;
+    os << x;
+    return os.str();
+}
+
+}  // namespace
 
 double wfes::wrightfisher::psi_diploid(const int i, const int N, const double s, const double h,
                                  const double u, const double v) {
@@ -39,7 +59,13 @@ wfes::wrightfisher::Row wfes::wrightfisher::binom_row(const int size, const doub
     // #ifndef NDEBUG
     // std::cout << start << " " << end << " " << p << std::endl;
     // #endif // NDEBUG
-    assert((start < end) && (start >= 0) && (end > 0));
+    if (!((start < end) && (start >= 0) && (end > 0))) {
+        throw std::invalid_argument(
+            "binom_row: the tail-truncation quantile range is empty or negative "
+            "(start=" + std::to_string(start) + ", end=" + std::to_string(end) +
+            "). Check --alpha (tail truncation weight, given " + fmt_param(alpha) +
+            ") against the population size.");
+    }
 
     // Initialize row
     Row r(start, end);
@@ -713,12 +739,22 @@ wfes::wrightfisher::Matrix wfes::wrightfisher::Switching(const lvec &N, const ab
     if (abs_t == EXTINCTION_ONLY) {
         // backward mutation rate should be above 0
         for (int i = 0; i < k; i++) {
-            assert(u(i) > 0);
+            if (!(u(i) > 0)) {
+                throw std::invalid_argument(
+                    "Switching (extinction-only model): --backward-mu (-u) entry " +
+                    std::to_string(i) + " must be greater than 0, got " +
+                    fmt_param(u(i)) + ".");
+            }
         }
     } else if (abs_t == FIXATION_ONLY) {
         // forward mutation rate should be above 0
         for (int i = 0; i < k; i++) {
-            assert(v(i) > 0);
+            if (!(v(i) > 0)) {
+                throw std::invalid_argument(
+                    "Switching (fixation-only model): --forward-mu (-v) entry " +
+                    std::to_string(i) + " must be greater than 0, got " +
+                    fmt_param(v(i)) + ".");
+            }
         }
     }
 
@@ -847,11 +883,20 @@ wfes::wrightfisher::Matrix wfes::wrightfisher::NonAbsorbingToFixationOnly(const 
     if (verbose)
         t_start = std::chrono::system_clock::now();
 
-    // TODO: proper error checking
-    assert(s.size() == 2);
+    if (s.size() != 2) {
+        throw std::invalid_argument(
+            "NonAbsorbingToFixationOnly: --selection (-s) must have exactly 2 entries "
+            "(one per regime: pre-sweep, sweep), got " + std::to_string(s.size()) + ".");
+    }
     // forward mutation rate should be above 0
-    for (int i = 0; i < 2; i++)
-        assert(v(i) > 0);
+    for (int i = 0; i < 2; i++) {
+        if (!(v(i) > 0)) {
+            throw std::invalid_argument(
+                "NonAbsorbingToFixationOnly (fixation-only model): --forward-mu (-v) "
+                "entry " + std::to_string(i) + " must be greater than 0, got " +
+                fmt_param(v(i)) + ".");
+        }
+    }
 
     lvec sizes(2);
     sizes << (2 * N) + 1, 2 * N;
@@ -914,11 +959,20 @@ wfes::wrightfisher::Matrix wfes::wrightfisher::NonAbsorbingToBothAbsorbing(
     if (verbose)
         t_start = std::chrono::system_clock::now();
 
-    // TODO: proper error checking
-    assert(s.size() == 2);
+    if (s.size() != 2) {
+        throw std::invalid_argument(
+            "NonAbsorbingToBothAbsorbing: --selection (-s) must have exactly 2 entries "
+            "(one per regime: pre-sweep, sweep), got " + std::to_string(s.size()) + ".");
+    }
     // forward mutation rate should be above 0
-    for (int i = 0; i < 2; i++)
-        assert(v(i) > 0);
+    for (int i = 0; i < 2; i++) {
+        if (!(v(i) > 0)) {
+            throw std::invalid_argument(
+                "NonAbsorbingToBothAbsorbing: --forward-mu (-v) entry " +
+                std::to_string(i) + " must be greater than 0, got " +
+                fmt_param(v(i)) + ".");
+        }
+    }
 
     lvec sizes(2);
     sizes << (2 * N) + 1, (2 * N) - 1;

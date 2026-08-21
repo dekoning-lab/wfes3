@@ -1,9 +1,20 @@
 #include "sparseMatrixPardiso.h"
 
+#include <stdexcept>
+#include <string>
+
 #ifdef WFES_CLI
 #include <iostream>
 #include <fstream>
 #endif
+
+// NOT COMPILE-VERIFIED ON macOS: this translation unit is in the build only on
+// non-Apple platforms (see the platform branch in wfes-cli/CMakeLists.txt), so
+// the assert() -> throw conversion below was made mechanically and checked by
+// inspection only. It must be compiled once on Linux/MKL before the next Linux
+// release. The conversion matters because wfes-cli defaults to Release
+// (-DNDEBUG): the four realloc() checks became NULL-pointer dereferences the
+// moment assertions stopped being compiled in.
 
 using namespace wfes::pardiso;
 using namespace wfes::utils;
@@ -66,11 +77,19 @@ SparseMatrix* SparseMatrixPardiso::LeftPaddedDiagonal(int dim, double x, int pad
 
     // could probably use a private constructor here
     double* data_new = (double*)realloc(I->data, I->num_non_zeros* sizeof(double));
-    assert(data_new != NULL); I->data = data_new;
+    if (!(data_new != NULL))
+        throw std::runtime_error(
+            "SparseMatrixPardiso::LeftPaddedDiagonal(): out of memory reallocating the "
+            "data buffer to " + std::to_string(I->num_non_zeros) + " doubles");
+    I->data = data_new;
     current_size_data = num_non_zeros;
 
     llong* cols_new = (llong*)realloc(I->cols, I->num_cols * sizeof(llong));
-    assert(cols_new != NULL); I->cols = cols_new;
+    if (!(cols_new != NULL))
+        throw std::runtime_error(
+            "SparseMatrixPardiso::LeftPaddedDiagonal(): out of memory reallocating the "
+            "column-index buffer to " + std::to_string(I->num_cols) + " entries");
+    I->cols = cols_new;
     current_size_cols = num_non_zeros;
 
     for(llong i = 0; i < I->num_non_zeros; i++) {
@@ -99,7 +118,10 @@ void SparseMatrixPardiso::appendRow(dvec &row, int col_start, int size) {
 void SparseMatrixPardiso::appendChunk(dvec &row, int m0, int r0, int size, int rowSize) {
 
     // Test not full
-    assert(!full);
+    if (!(!full))
+        throw std::runtime_error(
+            "SparseMatrixPardiso::appendChunk(): the matrix already has all "
+            + std::to_string(num_rows) + " rows; no further chunk can be appended");
     // Update size
     llong new_size = num_non_zeros + size;
 
@@ -207,8 +229,12 @@ void SparseMatrixPardiso::appendValue(double value, int j) {
 }
 
 void SparseMatrixPardiso::nextRow() {
-    assert(!full);
-    
+    if (!(!full))
+        throw std::runtime_error(
+            "SparseMatrixPardiso::nextRow(): the matrix already has all "
+            + std::to_string(num_rows) + " rows; no further row can be started");
+
+
 #ifdef WFES_CLI
     if (num_rows <= 10) {
         std::cerr << "DEBUG nextRow(): current_row=" << current_row 
@@ -277,7 +303,10 @@ dmat SparseMatrixPardiso::dense() {
 }
 
 dvec SparseMatrixPardiso::getDiagCopy() {
-    assert(num_rows == num_cols);
+    if (!(num_rows == num_cols))
+        throw std::runtime_error(
+            "SparseMatrixPardiso::getDiagCopy(): matrix is not square ("
+            + std::to_string(num_rows) + "x" + std::to_string(num_cols) + ")");
 
     dvec diag(num_rows);
     for (llong i = 0; i < num_rows; ++i) {
@@ -315,7 +344,15 @@ dvec SparseMatrixPardiso::getRowCopy(int i) {
 
 dvec SparseMatrixPardiso::multiply(dvec &x, bool transpose) {
     llong v_size = transpose ? num_cols : num_rows;
-    transpose ? assert(x.size() == num_rows) : assert(x.size() == num_cols);
+    // Was `transpose ? assert(...) : assert(...)`, which is not expressible as a
+    // ternary once each branch becomes a statement; the tested condition is
+    // unchanged.
+    if (x.size() != (transpose ? num_rows : num_cols))
+        throw std::runtime_error(
+            "SparseMatrixPardiso::multiply(): input vector has " +
+            std::to_string(x.size()) + " entries but the " +
+            std::string(transpose ? "transposed " : "") + "matrix expects " +
+            std::to_string(transpose ? num_rows : num_cols));
     dvec y(v_size);
 
     struct matrix_descr descr;
@@ -328,7 +365,13 @@ dvec SparseMatrixPardiso::multiply(dvec &x, bool transpose) {
 }
 
 void SparseMatrixPardiso::multiplyInPlaceRep(dvec &x, int times, bool transpose) {
-    transpose ? assert(x.size() == num_rows) : assert(x.size() == num_cols);
+    // Same rewrite as in multiply() above; the tested condition is unchanged.
+    if (x.size() != (transpose ? num_rows : num_cols))
+        throw std::runtime_error(
+            "SparseMatrixPardiso::multiplyInPlaceRep(): input vector has " +
+            std::to_string(x.size()) + " entries but the " +
+            std::string(transpose ? "transposed " : "") + "matrix expects " +
+            std::to_string(transpose ? num_rows : num_cols));
     dvec workspace(x.size());
 
     struct matrix_descr descr;
@@ -384,11 +427,19 @@ void SparseMatrixPardiso::setValue(double x, int i, int j) {
 void SparseMatrixPardiso::resizeVectors(){
     // Resize columns vector
     llong *cols_new = (llong*) realloc(cols, num_non_zeros * sizeof(llong));
-    assert(cols_new != NULL); cols = cols_new;
+    if (!(cols_new != NULL))
+        throw std::runtime_error(
+            "SparseMatrixPardiso::resizeVectors(): out of memory reallocating the "
+            "column-index buffer to " + std::to_string(num_non_zeros) + " entries");
+    cols = cols_new;
 
     // Resize data vector
     double* data_new = (double*) realloc(data, num_non_zeros * sizeof(double));
-    assert(data_new != NULL); data = data_new;
+    if (!(data_new != NULL))
+        throw std::runtime_error(
+            "SparseMatrixPardiso::resizeVectors(): out of memory reallocating the "
+            "data buffer to " + std::to_string(num_non_zeros) + " doubles");
+    data = data_new;
 }
 
 void SparseMatrixPardiso::saveMarket(std::string name) {
