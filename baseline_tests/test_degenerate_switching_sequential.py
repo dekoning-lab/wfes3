@@ -14,7 +14,11 @@ below used to produce a plausible-looking number and exit status 0:
   * `-c 1` put every starting state below the cutoff, leaving the
     zero-initialised accumulators to be printed as the result;
   * `wfes_switching --fixation` never read -c at all: -c 1e-10, -c 0.9 and
-    -c 1 gave byte-identical output.
+    -c 1 gave byte-identical output;
+  * `wfes_switching --absorption --initial <file> -P -5,3` printed the raw,
+    unread -P into the CSV p0/p1 columns and the JSON
+    "starting_probabilities" -- literally negative "probabilities",
+    published at exit 0 for a run that never used them.
 
 The assertions here say the tools must now either refuse (nonzero exit plus a
 diagnostic on stderr) or return a normalised, finite result -- never a
@@ -275,6 +279,53 @@ def test_json_parameters_record_the_values_used():
               "sequential --json: records starting_copies actually used",
               "parameters=%r" % params)
 
+    # switching --absorption records the same XOR as --fixation: the
+    # parameters block names whichever starting rule the run actually used.
+    # Without --initial, that is the NORMALISED -P.
+    r = run("wfes_switching", ["--absorption"] + SWITCHING_BASE + ["-P", "1,1", "--json"])
+    check(r.returncode == 0, "switching --absorption --json: exits 0", context(r))
+    doc = parse_json(r, "switching --absorption --json")
+    if doc:
+        params = doc.get("parameters", {})
+        check(approx_list(params.get("starting_probabilities"), [0.5, 0.5]),
+              "switching --absorption --json: records NORMALISED p",
+              "starting_probabilities=%r" % (params.get("starting_probabilities"),))
+        check("initial_distribution" not in params,
+              "switching --absorption --json: no initial_distribution without --initial",
+              "parameters keys=%r" % sorted(params))
+
+    # With --initial the run never reads -P (the file replaces the per-model
+    # starting integration entirely, wfes_switching_main.cpp ABSORPTION
+    # branch), so the raw vector must not be published as
+    # "starting_probabilities"; the initial_distribution path is what gets
+    # recorded.  -P -5,3 is the confirmed bug's exact repro: dead input that
+    # is (correctly) never validated, and that this run used to publish as
+    # "starting_probabilities": [-5, 3] at exit 0.  The 30-state file spans
+    # the concatenated TRANSIENT states of all models: 2*sum(N_i) - n_models
+    # = 30 for SWITCHING_BASE.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        absorption_initial = write_initial_distribution(tmpdir, 30)
+        r = run("wfes_switching", ["--absorption"] + SWITCHING_BASE +
+                ["--initial", absorption_initial, "-P", "-5,3", "--json"])
+        check(r.returncode == 0,
+              "switching --absorption --initial --json: exits 0 (dead -P not validated)",
+              context(r))
+        doc = parse_json(r, "switching --absorption --initial --json")
+        if doc:
+            params = doc.get("parameters", {})
+            check("starting_probabilities" not in params,
+                  "switching --absorption --initial --json: unused -P not published",
+                  "parameters=%r" % params)
+            check(params.get("initial_distribution") == absorption_initial,
+                  "switching --absorption --initial --json: records the initial_distribution path",
+                  "parameters=%r" % params)
+            res = doc.get("results", {})
+            p_ext, p_fix = res.get("P_ext"), res.get("P_fix")
+            check(isinstance(p_ext, float) and isinstance(p_fix, float)
+                  and abs(p_ext + p_fix - 1.0) < 1e-9,
+                  "switching --absorption --initial --json: P_ext + P_fix == 1",
+                  "P_ext=%r P_fix=%r" % (p_ext, p_fix))
+
 
 # ---------------------------------------------------------------------------
 # 5. CSV must have a header, and it must have exactly one name per field
@@ -403,6 +454,25 @@ def test_csv_output_has_a_header():
               "sequential --initial --csv: "
               "no renormalisation warning for an unused -p", context(r))
         check_csv_header(r, "sequential --initial --csv", empty_ok=("p0", "p1"))
+
+        # wfes_switching --absorption --initial: same -p-replacing rule as
+        # the two cases above, but this output travels through the shared
+        # OutputFormatter::print_switching_absorption_results rather than
+        # the main's own CsvRow, and that formatter used to print the raw
+        # -P vector unconditionally.  Because a dead -P is (correctly)
+        # never validated, the values here are deliberately ones validation
+        # would refuse (-5,3): the run must neither refuse them nor publish
+        # them.  This is the exact shape that used to print p0=-5,p1=3 into
+        # a clean exit-0 CSV row.  --absorption spans the concatenated
+        # TRANSIENT states of all models: 2*sum(N_i) - n_models = 30 for
+        # SWITCHING_BASE (`llong size = (2 * population_sizes.sum()) -
+        # n_models`).
+        absorption_initial = write_initial_distribution(tmpdir, 30)
+        r = run("wfes_switching",
+                ["--absorption"] + SWITCHING_BASE +
+                ["--initial", absorption_initial, "-P", "-5,3", "--csv"])
+        check_csv_header(r, "switching --absorption --initial --csv",
+                         empty_ok=("p0", "p1"))
 
 
 # ---------------------------------------------------------------------------

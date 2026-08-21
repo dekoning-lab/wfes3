@@ -920,9 +920,23 @@ int main(int argc, char const *argv[]) {
             require_finite_vec(T_cond_ext, "T_cond_ext");
             require_finite_vec(T_cond_fix, "T_cond_fix");
 
-            // Print results using OutputFormatter
+            // Print results using OutputFormatter.
+            //
+            // --initial replaces the per-model starting states (and their -p
+            // weights) with one supplied distribution here exactly as it
+            // does in the FIXATION branch above, so p is dead input under
+            // the same condition: options.initial_distribution_path.empty().
+            // That is the same condition already used to gate
+            // normalise_starting_probabilities() near the top of main() and
+            // the one the FIXATION branch's own CsvRow/JSON output already
+            // key on. Passed through explicitly here because, unlike
+            // FIXATION, this branch delegates its entire JSON/CSV/text
+            // output to this one shared formatter, which cannot otherwise
+            // tell a live p from an unvalidated one -p left behind when
+            // --initial made it dead input.
             CLI::OutputFormatter::print_switching_absorption_results(
                 options, n_models, population_sizes.cast<double>(), s, h, u, v, p,
+                options.initial_distribution_path.empty(),
                 P_ext, P_fix, T_ext, T_fix,
                 P_cond_ext, P_cond_fix, T_uncond, T_cond_ext, T_cond_fix
             );

@@ -84,6 +84,39 @@ void require_finite_for_file(const dmat& mat, const std::string& filename) {
 
 }  // namespace
 
+namespace {
+
+// Escape a string for use as a JSON string value.
+//
+// Only options.initial_distribution_path goes through this, in
+// print_switching_absorption_results below, but a path may legitimately
+// contain a backslash or a quote, and one of those in the parameters block
+// would make the whole document unparseable. Duplicated (byte-for-byte)
+// from the same-named, same-purpose local helper already in
+// wfes_switching_main.cpp / wfes_sequential_main.cpp / wfes_single_main.cpp,
+// rather than shared, matching this codebase's existing convention for this
+// exact helper.
+std::string json_escape(const std::string &raw) {
+    std::string out;
+    out.reserve(raw.size());
+    for (char c : raw) {
+        if (c == '"' || c == '\\') {
+            out.push_back('\\');
+            out.push_back(c);
+        } else if (static_cast<unsigned char>(c) < 0x20) {
+            std::ostringstream os;
+            os << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+               << static_cast<int>(static_cast<unsigned char>(c));
+            out += os.str();
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
 void OutputFormatter::write_vector_to_file(const dvec& vec, const std::string& filename) {
     // Refuse before writing the first character, whether the destination is
     // a real file or the "stdout" pseudo-filename below -- see the contract
@@ -470,6 +503,7 @@ void OutputFormatter::print_switching_absorption_results(
     const dvec& u,
     const dvec& v,
     const dvec& p,
+    bool p_used,
     double P_ext, double P_fix,
     double T_ext, double T_fix,
     const dvec& P_cond_ext,
@@ -525,12 +559,27 @@ void OutputFormatter::print_switching_absorption_results(
             if (i < n_models - 1) std::cout << ", ";
         }
         std::cout << "]," << std::endl;
-        std::cout << "    \"starting_probabilities\": [";
-        for (llong i = 0; i < n_models; i++) {
-            std::cout << p(i);
-            if (i < n_models - 1) std::cout << ", ";
+        // --initial replaces the per-model starting states -- and their -p
+        // weights -- with one supplied distribution (see the ABSORPTION
+        // dispatch branch in wfes_switching_main.cpp), exactly as it does
+        // for the FIXATION branch's own JSON output; p_used mirrors that
+        // branch's options.initial_distribution_path.empty() condition, so
+        // exactly one of the two fields below appears. A dead, never
+        // validated -p (p_used == false) must never be published under
+        // starting_probabilities as though it were the probability the run
+        // actually used.
+        if (p_used) {
+            std::cout << "    \"starting_probabilities\": [";
+            for (llong i = 0; i < n_models; i++) {
+                std::cout << p(i);
+                if (i < n_models - 1) std::cout << ", ";
+            }
+            std::cout << "]," << std::endl;
+        } else {
+            std::cout << "    \"initial_distribution\": \""
+                      << json_escape(options.initial_distribution_path)
+                      << "\"," << std::endl;
         }
-        std::cout << "]," << std::endl;
         std::cout << "    \"alpha\": " << options.alpha << std::endl;
         std::cout << "  }," << std::endl;
         std::cout << "  \"results\": {" << std::endl;
@@ -645,8 +694,14 @@ void OutputFormatter::print_switching_absorption_results(
             if (i < n_models - 1) std::cout << ",";
         }
         std::cout << ",";
+        // Same p_used gate as the JSON branch above, and the same
+        // convention CsvRow::add_per_model_or_empty already establishes for
+        // the FIXATION branch's CSV: the column stays (same header, same
+        // field count on every run), but a run that never read p leaves the
+        // field empty rather than printing whatever raw, unvalidated value
+        // -p happened to hold.
         for (llong i = 0; i < n_models; i++) {
-            std::cout << p(i);
+            if (p_used) std::cout << p(i);
             if (i < n_models - 1) std::cout << ",";
         }
         std::cout << "," << options.alpha << ","

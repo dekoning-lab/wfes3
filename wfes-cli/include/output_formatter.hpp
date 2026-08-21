@@ -201,7 +201,20 @@ public:
      * @param h Dominance coefficients
      * @param u Backward mutation rates
      * @param v Forward mutation rates
-     * @param p Starting probabilities
+     * @param p Starting probabilities. Meaningful only when p_used; when the
+     *          caller's --initial (or any other rule) makes p dead input,
+     *          pass p_used = false rather than a sanitised placeholder --
+     *          the formatter itself never reads p in that case.
+     * @param p_used Whether this run actually started from p (true), or
+     *        from some other rule such as --initial that replaces it
+     *        (false). Mirrors the caller's own
+     *        options.initial_distribution_path.empty() condition -- the
+     *        same one that gates normalisation of p before this call and
+     *        that the FIXATION branch already uses for its own JSON/CSV
+     *        output. When false, JSON records options.initial_distribution_path
+     *        instead of starting_probabilities, and CSV leaves the p0/p1/...
+     *        fields empty rather than printing whatever raw, unvalidated
+     *        vector -p happened to hold.
      * @param P_ext Extinction probability
      * @param P_fix Fixation probability
      * @param T_ext Time to extinction
@@ -221,6 +234,7 @@ public:
         const dvec& u,
         const dvec& v,
         const dvec& p,
+        bool p_used,
         double P_ext, double P_fix,
         double T_ext, double T_fix,
         const dvec& P_cond_ext,
