@@ -64,6 +64,52 @@ function sourceDir(): string {
 }
 
 /**
+ * Whether this copy of the application may install onto the PATH.
+ *
+ * The links point back into the bundle that creates them, so installing from a
+ * bundle that is not in its final home produces links into a location that
+ * moves, gets rebuilt, or unmounts. The failure is quiet and delayed: the links
+ * work until the directory is next replaced, then every program disappears from
+ * the PATH with nothing to explain it.
+ *
+ * Worse, because installing overwrites whatever links are already there,
+ * launching a development build silently repoints a perfectly good installation
+ * at that build's output directory. That happened during development on
+ * 2026-08-21, and only surfaced because the link targets were inspected
+ * directly -- the programs still ran, so nothing looked wrong.
+ *
+ * A released copy lives in /Applications (or ~/Applications, which macOS treats
+ * as a per-user equivalent), so restricting installation to those directories
+ * costs a real user nothing and removes the whole failure mode.
+ *
+ * WFES_CLI_ALLOW_ANY_BUNDLE lifts the restriction for the automated test, which
+ * necessarily runs from neither location. It is not a user-facing setting.
+ */
+export function bundleMayInstall(): { ok: boolean; reason?: string } {
+  if (process.env.WFES_CLI_ALLOW_ANY_BUNDLE === '1') return { ok: true }
+
+  if (!app.isPackaged) {
+    return {
+      ok: false,
+      reason:
+        'The command-line programs can only be installed from an installed copy of WFES3, not from a development build.'
+    }
+  }
+
+  // .../WFES3.app/Contents/Resources -> .../WFES3.app
+  const bundle = path.resolve(process.resourcesPath, '..', '..')
+  const roots = ['/Applications', path.join(app.getPath('home'), 'Applications')]
+  const inRoot = roots.some((root) => bundle === root || bundle.startsWith(root + path.sep))
+
+  return inRoot
+    ? { ok: true }
+    : {
+        ok: false,
+        reason: 'Move WFES3 to your Applications folder, then try again.'
+      }
+}
+
+/**
  * Runs a shell command with administrator privileges, which shows the standard
  * macOS authentication dialog. `with prompt` supplies the reason the user sees.
  */
@@ -122,6 +168,11 @@ export async function install(): Promise<InstallResult> {
   if (process.platform !== 'darwin') {
     return { ...base, error: 'Installing the command-line programs is supported on macOS only.' }
   }
+
+  // Refuse before touching anything: linking into a bundle that is not in its
+  // final home breaks later, and overwrites any working installation meanwhile.
+  const allowed = bundleMayInstall()
+  if (!allowed.ok) return { ...base, error: allowed.reason }
 
   // Fail before prompting for a password if the programs are not there.
   const missing: string[] = []

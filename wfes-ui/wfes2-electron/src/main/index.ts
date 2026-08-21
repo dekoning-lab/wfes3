@@ -71,6 +71,10 @@ function threadCount(...values: unknown[]): number {
 async function offerCliInstallOnFirstRun(parent: BrowserWindow): Promise<void> {
   if (process.platform !== 'darwin' || !app.isPackaged) return
 
+  // Do not offer what would be refused. No marker is written, so a copy that is
+  // later moved into Applications still gets asked on its next launch.
+  if (!cliInstaller.bundleMayInstall().ok) return
+
   const marker = join(app.getPath('userData'), 'cli-install-offered')
   try {
     await fsPromises.access(marker)

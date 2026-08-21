@@ -49,6 +49,12 @@ const installer = require(${JSON.stringify(moduleBundle)})
 app.whenReady().then(async () => {
   const out = {}
   out.before = await installer.status()
+  // With the override cleared, this unpackaged test bundle must be refused --
+  // that is the guard against linking into a build output directory.
+  delete process.env.WFES_CLI_ALLOW_ANY_BUNDLE
+  out.guard = await installer.install()
+  out.afterGuard = await installer.status()
+  process.env.WFES_CLI_ALLOW_ANY_BUNDLE = '1'
   out.install = await installer.install()
   out.afterInstall = await installer.status()
   // Run a program THROUGH the link, while the links still exist. This is the
@@ -66,6 +72,30 @@ app.whenReady().then(async () => {
     out.linkedRun = { ok: false, error: String(e.message).slice(0, 300) }
   }
   out.uninstall = await installer.uninstall()
+
+  // The branch that actually caused the incident: a PACKAGED bundle sitting
+  // outside Applications. The checks above only cover the unpackaged case, so
+  // simulate a packaged app at various locations and ask the guard directly.
+  delete process.env.WFES_CLI_ALLOW_ANY_BUNDLE
+  Object.defineProperty(app, 'isPackaged', { get: () => true, configurable: true })
+  const home = process.env.HOME
+  out.locations = [
+    ['/Applications/WFES3.app', true],
+    [home + '/Applications/WFES3.app', true],
+    ['/Applications/Science/WFES3.app', true],
+    [home + '/Builds/WFES3/mac-arm64/WFES3.app', false],
+    ['/Volumes/WFES3 3.0.0-beta.3-arm64/WFES3.app', false],
+    [home + '/Downloads/WFES3.app', false],
+    ['/Applications-elsewhere/WFES3.app', false]
+  ].map(([bundle, shouldAllow]) => {
+    Object.defineProperty(process, 'resourcesPath', {
+      value: require('path').join(bundle, 'Contents', 'Resources'),
+      configurable: true
+    })
+    const verdict = installer.bundleMayInstall()
+    return { bundle, shouldAllow, allowed: verdict.ok, reason: verdict.reason }
+  })
+  process.env.WFES_CLI_ALLOW_ANY_BUNDLE = '1'
   out.afterUninstall = await installer.status()
   console.log('WFES_RESULT:' + JSON.stringify(out))
   app.exit(0)
@@ -79,7 +109,12 @@ try {
     cwd: root,
     encoding: 'utf8',
     timeout: 120000,
-    env: { ...process.env, WFES_CLI_INSTALL_DIR: installDir, ELECTRON_DISABLE_SANDBOX: '1' }
+    env: {
+      ...process.env,
+      WFES_CLI_INSTALL_DIR: installDir,
+      WFES_CLI_ALLOW_ANY_BUNDLE: '1',
+      ELECTRON_DISABLE_SANDBOX: '1'
+    }
   })
 } catch (e) {
   raw = String(e.stdout ?? '') + String(e.stderr ?? '')
@@ -103,6 +138,19 @@ const checks = []
 const check = (name, pass, detail = '') => checks.push({ name, pass, detail })
 
 check('starts uninstalled', r.before.installed === false)
+
+// The guard: a bundle outside Applications must not be able to install.
+check('refuses to install from a non-Applications bundle', r.guard.ok === false)
+check(
+  'refusal explains what to do',
+  typeof r.guard.error === 'string' && /development build|Applications folder/.test(r.guard.error),
+  r.guard.error ?? '(no reason given)'
+)
+check(
+  'refusal leaves the PATH untouched',
+  r.afterGuard.linked.length === 0 && r.afterGuard.foreign.length === 0
+)
+
 check('install reports success', r.install.ok === true, r.install.error ?? '')
 check(
   'all 11 programs linked',
@@ -121,6 +169,16 @@ check(
 
 check('uninstall reports success', r.uninstall.ok === true, r.uninstall.error ?? '')
 check('all links removed', r.afterUninstall.linked.length === 0)
+
+// Packaged bundle, various locations -- the incident's actual branch.
+for (const loc of r.locations ?? []) {
+  const where = loc.bundle.replace(process.env.HOME, '~')
+  check(
+    `${loc.shouldAllow ? 'allows' : 'refuses'} packaged bundle at ${where}`,
+    loc.allowed === loc.shouldAllow,
+    loc.allowed === loc.shouldAllow ? '' : `got allowed=${loc.allowed}`
+  )
+}
 
 rmSync(installDir, { recursive: true, force: true })
 rmSync(moduleBundle, { force: true })
