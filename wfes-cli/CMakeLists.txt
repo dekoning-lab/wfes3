@@ -43,22 +43,32 @@ project(WFES_CMD VERSION 1.0)
 # in, which is a correctness hazard as well as a speed one (an Eigen assert
 # aborts the process rather than reporting an error).
 #
-# Release is safe for this codebase *now*: the remediation replaced the
-# parameter and dimension guards that mattered with explicit `if (...) throw`
-# checks, none of which is an assert(), so none of them disappears under
-# -DNDEBUG. Do not reintroduce assert()-based validation without revisiting
-# this default.
+# Release is safe for this codebase *now* because there is no assert() left on
+# any path this build compiles: every input-validation and allocation check in
+# wfes-lib is an explicit `if (...) throw`, which -DNDEBUG cannot remove. That
+# holds for wrightFisher.cpp (compiled into all 11 binaries) and for the
+# Linux/MKL sparseMatrixPardiso.cpp, whose realloc-NULL and dimension checks
+# were converted alongside it. CAVEAT: sparseMatrixPardiso.cpp does not compile
+# on Apple, so its conversion has been verified by inspection only and still
+# needs one Linux CI build before the next Linux release.
+#
+# Do not reintroduce assert()-based validation without revisiting this default.
 #
 # An explicit -DCMAKE_BUILD_TYPE=... on the command line still wins, and
-# multi-config generators (Xcode, Visual Studio) ignore the variable entirely.
+# multi-config generators (Xcode, Visual Studio, Ninja Multi-Config) ignore the
+# variable entirely -- which is why the set_property() below is guarded too:
+# under those generators the CMAKE_BUILD_TYPE cache entry does not exist, and
+# set_property(CACHE <undefined> ...) is a hard configure error.
 # ---------------------------------------------------------------------------
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE "Release" CACHE STRING
-        "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)" FORCE)
-    message(STATUS "CMAKE_BUILD_TYPE was not set; defaulting to Release")
+if(NOT CMAKE_CONFIGURATION_TYPES)
+    if(NOT CMAKE_BUILD_TYPE)
+        set(CMAKE_BUILD_TYPE "Release" CACHE STRING
+            "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)" FORCE)
+        message(STATUS "CMAKE_BUILD_TYPE was not set; defaulting to Release")
+    endif()
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+                 Debug Release RelWithDebInfo MinSizeRel)
 endif()
-set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
-             Debug Release RelWithDebInfo MinSizeRel)
 
 if(APPLE)
     # Global compile options - ensure complete Homebrew C++ stack
