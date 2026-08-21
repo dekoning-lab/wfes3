@@ -119,7 +119,8 @@ int main(int argc, char const *argv[]) {
     args::Flag json_f(parser, "json", "Output results in JSON format", {"json"});
     args::Flag force_f(parser, "force", "Do not perform parameter checks", {"force"});
     args::Flag verbose_f(parser, "verbose", "Verbose solver output", {"verbose"});
-    args::ValueFlag<std::string> library_f(parser, "library", "Library (Pardiso, ViennaCL, Accelerate, SuiteSparse, or ParU). Note: on macOS, Accelerate uses UMFPACK for the factorization", {"library"});
+    args::ValueFlag<std::string> library_f(parser, "library",
+        CLI::Args_Parser::library_flag_help(), {"library"});
     args::HelpFlag help_f(parser, "help", "Display this help menu", {"help"});
 
     // Parse arguments
@@ -258,10 +259,15 @@ int main(int argc, char const *argv[]) {
         // Apple Silicon, where MKL/Pardiso does not exist.
         std::string library = library_f ? args::get(library_f)
                                         : CLI::Args_Parser::get_default_library();
+        // This tool builds its own parser, so it does not inherit the shared
+        // validate_* checks; without this an unrecognised --library falls
+        // through the factories' `else` to the platform default and reports
+        // success under the wrong backend.
+        CLI::Args_Parser::validate_library(library);
 
-        // JSON is machine-consumed: emit round-trip precision rather than the
-        // stream default of 6 significant figures.
-        if (json_f) std::cout << std::setprecision(std::numeric_limits<double>::max_digits10);
+        // JSON and CSV are both machine-consumed: emit round-trip precision
+        // rather than the stream default of 6 significant figures.
+        if (json_f || csv_f) std::cout << std::setprecision(std::numeric_limits<double>::max_digits10);
 
         // Calculate initial distribution for integration
         dvec first_row = wrightfisher::binom_row(2 * population_size, 

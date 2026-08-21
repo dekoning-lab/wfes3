@@ -12,6 +12,7 @@
 #endif
 #include "args.hpp"
 #include "args_parser.hpp"
+#include "banner.h"
 #include "initial_distribution.h"   // for the shared validate_model_domain checks
 #include "parsing.h"
 #include "wright_fisher.h"
@@ -230,7 +231,16 @@ static void require_normalisable(const dvec& p, const std::string& where) {
 
 Options parse_arguments(int argc, char* argv[]) {
     args::ArgumentParser parser("Wright-Fisher Allele Frequency Spectrum (Deterministic)");
-    
+
+    // Detected before parsing so the ASCII banner can be suppressed for
+    // structured output, exactly as every other tool's parse function does.
+    // args' ParseCLI takes `char const**`; the cast is a const-qualification
+    // change on a pointer this function never writes through.
+    char const** argv_c = const_cast<char const**>(argv);
+    const bool structured_output =
+        wfes::cli::Args_Parser::is_structured_output_requested(argc, argv_c);
+
+
     args::HelpFlag help(parser, "help", "Display this help menu", {"help"});
     
     args::ValueFlag<llong> arg_p(parser, "int", "Initial allele count", {'p', "initial-count"});
@@ -246,7 +256,8 @@ Options parse_arguments(int argc, char* argv[]) {
     args::ValueFlag<string> arg_initial(parser, "path",
         "Path to initial state distribution CSV (one probability per state)", {'i', "initial"});
     args::Flag arg_verbose(parser, "verbose", "Verbose solver output", {"verbose"});
-    args::ValueFlag<string> arg_library(parser, "library", "Library (Pardiso, ViennaCL, Accelerate, SuiteSparse, or ParU). Note: on macOS, Accelerate uses UMFPACK for the factorization", {'l', "library"});
+    args::ValueFlag<string> arg_library(parser, "library",
+        wfes::cli::Args_Parser::library_flag_help(), {'l', "library"});
     args::ValueFlag<llong> arg_block_size(parser, "int", "Block size", {'b', "block-size"});
     // This tool was the only one of the eleven with no thread control, while
     // the GUI emitted --num-threads for it -- so any run from the GUI failed
@@ -261,16 +272,30 @@ Options parse_arguments(int argc, char* argv[]) {
     try {
         parser.ParseCLI(argc, argv);
     } catch (args::Help&) {
+        if (!structured_output) {
+            wfes::banner::displayBanner("wfafs_deterministic");
+        }
         cout << parser;
         exit(0);
     } catch (args::ParseError& e) {
+        if (!structured_output) {
+            wfes::banner::displayBanner("wfafs_deterministic");
+        }
         cerr << e.what() << endl;
         cerr << parser;
         exit(1);
     }
 
+    // Display banner for successful parsing (unless structured output is
+    // requested). This tool was the one of the eleven whose parse function
+    // never called displayBanner, so it identified itself nowhere in its
+    // output -- a plain-text run began straight at the spectrum's first row.
+    if (!structured_output) {
+        wfes::banner::displayBanner("wfafs_deterministic");
+    }
+
     Options options;
-    
+
     // -p names a single starting count. It is not required when the starting
     // distribution comes from a file or from the mutation integration, which
     // both replace it; -1 marks "not given" so the run can tell them apart.
@@ -315,6 +340,11 @@ Options parse_arguments(int argc, char* argv[]) {
     if (arg_initial) options.initial_distribution_path = args::get(arg_initial);
     if (arg_verbose) options.verbose = true;
     if (arg_library) options.library = args::get(arg_library);
+    // This tool has its own parser, so it does not inherit the shared
+    // validate_* checks; the library string has to be checked here or an
+    // unrecognised one falls through the factories' `else` to the platform
+    // default and reports success.
+    wfes::cli::Args_Parser::validate_library(options.library);
     if (arg_block_size) options.block_size = args::get(arg_block_size);
     if (arg_n_threads) options.n_threads = args::get(arg_n_threads);
     if (arg_output_file) options.output_file = args::get(arg_output_file);
@@ -557,6 +587,10 @@ int main(int argc, char* argv[]) {
             cout << "  ]" << endl;
             cout << "}" << endl;
         } else if (options.csv_output) {
+            // Same round-trip precision as the JSON branch above: CSV is read
+            // by a program too, and 6 significant figures cannot be converted
+            // back to the double that was computed.
+            cout << std::setprecision(std::numeric_limits<double>::max_digits10);
             cout << "count,probability" << endl;
             for (llong i = 0; i < p_vec.size(); i++) {
                 cout << i << "," << p_vec(i) << endl;
