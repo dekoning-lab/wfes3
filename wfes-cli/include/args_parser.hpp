@@ -81,6 +81,28 @@ public:
     static void validate_library(const std::string& library);
 
     /**
+     * @brief Above this alpha the tail truncation is coarse enough to move the
+     *        answer, and the run is refused unless the tool offers --force.
+     */
+    static constexpr double MAX_ADVISED_ALPHA = 1e-5;
+
+    /**
+     * @brief The tail-truncation advisory, in one place instead of nine.
+     *
+     * Every validate_*_parameters carried its own copy of the 1e-5 threshold
+     * and its own ending -- "Use --force to ignore", "Use --force to
+     * override.", or nothing at all -- so one judgement call read as three
+     * different rules depending on which tool refused, and the threshold could
+     * be changed in one tool without the other eight noticing.
+     *
+     * @param force_available false for time_dist, time_dist_dual and
+     *        phase_type_dist, which expose no --force flag. Their message must
+     *        not point at a flag they do not have; the check itself stays
+     *        unconditional there, exactly as before.
+     */
+    static void validate_alpha_advisory(double alpha, bool force_available);
+
+    /**
      * @brief Set up common parameters for argument parsers
      * 
      * @param parser The parser to configure

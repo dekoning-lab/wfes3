@@ -139,6 +139,16 @@ void advise_vector_tool(const CommandLineOptions& options, const char* unit,
 
 }  // namespace
 
+void Args_Parser::validate_alpha_advisory(double alpha, bool force_available) {
+    if (!(alpha > MAX_ADVISED_ALPHA)) return;
+    std::string msg =
+        "Zero cutoff value is quite high. This might produce inaccurate "
+        "results (alpha = " + num_str(alpha) + ", above " +
+        num_str(MAX_ADVISED_ALPHA) + ")";
+    if (force_available) msg += ". Use --force to ignore";
+    throw std::runtime_error(msg);
+}
+
 std::string Args_Parser::get_default_library() {
 #ifdef __APPLE__
     const std::string preferred = "Accelerate";
@@ -709,10 +719,7 @@ void Args_Parser::validate_wfes_single_parameters(CommandLineOptions& options, b
                                   options.selection_coefficient,
                                   options.backward_mutation,
                                   options.forward_mutation);
-        if (options.alpha > 1e-5) {
-            throw std::runtime_error("Zero cutoff value is quite high. This might produce inaccurate "
-                                     "results. Use --force to ignore");
-        }
+        validate_alpha_advisory(options.alpha, true);
     }
 }
 
@@ -871,10 +878,7 @@ void Args_Parser::validate_wfes_switching_parameters(CommandLineOptions& options
         // Was a TODO stub that checked only alpha, so every parameter combination
         // wfes_single refuses ran here to a plausible-looking answer instead.
         advise_vector_tool(options, "model");
-        if (options.alpha > 1e-5) {
-            throw std::runtime_error("Zero cutoff value is quite high. This might produce inaccurate "
-                                     "results. Use --force to ignore");
-        }
+        validate_alpha_advisory(options.alpha, true);
     }
 }
 
@@ -1029,10 +1033,7 @@ void Args_Parser::validate_wfes_sequential_parameters(CommandLineOptions& option
     if (!force) {
         // Was a TODO stub that checked only alpha.
         advise_vector_tool(options, "epoch");
-        if (options.alpha > 1e-5) {
-            throw std::runtime_error("Zero cutoff value is quite high. This might produce inaccurate "
-                                     "results. Use --force to ignore");
-        }
+        validate_alpha_advisory(options.alpha, true);
     }
 }
 
@@ -1178,10 +1179,9 @@ void Args_Parser::validate_time_dist_parameters(CommandLineOptions& options, boo
                           options.dominance, options.backward_mutation,
                           options.forward_mutation, options.alpha);
     // Basic validation for time_dist parameters
-    if (options.alpha > 1e-5) {
-        throw std::runtime_error("Zero cutoff value is quite high. This might produce inaccurate "
-                                 "results.");
-    }
+    // false: this tool exposes no --force flag, so the message must not point
+    // at one. The check itself stays unconditional, exactly as before.
+    validate_alpha_advisory(options.alpha, false);
     if (options.max_t <= 0) {
         throw std::runtime_error("Maximum time must be positive.");
     }
@@ -1332,10 +1332,9 @@ void Args_Parser::validate_time_dist_dual_parameters(CommandLineOptions& options
                           options.dominance, options.backward_mutation,
                           options.forward_mutation, options.alpha);
     // Same validation as regular time_dist
-    if (options.alpha > 1e-5) {
-        throw std::runtime_error("Zero cutoff value is quite high. This might produce inaccurate "
-                                 "results.");
-    }
+    // false: this tool exposes no --force flag, so the message must not point
+    // at one. The check itself stays unconditional, exactly as before.
+    validate_alpha_advisory(options.alpha, false);
     if (options.max_t <= 0) {
         throw std::runtime_error("Maximum time must be positive.");
     }
@@ -1493,10 +1492,7 @@ void Args_Parser::validate_time_dist_sgv_parameters(CommandLineOptions& options,
                           options.dominance, options.backward_mutation,
                           options.forward_mutation, options.alpha);
     if (!force) {
-        if (options.alpha > 1e-5) {
-            throw std::runtime_error("Zero cutoff value is quite high. This might produce inaccurate "
-                                     "results. Use --force to ignore");
-        }
+        validate_alpha_advisory(options.alpha, true);
         if (options.lambda < 0 || options.lambda > 1) {
             throw std::runtime_error("Lambda (transition probability) must be between 0 and 1. Use --force to ignore");
         }
@@ -1669,10 +1665,9 @@ void Args_Parser::validate_phase_type_dist_parameters(CommandLineOptions& option
                           options.dominance, options.backward_mutation,
                           options.forward_mutation, options.alpha);
     // Same validation as regular time_dist
-    if (options.alpha > 1e-5) {
-        throw std::runtime_error("Zero cutoff value is quite high. This might produce inaccurate "
-                                 "results.");
-    }
+    // false: this tool exposes no --force flag, so the message must not point
+    // at one. The check itself stays unconditional, exactly as before.
+    validate_alpha_advisory(options.alpha, false);
     if (options.max_t <= 0) {
         throw std::runtime_error("Maximum time must be positive.");
     }
@@ -1850,10 +1845,7 @@ void Args_Parser::validate_phase_type_moments_parameters(CommandLineOptions& opt
     if (options.alpha <= 0 || options.alpha >= 1) {
         throw std::runtime_error("Alpha must be between 0 and 1 (exclusive).");
     }
-    if (!force && options.alpha > 1e-5) {
-        throw std::runtime_error("Zero cutoff value is quite high. This might produce inaccurate "
-                                 "results. Use --force to override.");
-    }
+    if (!force) validate_alpha_advisory(options.alpha, true);
     
     // Check number of moments
     if (options.n_moments <= 0) {
@@ -2054,10 +2046,7 @@ void Args_Parser::validate_wfafs_stochastic_parameters(CommandLineOptions& optio
         // Verified to reproduce here: `-u 0.5,0.5` completes and prints a full
         // spectrum from a model whose assumptions are violated.
         advise_vector_tool(options, "model", options.factors_str);
-        if (options.alpha > 1e-5) {
-            throw std::runtime_error("Zero cutoff value is quite high. This might produce inaccurate results. "
-                                     "Use --force to override");
-        }
+        validate_alpha_advisory(options.alpha, true);
     }
     
     // Check thread count
