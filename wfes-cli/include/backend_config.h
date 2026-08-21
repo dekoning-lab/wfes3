@@ -6,7 +6,7 @@
 
 // Detect platform and set backend flags
 #ifdef __APPLE__
-    // On macOS, we can use either Accelerate or ViennaCL
+    // On macOS the backend is Accelerate, optionally with SuiteSparse.
     // MKL is not supported on Apple Silicon
     #define WFES_PLATFORM_MACOS
     
@@ -84,14 +84,17 @@
     #endif
 #endif
 
-// ViennaCL is available on all platforms if OpenCL is available
-#ifdef WFES_USE_VIENNACL
-    #define VIENNACL_WITH_OPENCL
-#endif
+// (The ViennaCL block that used to sit here defined VIENNACL_WITH_OPENCL when
+//  WFES_USE_VIENNACL was set. The ViennaCL sparse-matrix and solver classes were
+//  deleted -- they compiled into every binary and were reachable from none --
+//  so nothing can satisfy that macro any more. Everything below must therefore
+//  stop counting ViennaCL as a backend: it would let the "at least one backend"
+//  guard pass with no backend at all, and it advertised a backend the binary
+//  does not contain.)
 
 // Validate that we have at least one backend enabled
-#if !defined(WFES_USE_MKL) && !defined(WFES_USE_ACCELERATE) && !defined(WFES_USE_VIENNACL) && !defined(WFES_USE_SUITESPARSE)
-    #error "No linear algebra backend enabled. Enable MKL, Accelerate, SuiteSparse, or ViennaCL."
+#if !defined(WFES_USE_MKL) && !defined(WFES_USE_ACCELERATE) && !defined(WFES_USE_SUITESPARSE)
+    #error "No linear algebra backend enabled. Enable MKL, Accelerate, or SuiteSparse."
 #endif
 
 // Ensure MKL and Accelerate are mutually exclusive
@@ -103,23 +106,20 @@
 #ifdef WFES_USE_MKL
     #define WFES_DEFAULT_BACKEND "Pardiso"
     #ifdef WFES_USE_SUITESPARSE
-        #define WFES_AVAILABLE_BACKENDS "Pardiso, SuiteSparse, ViennaCL"
+        #define WFES_AVAILABLE_BACKENDS "Pardiso, SuiteSparse"
     #else
-        #define WFES_AVAILABLE_BACKENDS "Pardiso, ViennaCL"
+        #define WFES_AVAILABLE_BACKENDS "Pardiso"
     #endif
 #elif defined(WFES_USE_ACCELERATE)
     #define WFES_DEFAULT_BACKEND "Accelerate"
     #ifdef WFES_USE_SUITESPARSE
-        #define WFES_AVAILABLE_BACKENDS "Accelerate, SuiteSparse, ViennaCL"
+        #define WFES_AVAILABLE_BACKENDS "Accelerate, SuiteSparse"
     #else
-        #define WFES_AVAILABLE_BACKENDS "Accelerate, ViennaCL"
+        #define WFES_AVAILABLE_BACKENDS "Accelerate"
     #endif
-#elif defined(WFES_USE_SUITESPARSE)
+#else  // WFES_USE_SUITESPARSE -- the only remaining possibility, per the guard above
     #define WFES_DEFAULT_BACKEND "SuiteSparse"
-    #define WFES_AVAILABLE_BACKENDS "SuiteSparse, ViennaCL"
-#else
-    #define WFES_DEFAULT_BACKEND "ViennaCL"
-    #define WFES_AVAILABLE_BACKENDS "ViennaCL"
+    #define WFES_AVAILABLE_BACKENDS "SuiteSparse"
 #endif
 
 // Platform-specific constants
