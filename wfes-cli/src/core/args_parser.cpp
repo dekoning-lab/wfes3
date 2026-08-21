@@ -1909,10 +1909,11 @@ void Args_Parser::validate_phase_type_moments_parameters(CommandLineOptions& opt
     validate_model_domain(options.population_size, options.selection_coefficient,
                           options.dominance, options.backward_mutation,
                           options.forward_mutation, options.alpha);
-    // Check population size
-    if (options.population_size <= 0) {
-        throw std::runtime_error("Population size must be positive.");
-    }
+    // The `population_size <= 0` check that used to sit here was unreachable:
+    // validate_model_domain runs first and refuses anything below
+    // MIN_POPULATION_SIZE = 2, with a message that says which state index the
+    // small N walks off the end of. Two guards on the same quantity, one of
+    // which can never fire, invite the next reader to strengthen the dead one.
     if (!force && options.population_size > 10000) {
         throw std::runtime_error("Population size is quite large. This might produce a huge Q matrix. "
                                  "Use --force to override.");
