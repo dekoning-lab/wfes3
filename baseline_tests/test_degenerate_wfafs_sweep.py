@@ -110,6 +110,25 @@ def parse_json(blob: str):
         return None
 
 
+def stdout_has_csv_data_row(stdout_text: str) -> bool:
+    """True if any line of `stdout_text` looks like a wfes_sweep --csv results
+    row: more than two comma-separated fields that all parse as floats (a
+    healthy row has 15, e.g. "10,0.1,0.2,...,2.36623e+08"). Used in place of
+    the "T_fix" token match for csv, because that literal string never
+    appears in csv output -- not even on a normal, successful run."""
+    for line in stdout_text.splitlines():
+        fields = line.split(",")
+        if len(fields) <= 2:
+            continue
+        try:
+            for field in fields:
+                float(field)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
 # --------------------------------------------------------------------------
 # wfes_sweep
 # --------------------------------------------------------------------------
@@ -131,13 +150,26 @@ def test_sweep_degenerate_refuses(sweep: Path) -> None:
         # results to stdout and THEN exited nonzero (e.g. a check added after
         # the output block instead of before it) would still pass the two
         # checks above, since exit code and inf/nan-freedom say nothing about
-        # whether results were printed. T_fix is the one token common to all
-        # three output formats' results section, so its absence from stdout
-        # is direct evidence no results were printed.
+        # whether results were printed. json and plain both print the literal
+        # token "T_fix" in their results section (a JSON key, and a
+        # "T_fix = ..." line respectively), so its absence from stdout is
+        # direct evidence no results were printed for those two formats. csv's
+        # results row is bare comma-separated numbers with no "T_fix" token
+        # anywhere -- even on a normal, successful run -- so the same check
+        # on csv stdout would pass unconditionally and prove nothing; csv
+        # instead gets a check for the absence of a numeric data row (a line
+        # with more than two comma-separated fields that all parse as
+        # floats), which is what a printed csv results row actually looks
+        # like.
         stdout_only = proc.stdout.decode("utf-8", "replace")
-        check(f"[{label}] stdout contains no T_fix token (no results were printed)",
-              "T_fix" not in stdout_only,
-              f"stdout: {stdout_only.strip()[:400]}")
+        if label == "csv":
+            check(f"[{label}] stdout contains no numeric data row (no results were printed)",
+                  not stdout_has_csv_data_row(stdout_only),
+                  f"stdout: {stdout_only.strip()[:400]}")
+        else:
+            check(f"[{label}] stdout contains no T_fix token (no results were printed)",
+                  "T_fix" not in stdout_only,
+                  f"stdout: {stdout_only.strip()[:400]}")
 
 
 def test_sweep_degenerate_output_I_no_file(sweep: Path, tmp: Path) -> None:

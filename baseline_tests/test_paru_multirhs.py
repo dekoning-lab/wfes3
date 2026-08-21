@@ -218,10 +218,12 @@ def output_N_orientation_case(binary: Path, args: list[str], label: str,
               f"exit={paru_proc.returncode} stderr={paru_proc.stderr.strip()[:200]!r}")
         if ref_proc.returncode != 0 or paru_proc.returncode != 0:
             return
-        check(ref_path.is_file() and ref_path.stat().st_size > 0,
-              f"{label}: default --output-N file written non-empty")
-        check(paru_path.is_file() and paru_path.stat().st_size > 0,
-              f"{label}: ParU --output-N file written non-empty")
+        ref_written = ref_path.is_file() and ref_path.stat().st_size > 0
+        paru_written = paru_path.is_file() and paru_path.stat().st_size > 0
+        check(ref_written, f"{label}: default --output-N file written non-empty")
+        check(paru_written, f"{label}: ParU --output-N file written non-empty")
+        if not ref_written or not paru_written:
+            return
 
         ref_mat = parse_matrix_file(ref_path)
         paru_mat = parse_matrix_file(paru_path)
