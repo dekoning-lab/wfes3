@@ -187,8 +187,11 @@ export function sequentialDiagram(
     label: `${circled(i + 1)}→${circled(i + 2)}  1/G${i + 1} = ${fmt(1 / num(e.generations))} /gen`
   }))
   const captions = [GEOMETRIC_CAPTION]
+  // Name the flag when an explicit distribution is shown: on wfes_sequential,
+  // -p is the starting distribution over EPOCHS (-p distribution), not a
+  // starting copy number -- the caption says which one the nodes display.
   captions.push(start
-    ? 'Starting epoch distribution as specified, shown on the nodes.'
+    ? 'Starting epoch distribution as specified (the -p distribution over epochs), shown on the nodes.'
     : 'The process starts in Epoch 1.')
   return { states, edges, layout: 'chain', captions }
 }
