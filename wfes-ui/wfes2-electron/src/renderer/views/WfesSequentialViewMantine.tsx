@@ -643,7 +643,7 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
                 {isExecuting ? (
                   <>
                     <Loader size="lg" />
-                    <Text size="sm" c="dimmed">{progressMessage || 'Running sequential simulations...'}</Text>
+                    <Text size="sm" c="dimmed">{progressMessage || 'Processing sequential epochs...'}</Text>
                     <Text size="xs" c="dimmed">{progress}%</Text>
                   </>
                 ) : (
