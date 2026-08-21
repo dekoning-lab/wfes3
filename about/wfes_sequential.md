@@ -51,15 +51,15 @@ The model tracks three outcomes:
 ## Input Parameters
 
 ### Required Parameters (comma-separated lists)
-- `-N, --pop-sizes <int,...>`: Population sizes for each epoch
-- `-t, --exp-time <float,...>`: Expected duration in generations for each epoch
+- `-N, --pop-size <int,...>`: Population sizes for each epoch
+- `-e, --exp-time <float,...>`: Expected duration in generations for each epoch
 
 ### Optional Parameters (comma-separated)
 - `-s, --selection <float,...>`: Selection coefficients (default: all 0)
 - `-h, --dominance <float,...>`: Dominance coefficients (default: all 0.5)
 - `-u, --backward-mu <float,...>`: Backward mutation rates (default: all 1e-9)
 - `-v, --forward-mu <float,...>`: Forward mutation rates (default: all 1e-9)
-- `-p, --starting-prob <float,...>`: Probability of starting in each epoch (one value per epoch, summing to 1; default `1,0,...` — start in Epoch 1). This is a distribution over *epochs*, not allele frequencies.
+- `-P, --starting-prob <float,...>`: Probability of starting in each epoch (one value per epoch, summing to 1; default `1,0,...` — start in Epoch 1). This is a distribution over *epochs*, not allele frequencies.
 - `--starting-copies <int>`: Fixed starting allele count in the first epoch (1 to 2N_1-1). Replaces the integration over the copy numbers a new mutation produces; without it (and without `--initial`) that integration is the default.
 
 ### Computational Parameters
@@ -80,7 +80,7 @@ The model tracks three outcomes:
   arising, and this cutoff truncates its tail: starting copy numbers whose
   probability falls below it are not integrated over. It has no effect when
   `--starting-copies` or `--initial` is given, or when the forward mutation
-  rate is zero. (`-p, --starting-prob` sets the distribution over which
+  rate is zero. (`-P, --starting-prob` sets the distribution over which
   *epoch* the population starts in — a different thing from the starting
   copy number.)
 
@@ -137,7 +137,7 @@ wfes_sequential -N 5000,500,50,500,5000 --exp-time 100,50,10,50,100 -s 0,0,-0.1,
 
 ### Starting epoch drawn from a distribution
 ```bash
-wfes_sequential -N 1000,5000 --exp-time 100,200 -p "0.9,0.1"
+wfes_sequential -N 1000,5000 --exp-time 100,200 -P "0.9,0.1"
 ```
 
 ## Technical Notes

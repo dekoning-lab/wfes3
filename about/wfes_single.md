@@ -85,7 +85,7 @@ a single row.
 
 ### 4. Establishment Properties (--establishment)
 Calculates probabilities and times related to allele establishment thresholds,
-defined by `-k, --odds-ratio`: an allele is considered established once the
+defined by `--odds-ratio`: an allele is considered established once the
 odds of eventual fixation over extinction reach this ratio.
 
 ### 5. Allele Age (--allele-age)

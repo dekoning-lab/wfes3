@@ -64,15 +64,15 @@ Only fixation is absorbing; calculates substitution rates.
 ## Input Parameters
 
 ### Required Parameters (comma-separated lists)
-- `-N, --pop-sizes <int,...>`: Population sizes for each state
-- `-r, --switching <matrix>`: Switching rate matrix (semicolon-separated rows)
+- `-N, --pop-size <int,...>`: Population sizes for each state
+- `-R, --switching <matrix>`: Switching rate matrix (semicolon-separated rows)
 
 ### Optional Parameters (comma-separated)
 - `-s, --selection <float,...>`: Selection coefficients (default: all 0)
 - `-h, --dominance <float,...>`: Dominance coefficients (default: all 0.5)
 - `-u, --backward-mu <float,...>`: Backward mutation rates (default: all 1e-9)
 - `-v, --forward-mu <float,...>`: Forward mutation rates (default: all 1e-9)
-- `-p, --starting-prob <float,...>`: Starting probabilities for each state (default: uniform)
+- `-P, --starting-prob <float,...>`: Starting probabilities for each state (default: uniform)
 
 ### Computational Parameters
 - `-a, --alpha <float>`: Transition-matrix tail truncation (default: 1e-20). Each
@@ -91,7 +91,7 @@ Only fixation is absorbing; calculates substitution rates.
   conditioned on at least one copy arising, and this cutoff truncates its
   tail: starting copy numbers whose probability falls below it are not
   integrated over. It has no effect when `-i` is given, or when the forward
-  mutation rate is zero. (`-p, --starting-prob` sets the distribution over
+  mutation rate is zero. (`-P, --starting-prob` sets the distribution over
   which *state* the population starts in — a different thing from the
   starting copy number within a state.)
 
@@ -147,7 +147,7 @@ over where the process starts:
 
 - $P_{ext}$, $P_{fix}$: total probability of extinction/fixation, in **any**
   state, averaged over the starting distribution (the state distribution given
-  by `-p`, combined with the mutational injection distribution within each
+  by `-P`, combined with the mutational injection distribution within each
   state). They sum to 1.
 - $E[T \mid ext]$, $E[T \mid fix]$: expected total time to absorption,
   conditional on the outcome but **not** on which state it happens in.
@@ -177,28 +177,28 @@ is where time was **spent** en route, conditional on the outcome wherever it
 ended.
 
 Nothing is conditioned on the starting state: starts are always integrated
-over the `-p` distribution (uniform, $1/n$ per state, when `-p` is omitted).
+over the `-P` distribution (uniform, $1/n$ per state, when `-P` is omitted).
 
 ## Usage Examples
 
 ### Two-state reversible switching
 ```bash
-wfes_switching --absorption -N 100,1000 -s 0,0.01 -r "0.99,0.01;0.001,0.999"
+wfes_switching --absorption -N 100,1000 -s 0,0.01 -R "0.99,0.01;0.001,0.999"
 ```
 
 ### Three-state with different selection
 ```bash
-wfes_switching --absorption -N 100,500,1000 -s -0.01,0,0.01 -r "0.98,0.01,0.01;0.02,0.96,0.02;0.01,0.01,0.98"
+wfes_switching --absorption -N 100,500,1000 -s -0.01,0,0.01 -R "0.98,0.01,0.01;0.02,0.96,0.02;0.01,0.01,0.98"
 ```
 
 ### Non-reversible switching (ratchet)
 ```bash
-wfes_switching --fixation -N 100,200 -r "0.99,0.01;0,1" -p "1,0"
+wfes_switching --fixation -N 100,200 -R "0.99,0.01;0,1" -P "1,0"
 ```
 
 ### With mutation rate variation
 ```bash
-wfes_switching --absorption -N 1000,1000 -u 1e-8,1e-6 -v 1e-8,1e-6 -r "0.999,0.001;0.001,0.999"
+wfes_switching --absorption -N 1000,1000 -u 1e-8,1e-6 -v 1e-8,1e-6 -R "0.999,0.001;0.001,0.999"
 ```
 
 ## Technical Notes

@@ -46,11 +46,11 @@ $$H_{exp} = 2 \sum_i \pi_i \, \frac{i}{2N} \left(1 - \frac{i}{2N}\right)$$
 ## Input Parameters
 
 ### Initial Frequency
-- `-p, --initial-count <int>`: Starting copy number (default: equilibrium)
+- `-p, --starting-copies <int>`: Starting copy number (default: equilibrium)
 - `-i, --initial <path>`: Initial state distribution, as a CSV column of 2N+1 probabilities over allele counts 0..2N in the first epoch. It replaces the point mass at `-p`, and is renormalised if it does not sum to 1. A point mass reproduces the corresponding `-p` run exactly.
 
 ### Demographic Vectors (comma-separated)
-- `-N, --pop-sizes <int,...>`: Population sizes for each epoch
+- `-N, --pop-size <int,...>`: Population sizes for each epoch
 - `-G, --generations <int,...>`: Duration in generations for each epoch
 - `-s, --selection <float,...>`: Selection coefficients
 - `-h, --dominance <float,...>`: Dominance coefficients (`--help` shows this menu; `-h` is dominance, as in every WFES tool)
@@ -103,28 +103,28 @@ Execution time: 2.1s
 
 ### Simple bottleneck
 ```bash
-wfafs_deterministic --pop-sizes 10000,100,10000 --generations 1000,50,1000
+wfafs_deterministic --pop-size 10000,100,10000 --generations 1000,50,1000
 ```
 
 ### Selection during expansion
 ```bash
-wfafs_deterministic --pop-sizes 1000,5000,20000 --generations 200,500,1000 --selection 0,0.001,0.01
+wfafs_deterministic --pop-size 1000,5000,20000 --generations 200,500,1000 --selection 0,0.001,0.01
 ```
 
 ### Complex demographic history
 ```bash
-wfafs_deterministic --pop-sizes 5000,500,50,500,5000 --generations 100,50,10,50,100 \
+wfafs_deterministic --pop-size 5000,500,50,500,5000 --generations 100,50,10,50,100 \
                    --selection 0,0,-0.1,0,0.01 --dominance 0.5,0.5,0.2,0.5,0.8
 ```
 
 ### Starting from specific frequency
 ```bash
-wfafs_deterministic -p 10 --pop-sizes 1000,5000 --generations 500,1000
+wfafs_deterministic -p 10 --pop-size 1000,5000 --generations 500,1000
 ```
 
 ### With varying mutation rates
 ```bash
-wfafs_deterministic --pop-sizes 1000,10000 --generations 1000,2000 \
+wfafs_deterministic --pop-size 1000,10000 --generations 1000,2000 \
                    --backward-mu 1e-8,1e-7 --forward-mu 1e-8,1e-6
 ```
 

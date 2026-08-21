@@ -65,7 +65,7 @@ $$M(s) = \alpha \, (sI - Q)^{-1} (-Q) \, \mathbf{1}$$
   only way to set a non-default starting state is `-i, --initial` (below).
 - `--num-threads <int>`: Number of threads
 - `--force`: Skip parameter validation
-- `-m, --no-recurrent-mu`: Exclude recurrent mutation (included by default)
+- `-r, --no-recurrent-mu`: Exclude recurrent mutation (included by default)
 - `--library <string>`: Linear algebra backend: `Pardiso` (Intel MKL; the default on Linux), `Accelerate` (the macOS default), `SuiteSparse`, or `ParU` (parallel SuiteSparse). Note that on macOS `Accelerate` names the matrix backend only: matrices are held in Accelerate format, but the LU factorization and solves are performed by SuiteSparse's UMFPACK. Apple's own sparse solver is used only as a build-time fallback when SuiteSparse is not linked. ViennaCL requires OpenCL support not compiled into the shipped binaries.
 
 ### Output Options
@@ -148,7 +148,7 @@ phase_type_moments -N 1000 -s 0.01 -k 100 --json --output-N moments.json
 
 1. **Computational Efficiency**: O(k) sparse solves vs O(T) for full distribution
 2. **Numerical Stability**: Stable for moments up to ~100 depending on parameters
-3. **Recurrent Mutation**: Included by default; disable with `-m, --no-recurrent-mu`
+3. **Recurrent Mutation**: Included by default; disable with `-r, --no-recurrent-mu`
 4. **Starting State**: Default is 0 copies with mutation; a non-default starting state requires `-i, --initial`
 5. **Sparse Methods**: Exploits sparsity for large N
 

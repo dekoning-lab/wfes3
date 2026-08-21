@@ -49,7 +49,7 @@ $$f_{sub}(t) = \int f_{equil}(t_1) \, \pi(i \mid equil) \, f_{fix}(t-t_1 \mid i)
 
 ### Required Parameters
 - `-N, --pop-size <int>`: Population size (constant across components)
-- `-l, --lambda <float>`: Rate of switching from equilibration to absorption
+- `-L, --lambda <float>`: Rate of switching from equilibration to absorption
 
 ### Component Parameters (comma-separated pairs)
 - `-s, --selection <float,float>`: Selection coefficients for components 1,2
@@ -71,7 +71,7 @@ $$f_{sub}(t) = \int f_{equil}(t_1) \, \pi(i \mid equil) \, f_{fix}(t-t_1 \mid i)
 - `-m, --max-t <int>`: Maximum time to compute (default: 1000000)
 
 ### Computational Parameters
-- `-t, --num-threads <int>`: Number of threads (`--threads` is accepted as an alias)
+- `-t, --num-threads <int>`: Number of threads
 - `--library <string>`: Linear algebra backend: `Pardiso` (Intel MKL; the default on Linux), `Accelerate` (the macOS default), `SuiteSparse`, or `ParU` (parallel SuiteSparse). Note that on macOS `Accelerate` names the matrix backend only: matrices are held in Accelerate format, but the LU factorization and solves are performed by SuiteSparse's UMFPACK. Apple's own sparse solver is used only as a build-time fallback when SuiteSparse is not linked. ViennaCL requires OpenCL support not compiled into the shipped binaries.
 
 ### Output Options
@@ -122,22 +122,22 @@ Time    P(substitution)    CDF
 
 ### Neutral to beneficial transition
 ```bash
-time_dist_sgv -N 1000 -s 0,0.01 -l 0.001
+time_dist_sgv -N 1000 -s 0,0.01 -L 0.001
 ```
 
 ### Deleterious to beneficial with mutation
 ```bash
-time_dist_sgv -N 5000 -s -0.002,0.02 -u 1e-8,1e-7 -v 1e-8,1e-7 -l 0.0001
+time_dist_sgv -N 5000 -s -0.002,0.02 -u 1e-8,1e-7 -v 1e-8,1e-7 -L 0.0001
 ```
 
 ### Overdominance to directional selection
 ```bash
-time_dist_sgv -N 1000 -s -0.01,0.01 -h 2.0,0.5 -l 0.001
+time_dist_sgv -N 1000 -s -0.01,0.01 -h 2.0,0.5 -L 0.001
 ```
 
 ### Long equilibration phase
 ```bash
-time_dist_sgv -N 10000 -s -0.001,0.005 -l 0.00001 -m 100000000
+time_dist_sgv -N 10000 -s -0.001,0.005 -L 0.00001 -m 100000000
 ```
 
 ## Technical Notes

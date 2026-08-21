@@ -54,7 +54,7 @@ $$R = \frac{1}{T_{b.fix}}$$
 ### Required Parameters
 - `-N, --pop-size <int>`: Population size (constant across phases)
 - `-s, --selection <float>,<float>`: Selection coefficients for pre-adaptive and adaptive phases
-- `-l, --lambda <float>`: Rate of transition from pre-adaptive to adaptive phase
+- `-L, --lambda <float>`: Rate of transition from pre-adaptive to adaptive phase
 
 ### Optional Parameters
 - `-h, --dominance <float>,<float>`: Dominance coefficients (default: 0.5,0.5)
@@ -124,17 +124,17 @@ sweep,1000,0,-0.001,0.01,0.5,0.5,1e-9,1e-9,1e-9,1e-9,0.001,125000.5,8e-06
 
 ### Basic sweep from neutral standing variation
 ```bash
-wfes_sweep --fixation -N 1000 -s 0,0.01 -l 0.001
+wfes_sweep --fixation -N 1000 -s 0,0.01 -L 0.001
 ```
 
 ### Sweep from deleterious standing variation
 ```bash
-wfes_sweep --fixation -N 5000 -s -0.001,0.01 -l 0.0001
+wfes_sweep --fixation -N 5000 -s -0.001,0.01 -L 0.0001
 ```
 
 ### With mutation and dominance
 ```bash
-wfes_sweep --fixation -N 1000 -s -0.002,0.02 -h 0.2,0.8 -u 1e-8,1e-8 -v 1e-7,1e-7 -l 0.001
+wfes_sweep --fixation -N 1000 -s -0.002,0.02 -h 0.2,0.8 -u 1e-8,1e-8 -v 1e-7,1e-7 -L 0.001
 ```
 
 ## Technical Notes

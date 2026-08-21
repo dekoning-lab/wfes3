@@ -59,12 +59,12 @@ The allele frequency distribution at the final time point is extracted from the 
 ## Input Parameters
 
 ### Initial Configuration
-- `-p, --initial-count <int>`: Starting copy number
+- `-p, --starting-copies <int>`: Starting copy number
 - `-i, --initial <path>`: Initial state distribution, as a CSV column of probabilities over this model's states. It replaces the point mass at `-p`.
 - `--no-project`: Skip projection to finite sample size
 
 ### Population Parameters (comma-separated)
-- `-N, --pop-sizes <int,...>`: Population sizes for each epoch
+- `-N, --pop-size <int,...>`: Population sizes for each epoch
 - `-G, --generations <float,...>`: Expected generations in each epoch
 - `-f, --factor <float,...>`: Matrix approximation factors for computational efficiency
 - `-s, --selection <float,...>`: Selection coefficients
