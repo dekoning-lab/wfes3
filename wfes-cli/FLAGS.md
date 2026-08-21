@@ -12,7 +12,7 @@ short-flag map from what the binaries actually advertise, and exits nonzero if
 any letter is bound to two long names, if any letter's value type diverges
 outside the documented list below, if a tool advertises a long alias, or if any
 re-purposed letter fails to error. Pointed at the shipped v3.0.0-beta.3
-binaries it reports 33 problems; pointed at a build of this source it exits 0.
+binaries it reports 35 problems; pointed at a build of this source it exits 0.
 
 Status: implements the PI-approved canonicalization
 (`WFES3-FLAG-CANONICALIZATION-PROPOSAL.md`, approved 2026-08-21), whose

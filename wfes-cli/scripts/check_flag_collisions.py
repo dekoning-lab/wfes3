@@ -333,8 +333,10 @@ def main() -> int:
     failures = []
     notes = []
 
-    # short letter -> {canonical long name -> [(tool, value type)]}
-    bindings = {}
+    # Every (tool, letter, value type, long names) a --help line contributes.
+    # Collected before bucketing so a spec's OWN long names can be unioned
+    # into one meaning first -- see the alias union below.
+    raw = []
     missing = []
     for tool in TOOLS:
         binary = opts.bin / tool
@@ -356,14 +358,49 @@ def main() -> int:
                     f"canonical long name belongs in --help ({extra} should be "
                     f"accepted silently)"
                 )
-            canonical = spec["longs"][0][0] if spec["longs"] else "(no long name)"
+            longs = tuple(n for n, _ in spec["longs"]) or ("(no long name)",)
             for letter, value_name in spec["shorts"]:
-                bindings.setdefault(letter, {}).setdefault(canonical, []).append(
-                    (tool, value_name))
+                raw.append((tool, letter, value_name, longs))
 
     if missing:
         failures.append(
             "missing binaries in %s: %s" % (opts.bin, ", ".join(missing)))
+
+    # Union long names that ONE spec advertised together for the same letter.
+    # A line such as the shipped time_dist_sgv's "-t, --threads,
+    # --num-threads" is one flag with two spellings, not two meanings -- the
+    # "advertised alias" check above already reports the duplicate spelling
+    # on its own terms. Bucketing on spec["longs"][0] alone let whichever
+    # alias happened to be listed first invent an extra binding for the
+    # letter (here, "threads" alongside the real "num-threads"), which
+    # printed a false three-way collision for -t against the shipped
+    # binaries: the canonicalization proposal's -t split is -e/--exp-time
+    # vs --num-threads, not three ways. Union-Find merges every name a spec
+    # lists for one letter into a single component, so a letter's true
+    # meanings are counted once each regardless of alias order or count.
+    parent = {}
+
+    def find(key):
+        parent.setdefault(key, key)
+        while parent[key] != key:
+            key = parent[key]
+        return key
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for _tool, letter, _value, longs in raw:
+        for name in longs[1:]:
+            union((letter, longs[0]), (letter, name))
+
+    # short letter -> {canonical long name -> [(tool, value type)]}
+    bindings = {}
+    for tool, letter, value_name, longs in raw:
+        canonical = find((letter, longs[0]))[1]
+        bindings.setdefault(letter, {}).setdefault(canonical, []).append(
+            (tool, value_name))
 
     for letter in sorted(bindings):
         by_long = bindings[letter]
