@@ -73,6 +73,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -275,6 +276,107 @@ def section_minimum_population_size(bindir: Path):
 
 
 # --------------------------------------------------------------------------
+# 4b. Non-finite model parameters, every tool
+# --------------------------------------------------------------------------
+def section_non_finite_parameters(bindir: Path):
+    print("\n== nan/inf model parameters are refused, not clamped ==")
+    # Reachable in every tool that parses a vector flag by hand with std::stod,
+    # which takes "nan" and "inf" as ordinary values. (The scalar flags go
+    # through args' own double parser, which rejects them at parse time, so
+    # wfes_single is not in this list.) psi_diploid clamps the fitnesses with
+    # fmax(w, 1e-30), and fmax returns the NON-NaN operand -- so a NaN was not
+    # propagated, it was silently replaced by the clamp. Measured before the
+    # fix: time_dist_sgv and wfafs_stochastic exited 0 with a complete
+    # table/spectrum, and the other three exited nonzero blaming an "invalid
+    # column index" or a "singular matrix".
+    cases = [
+        ("time_dist_sgv", ["-N", "10", "-l", "0.5", "-s", "nan,nan", "--csv"]),
+        ("wfafs_stochastic", ["-N", "10,10", "-G", "10,10", "-f", "1,1",
+                              "-s", "nan,nan", "--csv"]),
+        ("wfes_switching", ["--absorption", "-N", "10,10", "-s", "nan,nan",
+                            "-r", "0.5,0.5;0.5,0.5", "--json"]),
+        ("wfes_sequential", ["-N", "10,10", "-t", "10,10", "-s", "nan,nan",
+                             "--json"]),
+        ("wfes_sweep", ["--fixation", "-N", "10", "-s", "nan,nan", "-l", "0.5",
+                        "--json"]),
+        ("wfafs_deterministic", ["-N", "10", "-G", "10", "-s", "nan", "-p", "1",
+                                 "--json"]),
+        # inf takes the same path: 1.0 + inf < 0.0 is false, so it slipped
+        # through the fitness range checks exactly as nan did.
+        ("wfes_switching", ["--absorption", "-N", "10,10", "-s", "inf,inf",
+                            "-r", "0.5,0.5;0.5,0.5", "--json"]),
+        # ...and it is not only -s: u and v reach the same clamp.
+        ("time_dist_sgv", ["-N", "10", "-l", "0.5", "-s", "0.01,0.01",
+                           "-u", "nan,nan", "--csv"]),
+    ]
+    for name, args in cases:
+        label = f"{name} {' '.join(args[:6])}"
+        proc = run(bindir / name, args)
+        check(proc.returncode != 0, f"{label}: exits nonzero",
+              f"exit={proc.returncode} stdout={proc.stdout.strip()[-160:]!r}")
+        text = output(proc)
+        check("not a finite number" in text,
+              f"{label}: message says the parameter is not finite",
+              text.strip().splitlines()[-1][:200] if text.strip() else "<empty>")
+
+    # A finite parameter must cost nothing.
+    for name, args in (("time_dist_sgv", ["-N", "10", "-l", "0.5",
+                                          "-s", "0.01,0.01", "--csv"]),
+                       ("wfafs_stochastic", ["-N", "10,10", "-G", "10,10",
+                                             "-f", "1,1", "--csv"])):
+        proc = run(bindir / name, args)
+        check(proc.returncode == 0, f"{name} healthy run: still exits 0",
+              f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}")
+
+
+# --------------------------------------------------------------------------
+# 4c. --non-absorbing keeps the boundary rows, so it needs buildable ones
+# --------------------------------------------------------------------------
+def section_non_absorbing_boundary_rows(bindir: Path):
+    print("\n== --non-absorbing refuses the rates that poison its boundary rows ==")
+    single = bindir / "wfes_single"
+    # This model keeps all 2N+1 rows, including the two the absorbing modes drop
+    # from Q. wfes-lib builds each row in log space, which is defined only for a
+    # success probability strictly inside (0, 1), and psi_diploid returns
+    # exactly v for the 0-copy row and exactly 1-u for the 2N-copy row. Measured
+    # before the fix, on this build AND on the shipped binary: each of the three
+    # cases below wrote 16 nan entries into --output-Q and exited 0, with stdout
+    # reporting "Non-absorbing matrix construction completed".
+    for label, args in (("-v 0", ["-v", "0"]),
+                        ("-u 0", ["-u", "0"]),
+                        ("-u 1e-17", ["-u", "1e-17"])):
+        with tempfile.TemporaryDirectory() as td:
+            qpath = Path(td) / "Q.mtx"
+            proc = run(single, ["--non-absorbing", "-N", "10", *args,
+                                "--output-Q", str(qpath)])
+            check(proc.returncode != 0, f"--non-absorbing {label}: exits nonzero",
+                  f"exit={proc.returncode}")
+            check("nan" not in (qpath.read_text() if qpath.exists() else ""),
+                  f"--non-absorbing {label}: writes no nan-bearing Q matrix")
+            check("mutation rate" in output(proc),
+                  f"--non-absorbing {label}: message names the mutation rate")
+
+    # The bound is on 1-u, not on u, and v has no magnitude floor at all -- so
+    # both of these are legal and must stay that way.
+    for label, args in (("-u 1.2e-16", ["-u", "1.2e-16"]),
+                        ("-v 1e-300", ["-v", "1e-300"]),
+                        ("defaults", [])):
+        proc = run(single, ["--non-absorbing", "-N", "10", *args])
+        check(proc.returncode == 0, f"--non-absorbing {label}: exits 0",
+              f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}")
+
+    # And the absorbing modes, which DROP the boundary rows, must keep
+    # accepting the no-recurrent-mutation model the shared check allows.
+    for mode, extra in (("--absorption", []), ("--allele-age", ["-x", "1"]),
+                        ("--establishment", []), ("--fundamental", [])):
+        for flag in (["-v", "0"], ["-u", "0"]):
+            proc = run(single, [mode, "-N", "10", *flag, *extra, "--json"])
+            check(proc.returncode == 0,
+                  f"{mode} {' '.join(flag)}: still exits 0",
+                  f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}")
+
+
+# --------------------------------------------------------------------------
 # 5. --library
 # --------------------------------------------------------------------------
 def section_library(bindir: Path):
@@ -454,6 +556,8 @@ def main() -> int:
     section_sgv_distribution_cutoff(bindir)
     section_advisories(bindir)
     section_minimum_population_size(bindir)
+    section_non_finite_parameters(bindir)
+    section_non_absorbing_boundary_rows(bindir)
     section_library(bindir)
     section_csv_precision(bindir)
     section_non_finite_policy(bindir)

@@ -3,6 +3,7 @@
 #include "args_parser.hpp"
 #include "backend_config.h"
 #include "banner.h"
+#include <cmath>
 #include <iostream>
 #include <limits>
 #include <iomanip>
@@ -243,6 +244,39 @@ void Args_Parser::validate_model_domain(llong N, double s, double h,
     };
 
     check_min_population(N, where);
+
+    // Non-finite parameters first, because every comparison below silently
+    // passes them: `1.0 + nan < 0.0` and `1.0 + inf < 0.0` are both false, and
+    // so are the range tests. psi_diploid() then clamps the fitnesses with
+    // fmax(w, 1e-30), and fmax RETURNS THE NON-NAN OPERAND -- so a NaN
+    // selection coefficient was not propagated, it was quietly replaced by the
+    // clamp and computed as a lethal homozygote.
+    //
+    // Reachable in every tool that parses a vector flag by hand with std::stod,
+    // which accepts "nan" and "inf" as ordinary values. Measured before this
+    // check existed, all with `-s nan,nan`:
+    //   time_dist_sgv     exit 0, a full time distribution of "0,0" rows
+    //   wfafs_stochastic  exit 0, a full spectrum of finite-looking numbers
+    //   wfes_switching    exit 1, "Invalid column index: 38"
+    //   wfes_sequential   exit 1, "Invalid column index: 38"
+    //   wfes_sweep        exit 1, "matrix is singular"
+    // Two confident wrong answers and three messages pointing at the wrong
+    // thing. Refusing here fixes all eleven tools at once, and costs a finite
+    // parameter nothing.
+    auto finite = [&bad, &num](double x, const char* name, const char* flag) {
+        if (std::isfinite(x)) return;
+        bad(std::string(name) + " = " + num(x) + " is not a finite number. "
+            "psi_diploid() clamps the fitnesses with fmax(), which discards a "
+            "NaN rather than propagating it, so this would be computed as some "
+            "other model's answer and reported as though it were the one asked "
+            "for. Check " + flag);
+    };
+    finite(s, "selection coefficient s", "--selection (-s)");
+    finite(h, "dominance coefficient h", "--dominance (-h)");
+    finite(u, "backward mutation rate u", "--backward-mu (-u)");
+    finite(v, "forward mutation rate v", "--forward-mu (-v)");
+    finite(alpha, "tail truncation weight alpha", "--alpha (-a)");
+
     if (u < 0.0 || u >= 1.0) {
         bad("backward mutation rate u must be in [0, 1), got " + num(u));
     }
@@ -621,6 +655,55 @@ void Args_Parser::validate_wfes_single_parameters(CommandLineOptions& options, b
     validate_model_domain(options.population_size, options.selection_coefficient,
                           options.dominance, options.backward_mutation,
                           options.forward_mutation, options.alpha);
+
+    // --non-absorbing keeps ALL 2N+1 rows, including the two boundary rows the
+    // other modes drop out of Q, and those two rows are the ones a zero-ish
+    // mutation rate makes unbuildable. wfes-lib builds each row in log space
+    // (wrightFisher.cpp, binom_row), which is defined only for a success
+    // probability strictly inside (0, 1); psi_diploid returns exactly v for the
+    // 0-copy row and exactly 1-u for the 2N-copy row.
+    //
+    // Measured on this build and on the shipped binary, `--non-absorbing -N 10`:
+    //   -v 0        16 nan entries written to --output-Q, exit 0
+    //   -u 0        16 nan entries, exit 0
+    //   -u 1e-17    16 nan entries, exit 0
+    //   -u 1.2e-16   0 nan entries        (1-u is representably below 1 again)
+    //   -v 1e-300    0 nan entries        (log(1e-300) is perfectly finite)
+    // and stdout said "Non-absorbing matrix construction completed" every time.
+    //
+    // Note the second predicate is on 1-u, not on u: `u > 0` would still let
+    // 1e-17 through, and 1-u rounds to exactly 1.0 for every u below about
+    // 1.11e-16. And note this cannot go in validate_model_domain: u = 0 and
+    // v = 0 are legitimate no-recurrent-mutation models for the absorbing modes,
+    // which is exactly why the shared check accepts [0, 1) -- verified that
+    // --absorption, --allele-age, --establishment and --fundamental all still
+    // run with -u 0 and -v 0.
+    if (options.model_type == ModelType::NON_ABSORBING) {
+        if (!(options.forward_mutation > 0.0)) {
+            throw std::runtime_error(
+                "--non-absorbing needs a positive forward mutation rate: this "
+                "model keeps the 0-copy row, whose binomial success probability "
+                "is exactly v = " + num_str(options.forward_mutation) +
+                ". wfes-lib builds that row in log space, which yields nan for "
+                "v = 0, and the nan reaches every entry of the row rather than "
+                "being reported. Give --forward-mu (-v) a positive rate, or use "
+                "a model that drops the boundary rows (--absorption, "
+                "--fixation, --allele-age, --establishment, --fundamental)");
+        }
+        if (!(1.0 - options.backward_mutation < 1.0)) {
+            throw std::runtime_error(
+                "--non-absorbing needs a backward mutation rate large enough "
+                "that 1 - u is representably below 1: this model keeps the "
+                "2N-copy row, whose binomial success probability is exactly "
+                "1 - u, and 1 - u rounds to exactly 1 for every u below about "
+                "1.11e-16 (got u = " + num_str(options.backward_mutation) +
+                "). wfes-lib builds that row in log space, which yields nan for "
+                "a probability of 1, and the nan reaches every entry of the row "
+                "rather than being reported. Raise --backward-mu (-u), or use a "
+                "model that drops the boundary rows");
+        }
+    }
+
     if (!force) {
         validate_model_advisories(options.population_size,
                                   options.selection_coefficient,
