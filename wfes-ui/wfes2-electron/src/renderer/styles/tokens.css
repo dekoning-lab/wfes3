@@ -1,0 +1,137 @@
+/**
+ * tokens.css — one surface family, one type scale, one radius pair.
+ *
+ * The app was painting five different panel backgrounds from three colour
+ * systems: Tailwind slate (#1f2937, #374151), neutral greys (#1a1a1a, #2a2a2a)
+ * and Mantine's own dark scale. The navy sidebar and the grey content area read
+ * as two applications sharing a window.
+ *
+ * The fix is not to strip the colour out. It is to move everything into the
+ * family the sidebar already establishes, by retinting Mantine's dark scale at
+ * the source: every Paper, Modal, Input and Menu follows from these variables,
+ * so one definition here replaces the scattered literals rather than fighting
+ * them. Lightness is kept step-for-step with Mantine's defaults; only the hue
+ * changes (neutral -> ~222deg), so contrast behaviour is unchanged.
+ *
+ * Gradients stay. They are part of the app's character; they are simply
+ * restated in the same family so they read as depth rather than as a different
+ * material.
+ */
+
+:root {
+  /* ---- Surfaces, deepest to raised -------------------------------------- */
+  --wfes-bg: #12161f;          /* window ground */
+  --wfes-surface: #1a2130;     /* panels */
+  --wfes-surface-raised: #212a3b; /* modals, popovers, inputs */
+  --wfes-surface-sunken: #151b27; /* wells, table stripes */
+
+  /* ---- Lines ------------------------------------------------------------ */
+  --wfes-border: #2b3648;
+  --wfes-border-strong: #3a4761;
+
+  /* ---- Ink -------------------------------------------------------------- */
+  --wfes-text: #e6e9ef;
+  --wfes-text-muted: #94a0b4;
+  --wfes-text-faint: #6b7689;
+
+  /* ---- Accent: the same blue the charts use ----------------------------- */
+  --wfes-accent: #228be6;
+  --wfes-accent-hover: #1c7ed6;
+  --wfes-accent-quiet: rgba(34, 139, 230, 0.12);
+}
+
+/**
+ * Mantine's dark scale, retinted. Same lightness ladder, navy hue.
+ * Everything Mantine paints in dark mode derives from these ten steps.
+ */
+[data-mantine-color-scheme='dark'] {
+  --mantine-color-dark-0: #c7cdd9;
+  --mantine-color-dark-1: #b3bbcb;
+  --mantine-color-dark-2: #94a0b4;
+  --mantine-color-dark-3: #6b7689;
+  --mantine-color-dark-4: #3a4761;
+  --mantine-color-dark-5: #2b3648;
+  --mantine-color-dark-6: #212a3b;
+  --mantine-color-dark-7: #1a2130;
+  --mantine-color-dark-8: #151b27;
+  --mantine-color-dark-9: #12161f;
+
+  --mantine-color-body: var(--wfes-bg);
+  --mantine-color-text: var(--wfes-text);
+  --mantine-color-dimmed: var(--wfes-text-muted);
+  --mantine-color-default-border: var(--wfes-border);
+}
+
+/**
+ * Type scale. Eight sizes were in use, including 14.4px and 10.5px, and in
+ * several panels the field labels were set larger than the heading above them.
+ * Five steps, and headings win.
+ */
+:root {
+  --mantine-font-size-xs: 0.75rem;   /* 12 — captions, descriptions */
+  --mantine-font-size-sm: 0.8125rem; /* 13 — body, labels */
+  --mantine-font-size-md: 0.9375rem; /* 15 — emphasis */
+  --mantine-font-size-lg: 1.125rem;  /* 18 — panel headings */
+  --mantine-font-size-xl: 1.375rem;  /* 22 — view title */
+
+  --mantine-line-height-xs: 1.45;
+  --mantine-line-height-sm: 1.5;
+
+  /* Two radii, not five. */
+  --mantine-radius-xs: 3px;
+  --mantine-radius-sm: 5px;
+  --mantine-radius-md: 8px;
+  --mantine-radius-lg: 10px;
+  --mantine-radius-xl: 14px;
+}
+
+/* Numerals are this application's output: give them tabular figures wherever
+   they appear, so columns of results align on the digit rather than drifting. */
+.results-table td,
+.mantine-Table-td,
+code, kbd, pre, samp {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'zero' 1;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Density and hierarchy
+   --------------------------------------------------------------------------- */
+
+/* Navigation descriptions ran to three and four lines each, so five items
+   filled the sidebar and the icons floated against a wall of text. Two lines,
+   with the full text still available as a tooltip. */
+.mantine-NavLink-description {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+}
+
+/* A section heading should outrank the controls inside it. The mode list was
+   set larger than the "Mode" title above it. */
+.mantine-SegmentedControl-label {
+  font-size: var(--mantine-font-size-sm);
+}
+
+/* Panel headings: one step up from body, with the tracking closed slightly so
+   they read as labels for a region rather than as running text. */
+.mantine-Paper-root > .mantine-Title-root,
+.mantine-Title-root[data-order='6'] {
+  font-size: var(--mantine-font-size-md);
+  letter-spacing: -0.01em;
+}
+
+/* Field labels were the same size as headings and heavier than their own
+   descriptions. Label and description now read as a pair. */
+.mantine-InputWrapper-label {
+  font-size: var(--mantine-font-size-sm);
+  font-weight: 600;
+  margin-bottom: 1px;
+}
+.mantine-InputWrapper-description {
+  font-size: var(--mantine-font-size-xs);
+  line-height: 1.4;
+}

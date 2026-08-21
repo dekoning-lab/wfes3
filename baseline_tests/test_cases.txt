@@ -1,0 +1,33 @@
+# WFES2 Test Cases
+
+## Test Case 0.2.A (Absorption Mode)
+```
+./wfes_single --absorption -N 100 -s 0.01 -h 0.5 -u 1e-6 -v 1e-6 -p 1 -c 0
+```
+
+## Test Case 0.2.B (Fixation Mode)
+```
+./wfes_single --fixation -N 100 -s 0.01 -h 0.5 -u 1e-6 -v 1e-6 -p 0
+```
+
+# NOTE (2026-08-17, updated same day): the fixation baseline command has been
+# relabeled twice, with the recorded VALUES unchanged throughout.
+#
+# 1. The command originally omitted -p entirely; without it the CLI integrates
+#    over starting copies (T_fix = 431055), which disagrees with the recorded
+#    baseline by ~1.1%. The baseline files record N, s, h, u, v and a but not p
+#    or c, so the omission was invisible.
+# 2. Adding `-p 1` reproduced the baseline exactly, but only because the old
+#    parser applied an unconditional -1 shift: in FIXATION mode (where count 0
+#    is a transient state and index == count) `-p 1` actually computed the
+#    count-0 quantity. Verified against an independent dense reference:
+#    count-0 T_fix = 4.3605511613e+05 vs the recorded 4.3605511611e+05.
+# 3. The -p semantics are now mode-aware (fixation: index == count, -p 0 legal
+#    and meaning "start from zero copies, mutational origination included";
+#    both-absorbing modes: index == count - 1 unchanged, -p 0 is an error).
+#    Under the fixed convention the same recorded values are reproduced by
+#    `-p 0`, which is what the command above now says. `-p 1` now genuinely
+#    means one starting copy (T_fix = 4.3105511119e+05 at these parameters).
+#
+# Keep the starting-copies flag explicit in any regression harness built from
+# this file.

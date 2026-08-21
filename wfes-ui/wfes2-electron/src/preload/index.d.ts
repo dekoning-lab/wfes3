@@ -1,0 +1,69 @@
+import { ElectronAPI } from '@electron-toolkit/preload'
+
+declare global {
+  interface Window {
+    electron: ElectronAPI
+    api: {
+      wfes: {
+        single: {
+          execute: (params: any) => Promise<{
+            success: boolean
+            results: any
+            executionTime: string
+            error?: string
+          }>
+        }
+        sweep: {
+          execute: (params: any) => Promise<any>
+        }
+        sequential: {
+          execute: (params: any) => Promise<any>
+        }
+        switching: {
+          execute: (params: any) => Promise<any>
+        }
+        wfafd: {
+          execute: (params: any) => Promise<any>
+        }
+        projection: {
+          execute: (params: any) => Promise<any>
+        }
+        wfafs: {
+          execute: (params: any) => Promise<any>
+        }
+        phaseType: {
+          execute: (params: any) => Promise<{
+            success: boolean
+            moments: string[]
+            distribution: string[]
+            executionTime: string
+            error?: string
+          }>
+        }
+        timeDist: {
+          execute: (params: any) => Promise<any>
+        }
+        stopExecution: () => Promise<void>
+        onProgress: (callback: (data: any) => void) => void
+        removeProgressListener: () => void
+      }
+      dialog: {
+        openFile: () => Promise<string | null>
+        selectDirectory: () => Promise<string | null>
+        defaultOutputDirectory: () => Promise<string>
+      }
+      window: {
+        resize: (width: number, height: number) => Promise<void>
+      }
+      about: {
+        loadContent: (modelName: string) => Promise<{
+          description: string
+          overview: string
+          model: string
+          computations: string
+          fullContent: string
+        }>
+      }
+    }
+  }
+}

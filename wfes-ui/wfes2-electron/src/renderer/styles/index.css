@@ -1,0 +1,347 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--wfes-bg);
+  color: var(--wfes-text);
+}
+
+[data-mantine-color-scheme='dark'] body {
+  background-color: var(--wfes-bg);
+  color: var(--wfes-text);
+}
+
+/* Prevent text selection in UI elements */
+button, label {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Dark mode logo filter - makes dark logos white */
+.dark-mode-logo {
+  filter: invert(1) brightness(1.2);
+}
+
+/* Ensure all text is visible in dark mode */
+[data-mantine-color-scheme='dark'] .text-gray-600 {
+  color: var(--wfes-text-muted) !important;
+}
+
+[data-mantine-color-scheme='dark'] .text-gray-500 {
+  color: #c0c0c0 !important;
+}
+
+[data-mantine-color-scheme='dark'] .text-gray-700 {
+  color: #a0a0a0 !important;
+}
+
+/* Enhanced disabled state visibility with opacity */
+[data-mantine-color-scheme='dark'] input:disabled,
+[data-mantine-color-scheme='dark'] select:disabled,
+[data-mantine-color-scheme='dark'] textarea:disabled {
+  opacity: 0.3 !important;
+  cursor: not-allowed !important;
+}
+
+/* Disabled labels - subtle reduction */
+[data-mantine-color-scheme='dark'] label:has(+ input:disabled),
+[data-mantine-color-scheme='dark'] label:has(+ select:disabled),
+[data-mantine-color-scheme='dark'] label:has(+ textarea:disabled) {
+  opacity: 0.5 !important;
+}
+
+/* Disabled checkbox styling */
+[data-mantine-color-scheme='dark'] input[type="checkbox"]:disabled {
+  opacity: 0.25 !important;
+  filter: grayscale(0.8);
+}
+
+[data-mantine-color-scheme='dark'] input[type="checkbox"]:disabled + label {
+  opacity: 0.5 !important;
+}
+
+[data-mantine-color-scheme='dark'] .text-gray-700 {
+  color: #a0a0a0 !important;
+}
+
+[data-mantine-color-scheme='dark'] .text-gray-800 {
+  color: var(--wfes-text) !important;
+}
+
+[data-mantine-color-scheme='dark'] .text-gray-900 {
+  color: #ffffff !important;
+}
+
+[data-mantine-color-scheme='dark'] .text-black {
+  color: #ffffff !important;
+}
+
+/* Bold text in dark mode */
+[data-mantine-color-scheme='dark'] .font-bold {
+  color: #ffffff;
+}
+
+/* Results panels */
+[data-mantine-color-scheme='dark'] .bg-gray-50 {
+  background-color: var(--wfes-surface);
+  border-color: var(--wfes-border);
+}
+
+/* Borders in dark mode */
+[data-mantine-color-scheme='dark'] .border-gray-200 {
+  border-color: var(--wfes-border);
+}
+
+[data-mantine-color-scheme='dark'] .border-gray-300 {
+  border-color: var(--wfes-border);
+}
+
+/* Chart backgrounds */
+[data-mantine-color-scheme='dark'] .bg-white {
+  background-color: var(--wfes-surface);
+}
+
+/* White/light buttons in dark mode need dark text */
+[data-mantine-color-scheme='dark'] .bg-gray-200,
+[data-mantine-color-scheme='dark'] .bg-gray-300,
+[data-mantine-color-scheme='dark'] .hover\:bg-gray-100:hover,
+[data-mantine-color-scheme='dark'] .hover\:bg-gray-200:hover,
+[data-mantine-color-scheme='dark'] .hover\:bg-gray-300:hover {
+  color: var(--wfes-bg) !important;
+}
+
+/* Ensure button text is dark on light backgrounds in dark mode */
+[data-mantine-color-scheme='dark'] button.bg-gray-200,
+[data-mantine-color-scheme='dark'] button.bg-gray-300,
+[data-mantine-color-scheme='dark'] button.bg-gray-100 {
+  color: var(--wfes-bg) !important;
+}
+
+[data-mantine-color-scheme='dark'] button.bg-gray-200:hover,
+[data-mantine-color-scheme='dark'] button.bg-gray-300:hover {
+  color: #000000 !important;
+}
+
+/* Shadows in dark mode */
+[data-mantine-color-scheme='dark'] .shadow-lg {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+}
+
+/* Code/mono text in dark mode */
+[data-mantine-color-scheme='dark'] .font-mono {
+  color: var(--wfes-text);
+}
+
+/* Links in dark mode */
+[data-mantine-color-scheme='dark'] a {
+  color: #6caee3;
+}
+
+[data-mantine-color-scheme='dark'] a:hover {
+  color: #5a9fd4;
+}
+
+/* Text on dark backgrounds (like native-header) */
+[data-mantine-color-scheme='dark'] .native-header .native-label {
+  color: var(--wfes-text);
+}
+
+/* Radio button and form labels in dark mode */
+[data-mantine-color-scheme='dark'] label {
+  color: var(--wfes-text);
+}
+
+/* All text-sm elements in dark mode should be visible */
+[data-mantine-color-scheme='dark'] .text-sm {
+  color: #d0d0d0;
+}
+
+/* Radio button labels specifically */
+[data-mantine-color-scheme='dark'] input[type="radio"] + span {
+  color: var(--wfes-text) !important;
+}
+
+/* App titles next to back arrows */
+[data-mantine-color-scheme='dark'] .text-xl {
+  color: #ffffff;
+}
+
+[data-mantine-color-scheme='dark'] .text-lg {
+  color: #ffffff;
+}
+
+/* Font sizes for headers */
+[data-mantine-color-scheme='dark'] .font-semibold {
+  color: #ffffff;
+}
+
+[data-mantine-color-scheme='dark'] .font-medium {
+  color: #f0f0f0;
+}
+
+/* Ensure proper text contrast in dark mode for all views */
+[data-mantine-color-scheme='dark'] .text-gray-600:not(.dark\:text-gray-400) {
+  color: var(--wfes-text-muted) !important;
+}
+
+[data-mantine-color-scheme='dark'] .text-gray-500:not(.dark\:text-gray-300) {
+  color: #c0c0c0 !important;
+}
+
+/* Tab navigation in dark mode */
+[data-mantine-color-scheme='dark'] button .text-gray-600 {
+  color: #9a9a9a !important;
+}
+
+[data-mantine-color-scheme='dark'] button:hover .text-gray-600,
+[data-mantine-color-scheme='dark'] button:hover .text-gray-800 {
+  color: #d0d0d0 !important;
+}
+
+/* Status bars and footers in dark mode */
+[data-mantine-color-scheme='dark'] .bg-gray-100 {
+  background-color: var(--wfes-surface);
+  border-top-color: var(--wfes-border);
+}
+
+[data-mantine-color-scheme='dark'] .bg-gray-100 .text-gray-600 {
+  color: var(--wfes-text-muted) !important;
+}
+
+/* Section headers in dark mode */
+[data-mantine-color-scheme='dark'] h3.font-medium {
+  color: #ffffff !important;
+}
+
+/* Dark mode scrollbar styling */
+[data-mantine-color-scheme='dark'] ::-webkit-scrollbar-track {
+  background: var(--wfes-surface);
+}
+
+[data-mantine-color-scheme='dark'] ::-webkit-scrollbar-thumb {
+  background: #555;
+}
+
+[data-mantine-color-scheme='dark'] ::-webkit-scrollbar-thumb:hover {
+  background: #777;
+}
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Additional dark mode fixes for specific components */
+[data-mantine-color-scheme='dark'] .border-b {
+  border-bottom-color: var(--wfes-border);
+}
+
+[data-mantine-color-scheme='dark'] .hover\:text-gray-800:hover {
+  color: #d0d0d0 !important;
+}
+
+/* Fix for progress indicators and messages */
+[data-mantine-color-scheme='dark'] .animate-pulse {
+  background-color: #4788c7;
+}
+
+/* Ensure all native-app descendant text is visible */
+[data-mantine-color-scheme='dark'] .native-app * {
+  color: inherit;
+}
+
+
+
+/* Fix specific inline text that might be missed */
+[data-mantine-color-scheme='dark'] .native-app span:not([class*="text-"]) {
+  color: var(--wfes-text);
+}
+
+/* Ensure form labels are always visible in dark mode */
+[data-mantine-color-scheme='dark'] label:not(.text-blue-600) {
+  color: var(--wfes-text) !important;
+}
+
+/* Mantine NavLink dark mode improvements */
+[data-mantine-color-scheme='dark'] .mantine-NavLink-root {
+  color: var(--wfes-text);
+}
+
+[data-mantine-color-scheme='dark'] .mantine-NavLink-label {
+  color: var(--wfes-text) !important;
+}
+
+[data-mantine-color-scheme='dark'] .mantine-NavLink-description {
+  color: #9ca3af !important;
+}
+
+[data-mantine-color-scheme='dark'] .mantine-NavLink-root:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+[data-mantine-color-scheme='dark'] .mantine-NavLink-root[data-active] {
+  background-color: rgba(59, 130, 246, 0.15);
+  border-left-color: var(--wfes-accent);
+}
+
+/* Mantine Divider in dark mode */
+[data-mantine-color-scheme='dark'] .mantine-Divider-horizontal {
+  border-top-color: var(--wfes-border);
+}
+
+/* Custom navbar background texture in dark mode */
+[data-mantine-color-scheme='dark'] .mantine-Paper-root.w-\\[300px\\] {
+  background-image: url('/bg1.jpg') !important;
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  position: relative;
+}
+
+[data-mantine-color-scheme='dark'] .mantine-Paper-root.w-\\[300px\\]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(31, 41, 55, 0.85);
+  pointer-events: none;
+  z-index: 0;
+}
+
+[data-mantine-color-scheme='dark'] .mantine-Paper-root.w-\\[300px\\] > * {
+  position: relative;
+  z-index: 1;
+}
+

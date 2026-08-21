@@ -1,0 +1,21 @@
+# Normalise line endings in the repository; check out native on each platform.
+# WFES targets macOS, Linux and Windows, so this keeps diffs clean across them.
+* text=auto
+
+# Treat these as binary so git never tries to normalise or diff them as text.
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.icns  binary
+*.ico   binary
+*.7z    binary
+*.ttf   binary
+*.woff  binary
+*.woff2 binary
+*.mtx   binary
+
+# NOTE: this file previously contained a single Git LFS filter for
+# dependencies.7z. That archive (a ~2 GB vendored copy of MKL/Boost/Eigen/
+# ViennaCL) is deliberately excluded from this repository, and its LFS objects
+# are stripped from history, so the filter has been removed. Dependencies are
+# obtained via Homebrew -- see README.

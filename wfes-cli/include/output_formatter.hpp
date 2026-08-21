@@ -1,0 +1,203 @@
+#pragma once
+
+#include <string>
+#include "types.h"
+
+namespace wfes {
+namespace cli {
+
+/**
+ * @brief Enum for output format types
+ */
+enum class OutputFormat {
+    PLAIN,
+    CSV,
+    JSON
+};
+
+/**
+ * @brief Class that handles formatting and outputting results for WFES tools
+ */
+class OutputFormatter {
+public:
+    /**
+     * @brief Format and output results from wfes_single in fixation mode
+     * 
+     * @param options Command-line options used for the calculation
+     * @param T_fix Time to fixation
+     * @param T_std Standard deviation of fixation time
+     * @param rate Fixation rate
+     */
+    static void print_fixation_results(const CommandLineOptions& options, double T_fix, double T_std, double rate);
+
+    /**
+     * @brief Format and output results from wfes_single in absorption mode
+     * 
+     * @param options Command-line options used for the calculation
+     * @param P_ext Extinction probability
+     * @param P_fix Fixation probability
+     * @param T_abs Absorption time 
+     * @param T_abs_std Standard deviation of absorption time
+     * @param T_ext Conditional time to extinction
+     * @param T_ext_std Standard deviation of extinction time
+     * @param N_ext Mean copies in extinction trajectory
+     * @param T_fix Conditional time to fixation
+     * @param T_fix_std Standard deviation of fixation time
+     */
+    static void print_absorption_results(
+        const CommandLineOptions& options,
+        double P_ext, double P_fix,
+        double T_abs, double T_abs_std,
+        double T_ext, double T_ext_std, double N_ext,
+        double T_fix, double T_fix_std
+    );
+
+    /**
+     * @brief Format and output results from wfes_single in equilibrium mode
+     * 
+     * @param options Command-line options used for the calculation
+     * @param e_freq Expected frequency
+     */
+    static void print_equilibrium_results(const CommandLineOptions& options, double e_freq);
+
+    /**
+     * @brief Format and output results from wfes_single in equilibrium mode with full distribution
+     * 
+     * @param options Command-line options used for the calculation
+     * @param e_freq Expected frequency
+     * @param distribution Full equilibrium distribution
+     */
+    static void print_equilibrium_results_with_distribution(
+        const CommandLineOptions& options, double e_freq, const dvec& distribution);
+
+    /**
+     * @brief Format and output results from wfes_single in establishment mode
+     * 
+     * @param options Command-line options used for the calculation
+     * @param est_freq Establishment frequency
+     * @param P_est Establishment probability
+     * @param T_seg Segregation time
+     * @param T_seg_std Standard deviation of segregation time
+     * @param T_seg_ext Conditional time to extinction after establishment
+     * @param T_seg_ext_std Standard deviation of extinction time after establishment
+     * @param T_seg_fix Conditional time to fixation after establishment
+     * @param T_seg_fix_std Standard deviation of fixation time after establishment
+     * @param T_est Time to establishment
+     * @param T_est_std Standard deviation of establishment time
+     */
+    static void print_establishment_results(
+        const CommandLineOptions& options,
+        double est_freq, double P_est,
+        double T_seg, double T_seg_std,
+        double T_seg_ext, double T_seg_ext_std,
+        double T_seg_fix, double T_seg_fix_std,
+        double T_est, double T_est_std
+    );
+
+    /**
+     * @brief Format and output results from wfes_single in allele age mode
+     * 
+     * @param options Command-line options used for the calculation
+     * @param E_allele_age Expected allele age
+     * @param S_allele_age Standard deviation of allele age
+     */
+    /**
+     * @param raw_moments E[T^k] for k = 1..K when --num-moments K > 2 was
+     *        given (the mixture over starting copies, when integrating);
+     *        empty otherwise, and the historical two-value output is emitted
+     *        unchanged.
+     */
+    static void print_allele_age_results(const CommandLineOptions& options, double E_allele_age, double S_allele_age,
+                                         const std::vector<double>& raw_moments = {});
+
+    /**
+     * @brief Format and output results from wfes_single in fundamental mode
+     * 
+     * @param options Command-line options used for the calculation
+     */
+    /**
+     * @param sojourn alpha^T N: expected generations in each transient state
+     *                (allele counts 1..2N-1) for the starting distribution
+     * @param T_abs   the sum of that vector, i.e. expected time to absorption
+     */
+    static void print_fundamental_results(const CommandLineOptions& options,
+                                          const dvec& sojourn, double T_abs);
+
+    /**
+     * @brief Format and output results from wfes_single in non-absorbing mode
+     * 
+     * @param options Command-line options used for the calculation
+     */
+    static void print_non_absorbing_results(const CommandLineOptions& options);
+
+    /**
+     * @brief Write a matrix to a file
+     * 
+     * @param matrix Matrix to write
+     * @param file_path Path to output file
+     */
+    static void write_matrix_to_file(const dmat& matrix, const std::string& file_path);
+
+    /**
+     * @brief Write a vector to a file
+     * 
+     * @param vector Vector to write
+     * @param file_path Path to output file
+     */
+    static void write_vector_to_file(const dvec& vector, const std::string& file_path);
+
+    /**
+     * @brief Format and output results from wfes_switching in absorption mode
+     * 
+     * @param options Command-line options used for the calculation
+     * @param n_models Number of models
+     * @param population_sizes Population sizes for each model
+     * @param s Selection coefficients
+     * @param h Dominance coefficients
+     * @param u Backward mutation rates
+     * @param v Forward mutation rates
+     * @param p Starting probabilities
+     * @param P_ext Extinction probability
+     * @param P_fix Fixation probability
+     * @param T_ext Time to extinction
+     * @param T_fix Time to fixation
+     * @param P_cond_ext Conditional extinction probabilities
+     * @param P_cond_fix Conditional fixation probabilities
+     * @param T_uncond Unconditional sojourn times
+     * @param T_cond_ext Conditional extinction times
+     * @param T_cond_fix Conditional fixation times
+     */
+    static void print_switching_absorption_results(
+        const CommandLineOptions& options,
+        llong n_models,
+        const dvec& population_sizes,
+        const dvec& s,
+        const dvec& h,
+        const dvec& u,
+        const dvec& v,
+        const dvec& p,
+        double P_ext, double P_fix,
+        double T_ext, double T_fix,
+        const dvec& P_cond_ext,
+        const dvec& P_cond_fix,
+        const dvec& T_uncond,
+        const dvec& T_cond_ext,
+        const dvec& T_cond_fix
+    );
+
+    /**
+     * @brief Format and output results from wfafs_stochastic
+     * 
+     * @param options Command-line options used for the calculation
+     * @param distribution The allele frequency distribution
+     * @param n_models Number of models
+     */
+    static void print_wfafs_stochastic_results(
+        const CommandLineOptions& options,
+        const dvec& distribution,
+        llong n_models
+    );
+};
+
+} // namespace cli
+} // namespace wfes

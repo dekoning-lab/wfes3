@@ -1,0 +1,206 @@
+/* Mantine NavLink styling for nested navigation */
+
+/* Navbar background image in dark mode */
+[data-mantine-color-scheme='dark'] .navbar-container {
+  background-image: url('/bg1.jpg') !important;
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+}
+
+[data-mantine-color-scheme='dark'] .navbar-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(31, 41, 55, 0.9);
+  pointer-events: none;
+  z-index: 0;
+}
+
+[data-mantine-color-scheme='dark'] .navbar-container > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Make sure Box backgrounds are semi-transparent in dark mode to show texture */
+[data-mantine-color-scheme='dark'] .navbar-container .mantine-Box-root {
+  background-color: rgba(17, 24, 39, 0.8) !important;
+}
+
+/* Parent nav items should be transparent */
+.mantine-Stack-root > .mantine-NavLink-root {
+  background-color: transparent !important;
+}
+
+.mantine-Stack-root > .mantine-NavLink-root:hover {
+  background-color: transparent !important;
+}
+
+/* Hover state only for child nav items */
+.mantine-NavLink-children .mantine-NavLink-root:hover {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+[data-mantine-color-scheme='dark'] .mantine-NavLink-children .mantine-NavLink-root:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+/* Active child items */
+.mantine-NavLink-root[data-active] {
+  background-color: #3b82f6;
+  color: white;
+}
+
+.mantine-NavLink-root[data-active] .mantine-NavLink-label {
+  color: white !important;
+}
+
+.mantine-NavLink-root[data-active] .mantine-NavLink-description {
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+
+.mantine-NavLink-root[data-active] .mantine-NavLink-leftSection svg {
+  color: white !important;
+}
+
+/* Parent nav item styling */
+.mantine-Stack-root > .mantine-NavLink-root > .mantine-NavLink-body > .mantine-NavLink-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #374151;
+}
+
+[data-mantine-color-scheme='dark'] .mantine-Stack-root > .mantine-NavLink-root > .mantine-NavLink-body > .mantine-NavLink-label {
+  color: #e5e7eb;
+}
+
+/* Nested items styling */
+.mantine-NavLink-children .mantine-NavLink-root {
+  margin-bottom: 0;
+}
+
+/* Icon colors */
+.mantine-NavLink-root svg {
+  color: #6b7280;
+}
+
+[data-mantine-color-scheme='dark'] .mantine-NavLink-root svg {
+  color: #9ca3af;
+}
+
+/* Ensure left sections (icons) are visible and compact */
+.mantine-NavLink-leftSection {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  min-width: 16px !important;
+  max-width: 16px !important;
+  width: 16px !important;
+  flex-shrink: 0 !important;
+  flex-grow: 0 !important;
+}
+
+.mantine-NavLink-leftSection svg {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+
+/* Parent icons should be blue */
+.mantine-NavLink-root[data-expanded] > .mantine-NavLink-body > .mantine-NavLink-leftSection svg,
+.mantine-NavLink-root[data-collapsed] > .mantine-NavLink-body > .mantine-NavLink-leftSection svg {
+  color: #3b82f6;
+}
+
+[data-mantine-color-scheme='dark'] .mantine-NavLink-root[data-expanded] > .mantine-NavLink-body > .mantine-NavLink-leftSection svg,
+[data-mantine-color-scheme='dark'] .mantine-NavLink-root[data-collapsed] > .mantine-NavLink-body > .mantine-NavLink-leftSection svg {
+  color: #60a5fa;
+}
+
+/* Chevron icon styling */
+.mantine-NavLink-chevron {
+  color: #6b7280;
+  transition: transform 200ms ease;
+}
+
+[data-mantine-color-scheme='dark'] .mantine-NavLink-chevron {
+  color: #9ca3af;
+}
+
+/* Description text color and layout */
+.mantine-NavLink-description {
+  color: #6b7280;
+  font-size: 0.75rem;
+  margin-top: 0.125rem;
+  display: block;
+  line-height: 1.2;
+  word-wrap: break-word;
+}
+
+[data-mantine-color-scheme='dark'] .mantine-NavLink-description {
+  color: #9ca3af;
+}
+
+/* Ensure proper stacking of label and description */
+.mantine-NavLink-children .mantine-NavLink-section {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* Ensure labels don't wrap unnecessarily */
+.mantine-NavLink-label {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.3;
+}
+
+/* Ensure text is visible in dark mode */
+[data-mantine-color-scheme='dark'] .mantine-NavLink-label {
+  color: #e5e7eb;
+}
+
+/* Add subtle border to active items */
+.mantine-NavLink-root[data-active] {
+  position: relative;
+  overflow: hidden;
+}
+
+.mantine-NavLink-root[data-active]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: #2563eb;
+}
+
+/* Remove extra spacing between parent categories */
+.mantine-Stack-root > .mantine-NavLink-root {
+  margin-bottom: 0;
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+/* Debug - visualize the layout 
+.mantine-NavLink-leftSection {
+  border: 1px solid red !important;
+  background: rgba(255,0,0,0.1);
+}
+.mantine-NavLink-section {
+  border: 1px solid green !important;
+  background: rgba(0,255,0,0.1);
+}
+.mantine-NavLink-body {
+  border: 1px solid blue !important;
+}
+*/
+
