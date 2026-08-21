@@ -137,7 +137,6 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   const [mutationRateBackward, setMutationRateBackward] = useState('0.001')
   
   const [alpha, setAlpha] = useState('1e-20') // Probability cutoff
-  const [integrateOverP, setIntegrateOverP] = useState(true)
   const [startingCopies, setStartingCopies] = useState('1')
   const [integrationCutoff, setIntegrationCutoff] = useState('1e-10')
   const [mutationOnly, setMutationOnly] = useState(false)
@@ -182,8 +181,9 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   const [solver, setSolver] = useState<'direct' | 'BicGStab' | 'GMRES'>('BicGStab')
   const [initialDistribution, setInitialDistribution] = useState('')
   // Which of the three mutually exclusive initial-state specifications is in
-  // use. Kept in step with integrateOverP, which the command builder and the
-  // enable/disable logic on p and c still read.
+  // use. Single source of truth: the command builder, the execute-time param
+  // builder and the p/c enable/disable logic all read this directly rather
+  // than a second piece of state that could fall out of step with it.
   const [initialMode, setInitialMode] = useState<InitialMode>('fixed')
 
   // Results state
@@ -332,10 +332,15 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     }
   }
 
-  const stopExecution = () => {
-    setIsExecuting(false)
-    setProgress(0)
-    setProgressMessage('')
+  const stopExecution = async () => {
+    try {
+      await window.api.wfes.stopExecution()
+      setIsExecuting(false)
+      setProgress(0)
+      setProgressMessage('Execution stopped')
+    } catch (err) {
+      console.error('Error stopping execution:', err)
+    }
   }
 
   const exportResults = () => {
@@ -911,7 +916,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                         : 'Starting number of copies'}
                       value={startingCopies}
                       onChange={(value) => setStartingCopies(value?.toString() || '')}
-                      disabled={integrateOverP || !(modelType === 'absorption' || modelType === 'fixation' || modelType === 'establishment' || modelType === 'alleleAge')}
+                      disabled={initialMode === 'integrate' || !(modelType === 'absorption' || modelType === 'fixation' || modelType === 'establishment' || modelType === 'alleleAge')}
                       min={modelType === 'fixation' ? 0 : 1}
                       max={populationSize ? parseInt(populationSize) * 2 - 1 : undefined}
                       error={startingCopies !== '' && !validateStartingCopies()}
@@ -924,7 +929,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                       value={integrationCutoff}
                       onChange={(event) => setIntegrationCutoff(event.currentTarget.value)}
                       placeholder="1e-10"
-                      disabled={!integrateOverP || !(modelType === 'absorption' || modelType === 'fixation' || modelType === 'establishment' || modelType === 'alleleAge')}
+                      disabled={initialMode !== 'integrate' || !(modelType === 'absorption' || modelType === 'fixation' || modelType === 'establishment' || modelType === 'alleleAge')}
                     />
                     <Text size="xs" c="dimmed" mt={4}>
                       Starting copy numbers rarer than this are left out of the integration over p
@@ -967,7 +972,6 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                   value={initialMode}
                   onChange={(m) => {
                     setInitialMode(m)
-                    setIntegrateOverP(m === 'integrate')
                     if (m !== 'file') setInitialDistribution('')
                   }}
                   file={initialDistribution}
@@ -1279,7 +1283,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
         <EquilibriumChartModalNew
           data={results?.distribution || []}
           populationSize={parseInt(populationSize)}
-          expectedFrequency={parseFloat(results?.E_freq || '0')}
+          expectedFrequency={numOrUndefined(results?.E_freq)}
           parameters={{
             N: parseInt(populationSize),
             s: parseFloat(selectionCoefficient) / (scaledSelection ? 2 * parseInt(populationSize) : 1),

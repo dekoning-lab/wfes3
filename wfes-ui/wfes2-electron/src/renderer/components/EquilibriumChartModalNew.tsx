@@ -29,7 +29,8 @@ interface EquilibriumChartModalProps {
     probability: number
   }>
   populationSize: number
-  expectedFrequency: number
+  /** Absent (undefined) when the run produced no E_freq — rendered as "—", not 0. */
+  expectedFrequency?: number
   parameters: {
     N: number
     s: number
@@ -41,6 +42,7 @@ interface EquilibriumChartModalProps {
 
 import { thinSeries, thinningNote } from '../utils/thinSeries'
 import { exportChartsSvg } from '../utils/exportChartsSvg'
+import { formatQuantity } from '../utils/quantityLabels'
 
 const EquilibriumChartModalNew: React.FC<EquilibriumChartModalProps> = ({ 
   data, 
@@ -150,7 +152,7 @@ const EquilibriumChartModalNew: React.FC<EquilibriumChartModalProps> = ({
         <Grid>
           <Grid.Col span={4}>
             <Text size="sm">
-              <strong>Expected Frequency:</strong> {expectedFrequency.toFixed(6)}
+              <strong>Expected Frequency:</strong> {formatQuantity(expectedFrequency)}
             </Text>
           </Grid.Col>
           <Grid.Col span={4}>

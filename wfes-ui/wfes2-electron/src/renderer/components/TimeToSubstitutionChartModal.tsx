@@ -57,7 +57,7 @@ const TimeToSubstitutionChartModal: React.FC<TimeToSubstitutionChartModalProps> 
   // empty. Thinned for drawing only, extremes preserved; CSV export below
   // still walks chartData, so the file keeps every point.
   const plotData = useMemo(
-    () => thinSeries(filteredData, ['probability', 'cumulative'], 2000),
+    () => thinSeries(filteredData, ['pdf', 'cdf'], 2000),
     [filteredData]
   )
   const note = thinningNote(plotData.length, filteredData.length)
