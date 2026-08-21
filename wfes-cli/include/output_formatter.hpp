@@ -163,17 +163,31 @@ public:
 
     /**
      * @brief Write a matrix to a file
-     * 
+     *
+     * Last line of defence, matching require_finite/require_finite_all: every
+     * entry is checked before the first character is written, whether the
+     * destination is a real file or the "stdout" pseudo-path. A non-finite
+     * entry throws instead of landing on disk as a bare "nan"/"inf" token
+     * that a downstream reader -- including this project's own GUI, which
+     * stores several of these files with a .csv extension -- would silently
+     * accept as text.
+     *
      * @param matrix Matrix to write
      * @param file_path Path to output file
+     * @throws std::runtime_error naming the file and the first non-finite
+     *         entry, as [row,col]
      */
     static void write_matrix_to_file(const dmat& matrix, const std::string& file_path);
 
     /**
      * @brief Write a vector to a file
-     * 
+     *
+     * Same non-finite refusal as write_matrix_to_file, above.
+     *
      * @param vector Vector to write
      * @param file_path Path to output file
+     * @throws std::runtime_error naming the file and the first non-finite
+     *         entry's index
      */
     static void write_vector_to_file(const dvec& vector, const std::string& file_path);
 

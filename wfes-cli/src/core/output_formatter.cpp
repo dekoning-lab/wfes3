@@ -41,9 +41,55 @@ bool structured(const CommandLineOptions& options) {
     return options.json_output || options.csv_output;
 }
 
+// Same convention as require_finite/require_finite_all above: validate the
+// whole payload before writing the first character, so a refusal can never
+// leave a partial file (or a partial "stdout" pseudo-file -- see the special
+// case below) behind. These two overloads exist separately from
+// require_finite_all because the message has to name a FILE, not a JSON/CSV
+// field: write_vector_to_file / write_matrix_to_file serve the raw
+// --output-Q/R/N/B/I/E/V family, which are plain numeric dumps with no field
+// names of their own and are read back by both external tools and this
+// project's own GUI, which stores several of them with a .csv extension. A
+// bare "nan" token there is not a smaller failure than refusing to write --
+// it is a value a downstream reader will silently accept as text and then
+// parse as an ordinary number.
+void require_finite_for_file(const dvec& vec, const std::string& filename) {
+    for (llong i = 0; i < vec.size(); i++) {
+        if (std::isfinite(vec(i))) continue;
+        std::ostringstream os;
+        os << "refusing to write " << filename << ": entry [" << i << "] = "
+           << (std::isnan(vec(i)) ? "nan" : (vec(i) > 0 ? "inf" : "-inf"))
+           << " is not finite. A file reader would silently accept that text "
+              "token as an ordinary value, so nothing was written. The result "
+              "is not defined for these parameters";
+        throw std::runtime_error(os.str());
+    }
+}
+
+void require_finite_for_file(const dmat& mat, const std::string& filename) {
+    for (llong i = 0; i < mat.rows(); i++) {
+        for (llong j = 0; j < mat.cols(); j++) {
+            if (std::isfinite(mat(i, j))) continue;
+            std::ostringstream os;
+            os << "refusing to write " << filename << ": entry [" << i << ","
+               << j << "] = "
+               << (std::isnan(mat(i, j)) ? "nan" : (mat(i, j) > 0 ? "inf" : "-inf"))
+               << " is not finite. A file reader would silently accept that "
+                  "text token as an ordinary value, so nothing was written. "
+                  "The result is not defined for these parameters";
+            throw std::runtime_error(os.str());
+        }
+    }
+}
+
 }  // namespace
 
 void OutputFormatter::write_vector_to_file(const dvec& vec, const std::string& filename) {
+    // Refuse before writing the first character, whether the destination is
+    // a real file or the "stdout" pseudo-filename below -- see the contract
+    // comment on require_finite_for_file above.
+    require_finite_for_file(vec, filename);
+
     // Handle stdout as a special case
     if (filename == "stdout") {
         for (llong i = 0; i < vec.size(); i++) {
@@ -71,6 +117,11 @@ void OutputFormatter::write_vector_to_file(const dvec& vec, const std::string& f
 }
 
 void OutputFormatter::write_matrix_to_file(const dmat& mat, const std::string& filename) {
+    // Refuse before writing the first character, whether the destination is
+    // a real file or the "stdout" pseudo-filename below -- see the contract
+    // comment on require_finite_for_file above.
+    require_finite_for_file(mat, filename);
+
     // Handle stdout as a special case
     if (filename == "stdout") {
         for (llong i = 0; i < mat.rows(); i++) {
