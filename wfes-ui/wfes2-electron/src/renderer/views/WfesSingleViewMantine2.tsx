@@ -335,11 +335,15 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   const stopExecution = async () => {
     try {
       await window.api.wfes.stopExecution()
+    } catch (err) {
+      console.error('Error stopping execution:', err)
+    } finally {
+      // Unconditional: the run must stop showing as "executing" in the UI
+      // whether or not the backend IPC call itself succeeded, otherwise a
+      // rejected stopExecution() leaves isExecuting stuck true forever.
       setIsExecuting(false)
       setProgress(0)
       setProgressMessage('Execution stopped')
-    } catch (err) {
-      console.error('Error stopping execution:', err)
     }
   }
 
@@ -778,6 +782,14 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                   <Loader size="lg" />
                   <Text size="sm" c="dimmed">{progressMessage}</Text>
                   {progress > 0 && <Text size="xs" c="dimmed">{progress}%</Text>}
+                  <Button
+                    leftSection={<IconPlayerStop size={16} />}
+                    size="lg"
+                    color="red"
+                    onClick={stopExecution}
+                  >
+                    Stop
+                  </Button>
                 </Stack>
               ) : results ? (
                 <Stack gap="sm">
@@ -786,26 +798,14 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                   <Text size="xs" c="dimmed">Execution time: {executionTime}</Text>
                   
                   <Group mt="md" gap="sm">
-                    {!isExecuting ? (
-                      <Button 
-                        leftSection={<IconPlayerPlay size={16} />}
-                        size="sm"
-                        onClick={executeModel}
-                      >
-                        Re-execute
-                      </Button>
-                    ) : (
-                      <Button 
-                        leftSection={<IconPlayerStop size={16} />}
-                        size="sm"
-                        color="red"
-                        onClick={stopExecution}
-                      >
-                        Stop
-                      </Button>
-                    )}
-                    
-                    
+                    <Button
+                      leftSection={<IconPlayerPlay size={16} />}
+                      size="sm"
+                      onClick={executeModel}
+                    >
+                      Re-execute
+                    </Button>
+
                     {modelType === 'fundamental' && results.fundamental_matrix && (
                       <Stack gap="xs">
                         <Button 
@@ -852,24 +852,13 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                     No results yet. Configure parameters and click Execute.
                   </Text>
                   <Group mt="md">
-                    {!isExecuting ? (
-                      <Button 
-                        leftSection={<IconPlayerPlay size={16} />}
-                        size="lg"
-                        onClick={executeModel}
-                      >
-                        Execute
-                      </Button>
-                    ) : (
-                      <Button 
-                        leftSection={<IconPlayerStop size={16} />}
-                        size="lg"
-                        color="red"
-                        onClick={stopExecution}
-                      >
-                        Stop
-                      </Button>
-                    )}
+                    <Button
+                      leftSection={<IconPlayerPlay size={16} />}
+                      size="lg"
+                      onClick={executeModel}
+                    >
+                      Execute
+                    </Button>
                   </Group>
                 </Stack>
               )}
