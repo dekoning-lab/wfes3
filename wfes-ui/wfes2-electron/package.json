@@ -1,6 +1,6 @@
 {
   "name": "wfes2-electron",
-  "version": "3.0.0-beta.2",
+  "version": "3.0.0-beta.3",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
