@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import InitialStateSelector, { InitialMode } from '../components/shared/InitialStateSelector'
 import { saveTextFile } from '../utils/saveFile'
 import { 
@@ -89,8 +89,6 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     setResults(null)
     setWarnings([])
     setExecutionTime('')
-    setProgress(0)
-    setProgressMessage('')
   }
 
   // Handle population scaling toggle
@@ -190,8 +188,6 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   // Results state
   const [results, setResults] = useState<any>(null)
   const [isExecuting, setIsExecuting] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [progressMessage, setProgressMessage] = useState('')
   const [executionTime, setExecutionTime] = useState('')
   // Whatever the solver wrote to stderr while still exiting 0.
   const [warnings, setWarnings] = useState<string[]>([])
@@ -235,28 +231,9 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     { value: 'equilibrium', label: 'Equilibrium Distribution', description: 'Stationary distribution of allele frequencies, all states transient' }
   ]
 
-  // Set up progress listener
-  useEffect(() => {
-    const progressListener = (data: any) => {
-      if (data.tool === 'wfes_single') {
-        setProgress(data.progress)
-        setProgressMessage(data.message)
-      }
-    }
-
-    window.api.wfes.onProgress(progressListener)
-
-    // Cleanup on unmount
-    return () => {
-      window.api.wfes.removeProgressListener()
-    }
-  }, [])
-
   const executeModel = async () => {
     setIsExecuting(true)
-    setProgress(0)
     clearResults()
-    setProgressMessage('Starting execution...')
     const startTime = Date.now()
 
     try {
@@ -332,8 +309,6 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
       alert('Failed to execute WFES Single')
     } finally {
       setIsExecuting(false)
-      setProgress(0)
-      setProgressMessage('')
     }
   }
 
@@ -347,8 +322,6 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
       // whether or not the backend IPC call itself succeeded, otherwise a
       // rejected stopExecution() leaves isExecuting stuck true forever.
       setIsExecuting(false)
-      setProgress(0)
-      setProgressMessage('Execution stopped')
     }
   }
 
@@ -787,8 +760,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
               {isExecuting ? (
                 <Stack align="center" justify="center" style={{ height: '200px' }}>
                   <Loader size="lg" />
-                  <Text size="sm" c="dimmed">{progressMessage}</Text>
-                  {progress > 0 && <Text size="xs" c="dimmed">{progress}%</Text>}
+                  <Text size="sm" c="dimmed">Running...</Text>
                   <Button
                     leftSection={<IconPlayerStop size={16} />}
                     size="lg"

@@ -48,8 +48,6 @@ declare global {
           execute: (params: any) => Promise<any>
         }
         stopExecution: () => Promise<void>
-        onProgress: (callback: (data: any) => void) => void
-        removeProgressListener: () => void
       }
       dialog: {
         openFile: () => Promise<string | null>

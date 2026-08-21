@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 import InitialStateSelector, { InitialMode } from '../components/shared/InitialStateSelector'
 import { saveTextFile } from '../utils/saveFile'
 import { 
@@ -114,8 +114,6 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
   const [results, setResults] = useState<WfesResultItem[]>([])
   const [spectrum, setSpectrum] = useState<any[]>([])
   const [isExecuting, setIsExecuting] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [progressMessage, setProgressMessage] = useState('')
   const [executionTime, setExecutionTime] = useState('')
   const [error, setError] = useState('')
   const [showChartModal, setShowChartModal] = useState(false)
@@ -151,26 +149,8 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
     setSpectrum([])
     setWarnings([])
     setExecutionTime('')
-    setProgress(0)
-    setProgressMessage('')
     setError('')
   }
-  
-  // Set up progress listener
-  useEffect(() => {
-    const handleProgress = (data: any) => {
-      if (data.tool && data.tool === 'wfafs_stochastic') {
-        setProgress(data.progress || 0)
-        setProgressMessage(data.message || '')
-      }
-    }
-    
-    window.api.wfes.onProgress(handleProgress)
-    
-    return () => {
-      window.api.wfes.removeProgressListener()
-    }
-  }, [])
   
   // Handle population scaling toggle
   const handleFileSelect = async () => {
@@ -226,7 +206,6 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
   
   const handleExecute = async () => {
     setIsExecuting(true)
-    setProgress(0)
     clearResults()
     
     try {
@@ -354,7 +333,6 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
     } finally {
       setIsExecuting(false)
-      setProgress(100)
     }
   }
   
@@ -362,7 +340,6 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
     try {
       await window.api.wfes.stopExecution()
       setIsExecuting(false)
-      setProgressMessage('Execution stopped')
     } catch (error) {
       console.error('Error stopping execution:', error)
     }
@@ -687,7 +664,7 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
                   {isExecuting ? (
                     <>
                       <Loader size="lg" />
-                      <Text size="sm" c="dimmed">{progressMessage || 'Processing...'}</Text>
+                      <Text size="sm" c="dimmed">Running...</Text>
                     </>
                   ) : (
                     <Text size="sm" c="dimmed">
@@ -701,8 +678,6 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
             {/* Execution Panel */}
             <WfesExecutionPanel
               isExecuting={isExecuting}
-              progress={progress}
-              progressMessage={progressMessage}
               error={error}
               onExecute={handleExecute}
               onStop={handleStop}

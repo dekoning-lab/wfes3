@@ -58,11 +58,6 @@ export interface WfesResultItem {
   description?: string
 }
 
-export interface WfesProgressUpdate {
-  progress: number
-  message: string
-}
-
 // Module-specific parameter extensions
 /**
  * Parameters specific to WFES Single model

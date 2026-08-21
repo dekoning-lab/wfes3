@@ -20,7 +20,6 @@ import {
   Tooltip,
   ActionIcon,
   useMantineTheme,
-  Progress,
   Tabs
 } from '@mantine/core'
 import { IconChartLine, IconCopy, IconPlayerPlay } from '@tabler/icons-react'
@@ -162,8 +161,6 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
   const [distribution, setDistribution] = useState<any[]>([])
   const [moments, setMoments] = useState<string[]>([])
   const [isExecuting, setIsExecuting] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [progressMessage, setProgressMessage] = useState('')
   const [executionTime, setExecutionTime] = useState('')
   const [error, setError] = useState('')
   const [showChartModal, setShowChartModal] = useState(false)
@@ -188,8 +185,6 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
     setMoments([])
     setWarnings([])
     setExecutionTime('')
-    setProgress(0)
-    setProgressMessage('')
     setError('')
   }
   
@@ -268,22 +263,8 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
   
   const handleExecute = async () => {
     setIsExecuting(true)
-    setProgress(0)
     clearResults()
-    
-    // Set up progress listener
-    window.api.wfes.onProgress((data) => {
-      if (data.progress !== undefined) {
-        setProgress(data.progress)
-      }
-      if (data.message) {
-        setProgressMessage(data.message)
-      }
-      if (data.executionTime) {
-        setExecutionTime(data.executionTime)
-      }
-    })
-    
+
     try {
       // Convert parameters based on population scaling
       const N = parseInt(populationSize)
@@ -463,9 +444,6 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
     } finally {
       setIsExecuting(false)
-      setProgress(100)
-      // Clean up progress listener
-      window.api.wfes.removeProgressListener()
     }
   }
   
@@ -984,15 +962,7 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
                   {isExecuting ? (
                     <>
                       <Loader size="lg" />
-                      <Text size="sm" c="dimmed" mt="md">{progressMessage || 'Processing...'}</Text>
-                      {progress > 0 && (
-                        <Progress 
-                          value={progress} 
-                          size="sm" 
-                          style={{ width: '200px' }} 
-                          mt="sm"
-                        />
-                      )}
+                      <Text size="sm" c="dimmed" mt="md">Running...</Text>
                       <Button 
                         variant="light" 
                         color="red"

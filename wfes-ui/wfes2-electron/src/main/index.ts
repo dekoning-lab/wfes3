@@ -322,7 +322,7 @@ function setupIpcHandlers(): void {
    * @param {any} params - Model parameters from frontend
    * @returns {Promise<Object>} Execution results with success status
    */
-  ipcMain.handle('wfes:single:execute', async (event, params) => {
+  ipcMain.handle('wfes:single:execute', async (_event, params) => {
     console.log('Executing WFES Single with params:', params)
     
     try {
@@ -359,17 +359,7 @@ function setupIpcHandlers(): void {
       
       // Execute using backend service
       const startTime = Date.now()
-      const results = await wfesBackendService.executeWfesSingle(
-        backendParams,
-        (update) => {
-          // Send progress updates to renderer
-          event.sender.send('wfes:progress', {
-            tool: 'wfes_single',
-            progress: update.progress,
-            message: update.message
-          })
-        }
-      )
+      const results = await wfesBackendService.executeWfesSingle(backendParams)
       const executionTime = ((Date.now() - startTime) / 1000).toFixed(3)
       
       console.log('Backend service returned:', JSON.stringify(results, null, 2))
@@ -400,7 +390,7 @@ function setupIpcHandlers(): void {
    * @param {any} params - Sweep model parameters
    * @returns {Promise<Object>} Execution results with fixation probabilities
    */
-  ipcMain.handle('wfes:sweep:execute', async (event, params) => {
+  ipcMain.handle('wfes:sweep:execute', async (_event, params) => {
     console.log('Executing WFES Sweep with params:', params)
     
     try {
@@ -451,17 +441,7 @@ function setupIpcHandlers(): void {
       
       // Execute using backend service
       const startTime = Date.now()
-      const results = await wfesBackendService.executeWfesSweep(
-        backendParams,
-        (update) => {
-          // Send progress updates to renderer
-          event.sender.send('wfes:progress', {
-            tool: 'wfes_sweep',
-            progress: update.progress,
-            message: update.message
-          })
-        }
-      )
+      const results = await wfesBackendService.executeWfesSweep(backendParams)
       const executionTime = ((Date.now() - startTime) / 1000).toFixed(3)
       
       return {
@@ -486,7 +466,7 @@ function setupIpcHandlers(): void {
    * @param {any} params - Phase type parameters including mode
    * @returns {Promise<Object>} Distribution data or statistical moments
    */
-  ipcMain.handle('wfes:phaseType:execute', async (event, params) => {
+  ipcMain.handle('wfes:phaseType:execute', async (_event, params) => {
     console.log('Executing Phase Type with params:', params)
     
     try {
@@ -535,17 +515,7 @@ function setupIpcHandlers(): void {
       
       // Execute using backend service
       const startTime = Date.now()
-      const results = await wfesBackendService.executePhaseType(
-        backendParams,
-        (update) => {
-          // Send progress updates to renderer
-          event.sender.send('wfes:progress', {
-            tool: params.mode === 'dist' ? 'phase_type_dist' : 'phase_type_moments',
-            progress: update.progress,
-            message: update.message
-          })
-        }
-      )
+      const results = await wfesBackendService.executePhaseType(backendParams)
       const executionTime = ((Date.now() - startTime) / 1000).toFixed(3)
       
       // Return mode-specific results
@@ -589,7 +559,7 @@ function setupIpcHandlers(): void {
    * @returns {Promise<Object>} Time distribution results and statistics
    * @remarks Supports time-dist, time-dist-dual, and time-dist-sgv modes
    */
-  ipcMain.handle('wfes:timeDist:execute', async (event, params) => {
+  ipcMain.handle('wfes:timeDist:execute', async (_event, params) => {
     console.log('Executing Time Dist with params:', params)
     
     try {
@@ -614,17 +584,7 @@ function setupIpcHandlers(): void {
       
       // Execute using backend service
       const startTime = Date.now()
-      const results = await wfesBackendService.executeTimeDist(
-        backendParams,
-        (update) => {
-          // Send progress updates to renderer
-          event.sender.send('wfes:progress', {
-            tool: 'time_dist',
-            progress: update.progress,
-            message: update.message
-          })
-        }
-      )
+      const results = await wfesBackendService.executeTimeDist(backendParams)
       const executionTime = ((Date.now() - startTime) / 1000).toFixed(3)
       
       return {
@@ -649,23 +609,13 @@ function setupIpcHandlers(): void {
   })
 
   // Handle WFAFS execution
-  ipcMain.handle('wfes:wfafs:execute', async (event, params) => {
+  ipcMain.handle('wfes:wfafs:execute', async (_event, params) => {
     console.log('Executing WFAFS with params:', params)
     
     try {
       // Execute using backend service
       const startTime = Date.now()
-      const results = await wfesBackendService.executeWfafs(
-        params,
-        (update) => {
-          // Send progress updates to renderer
-          event.sender.send('wfes:progress', {
-            tool: params.mode === 'wfafs-deterministic' ? 'wfafs_deterministic' : 'wfafs_stochastic',
-            progress: update.progress,
-            message: update.message
-          })
-        }
-      )
+      const results = await wfesBackendService.executeWfafs(params)
       const executionTime = ((Date.now() - startTime) / 1000).toFixed(3)
       
       return {
@@ -686,23 +636,13 @@ function setupIpcHandlers(): void {
   })
   
   // Handle WFAFD execution (Wright-Fisher Allele Frequency Distribution)
-  ipcMain.handle('wfes:wfafd:execute', async (event, params) => {
+  ipcMain.handle('wfes:wfafd:execute', async (_event, params) => {
     console.log('Executing WFAFD with params:', params)
     
     try {
       // Execute using backend service
       const startTime = Date.now()
-      const results = await wfesBackendService.executeWfafd(
-        params,
-        (update) => {
-          // Send progress updates to renderer
-          event.sender.send('wfes:progress', {
-            tool: 'wfafs_deterministic',
-            progress: update.progress,
-            message: update.message
-          })
-        }
-      )
+      const results = await wfesBackendService.executeWfafd(params)
       const executionTime = ((Date.now() - startTime) / 1000).toFixed(3)
       
       return {
@@ -724,17 +664,11 @@ function setupIpcHandlers(): void {
   
   // Population projection: one generation from one population size into
   // another, returning the distribution in the new size.
-  ipcMain.handle('wfes:projection:execute', async (event, params) => {
+  ipcMain.handle('wfes:projection:execute', async (_event, params) => {
     console.log('Executing projection with params:', params)
     try {
       const startTime = Date.now()
-      const results = await wfesBackendService.executeProjection(params, (update) => {
-        event.sender.send('wfes:progress', {
-          tool: 'wfafs_deterministic',
-          progress: update.progress,
-          message: update.message
-        })
-      })
+      const results = await wfesBackendService.executeProjection(params)
       const executionTime = ((Date.now() - startTime) / 1000).toFixed(3)
       return {
         success: true,
@@ -755,7 +689,7 @@ function setupIpcHandlers(): void {
   })
 
   // Handle WFES Sequential execution
-  ipcMain.handle('wfes:sequential:execute', async (event, params) => {
+  ipcMain.handle('wfes:sequential:execute', async (_event, params) => {
     console.log('Executing WFES Sequential with params:', params)
     
     try {
@@ -794,17 +728,7 @@ function setupIpcHandlers(): void {
       
       // Execute using backend service
       const startTime = Date.now()
-      const results = await wfesBackendService.executeWfesSequential(
-        backendParams,
-        (update) => {
-          // Send progress updates to renderer
-          event.sender.send('wfes:progress', {
-            tool: 'wfes_sequential',
-            progress: update.progress,
-            message: update.message
-          })
-        }
-      )
+      const results = await wfesBackendService.executeWfesSequential(backendParams)
       const executionTime = ((Date.now() - startTime) / 1000).toFixed(3)
       
       return {
@@ -824,23 +748,13 @@ function setupIpcHandlers(): void {
   })
   
   // Handle WFES Switching execution
-  ipcMain.handle('wfes:switching:execute', async (event, params) => {
+  ipcMain.handle('wfes:switching:execute', async (_event, params) => {
     console.log('Executing WFES Switching with params:', params)
     
     try {
       // Execute using backend service
       const startTime = Date.now()
-      const results = await wfesBackendService.executeWfesSwitching(
-        params,
-        (update) => {
-          // Send progress updates to renderer
-          event.sender.send('wfes:progress', {
-            tool: 'wfes_switching',
-            progress: update.progress,
-            message: update.message
-          })
-        }
-      )
+      const results = await wfesBackendService.executeWfesSwitching(params)
       const executionTime = ((Date.now() - startTime) / 1000).toFixed(3)
 
       // This is the one handler that returns the service object wholesale, so

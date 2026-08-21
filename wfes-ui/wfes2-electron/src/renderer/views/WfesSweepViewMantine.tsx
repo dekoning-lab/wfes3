@@ -122,8 +122,6 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
   // Results state
   const [results, setResults] = useState<WfesResultItem[]>([])
   const [isExecuting, setIsExecuting] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [progressMessage, setProgressMessage] = useState('')
   const [executionTime, setExecutionTime] = useState('')
   const [regimeSplit, setRegimeSplit] = useState<number[] | null>(null)
   const [showChartModal, setShowChartModal] = useState(false)
@@ -136,8 +134,6 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
     setResults([])
     setWarnings([])
     setExecutionTime('')
-    setProgress(0)
-    setProgressMessage('')
     setError('')
   }
   
@@ -192,22 +188,8 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
   
   const handleExecute = async () => {
     setIsExecuting(true)
-    setProgress(0)
     clearResults()
-    
-    // Set up progress listener
-    window.api.wfes.onProgress((data) => {
-      if (data.progress !== undefined) {
-        setProgress(data.progress)
-      }
-      if (data.message) {
-        setProgressMessage(data.message)
-      }
-      if (data.executionTime) {
-        setExecutionTime(data.executionTime)
-      }
-    })
-    
+
     try {
       // Convert population-scaled values to raw values if needed
       const N = parseInt(populationSize)
@@ -314,9 +296,6 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
     } finally {
       setIsExecuting(false)
-      setProgress(100)
-      // Clean up progress listener
-      window.api.wfes.removeProgressListener()
     }
   }
   
@@ -646,8 +625,7 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
                   {isExecuting ? (
                     <>
                       <Loader size="lg" />
-                      <Text size="sm" c="dimmed">{progressMessage || 'Processing selective sweep...'}</Text>
-                      {progress > 0 && <Text size="xs" c="dimmed">{progress}%</Text>}
+                      <Text size="sm" c="dimmed">Running the selective sweep...</Text>
                     </>
                   ) : (
                     <>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 import InitialStateSelector, { InitialMode } from '../components/shared/InitialStateSelector'
 import { saveTextFile } from '../utils/saveFile'
 import { 
@@ -136,42 +136,20 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
     { label: React.ReactNode; plain: string; description: string; values: string[]; raw: number[]; kind: 'probability' | 'time' }[]
   >([])
   const [isExecuting, setIsExecuting] = useState(false)
-  const [progress, setProgress] = useState(0)
-  
+
   // UI state
   const [showSwitchingRatesModal, setShowSwitchingRatesModal] = useState(false)
-  const [progressMessage, setProgressMessage] = useState('')
   const [executionTime, setExecutionTime] = useState('')
   const [error, setError] = useState('')
   // Whatever the solver wrote to stderr while still exiting 0.
   const [warnings, setWarnings] = useState<string[]>([])
   const [showChartModal, setShowChartModal] = useState(false)
   
-  // Set up progress monitoring
-  useEffect(() => {
-    const handleProgress = (data: any) => {
-      if (data.tool === 'wfes_switching' && isExecuting) {
-        setProgress(data.progress || 0)
-        setProgressMessage(data.message || 'Processing...')
-      }
-    }
-    
-    // Subscribe to progress updates
-    window.api.wfes.onProgress(handleProgress)
-    
-    // Cleanup
-    return () => {
-      window.api.wfes.removeProgressListener()
-    }
-  }, [isExecuting])
-  
   // Helper function to clear results and reset execution state
   const clearResults = () => {
     setResults([])
     setWarnings([])
     setExecutionTime('')
-    setProgress(0)
-    setProgressMessage('')
     setError('')
   }
   
@@ -288,7 +266,6 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
   
   const handleExecute = async () => {
     setIsExecuting(true)
-    setProgress(0)
     clearResults()
     
     try {
@@ -562,7 +539,6 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
     } finally {
       setIsExecuting(false)
-      setProgress(100)
     }
   }
   
@@ -570,8 +546,6 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
     try {
       await wfesService.stopExecution()
       setIsExecuting(false)
-      setProgress(0)
-      setProgressMessage('Execution stopped')
     } catch (err) {
       console.error('Error stopping execution:', err)
     }
@@ -911,8 +885,7 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
                 {isExecuting ? (
                   <>
                     <Loader size="lg" />
-                    <Text size="sm" c="dimmed">{progressMessage || 'Processing switching dynamics...'}</Text>
-                    {progress > 0 && <Text size="xs" c="dimmed">{progress}%</Text>}
+                    <Text size="sm" c="dimmed">Running the switching model...</Text>
                   </>
                 ) : (
                   <>

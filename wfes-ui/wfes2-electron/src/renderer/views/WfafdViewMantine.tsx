@@ -125,8 +125,6 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
   const [results, setResults] = useState<WfesResultItem[]>([])
   const [distribution, setDistribution] = useState<any[]>([])
   const [isExecuting, setIsExecuting] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [progressMessage, setProgressMessage] = useState('')
   const [executionTime, setExecutionTime] = useState('')
   const [error, setError] = useState('')
   const [showChartModal, setShowChartModal] = useState(false)
@@ -140,8 +138,6 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
     setDistribution([])
     setWarnings([])
     setExecutionTime('')
-    setProgress(0)
-    setProgressMessage('')
     setError('')
   }
   
@@ -172,7 +168,6 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
 
   const handleExecute = async () => {
     setIsExecuting(true)
-    setProgress(0)
     clearResults()
     
     try {
@@ -301,7 +296,6 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
     } finally {
       setIsExecuting(false)
-      setProgress(100)
     }
   }
   
@@ -377,17 +371,10 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
 
 
 
-  // A progress listener used to live here, subscribing to 'wfes:progress'
-  // through optional-chained calls onto a window.api surface the preload
-  // never exposes that pair of methods on (only wfes.onProgress /
-  // removeProgressListener exist), so the subscribe and the cleanup were
-  // both silent no-ops. Deleted rather than rewired to the real API: the CLI
-  // emits no progress lines for this tool, so there is nothing to subscribe
-  // to yet. `progress` and `progressMessage` state are left in place --
-  // WfesExecutionPanel and the "Processing..." loading text below still read
-  // them -- but now only ever move 0 -> 100 around handleExecute, with no
-  // step in between. A later task removes the progress UI machinery
-  // entirely; this is the render code it still needs to touch.
+  // A listener used to live here, subscribing to a main-process progress
+  // channel nothing ever published on. It is gone, and so now is the state it
+  // fed: this tool reports nothing intermediate, so the view shows a spinner
+  // for as long as the run takes and nothing that claims to measure it.
 
   // Count active output options for badge
   const activeOutputOptions = Object.values(outputOptions).filter(Boolean).length + 
@@ -596,7 +583,7 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
                   {isExecuting ? (
                     <>
                       <Loader size="lg" />
-                      <Text size="sm" c="dimmed">{progressMessage || 'Processing...'}</Text>
+                      <Text size="sm" c="dimmed">Running...</Text>
                     </>
                   ) : (
                     <Text size="sm" c="dimmed">
@@ -610,8 +597,6 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
             {/* Execution Panel */}
             <WfesExecutionPanel
               isExecuting={isExecuting}
-              progress={progress}
-              progressMessage={progressMessage}
               error={error}
               onExecute={handleExecute}
               onStop={handleStop}

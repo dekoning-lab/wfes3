@@ -30,7 +30,7 @@ import {
   IconAlertCircle
 } from '@tabler/icons-react'
 import InitialStateSelector, { InitialMode } from '../components/shared/InitialStateSelector'
-import { AboutContentPanel } from '../components/shared'
+import { AboutContentPanel, SolverWarnings } from '../components/shared'
 import { saveTextFile } from '../utils/saveFile'
 import { formatQuantity } from '../utils/quantityLabels'
 
@@ -83,6 +83,11 @@ const PopulationProjectionView: React.FC<PopulationProjectionViewProps> = ({
 
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Whatever the solver wrote to stderr while still exiting 0. The service
+  // call has always returned these; this view was the one of the nine that
+  // never showed them, so a projection the solver had qualified was presented
+  // as final.
+  const [warnings, setWarnings] = useState<string[]>([])
   const [dist, setDist] = useState<Point[] | null>(null)
   const [ranWith, setRanWith] = useState<{ N1: number; N2: number } | null>(null)
   const [copied, setCopied] = useState(false)
@@ -152,12 +157,13 @@ const PopulationProjectionView: React.FC<PopulationProjectionViewProps> = ({
       alpha, initialMode, startingCopies, integrationCutoff, initialFile])
 
   const run = async () => {
-    setRunning(true); setError(null); setDist(null); setCopied(false)
+    setRunning(true); setError(null); setDist(null); setCopied(false); setWarnings([])
     try {
       const res = await (window as any).api.wfes.projection.execute(params())
       if (!res?.success) {
         setError(res?.error || 'The projection failed.')
       } else {
+        setWarnings(res.warnings || [])
         const raw = res.distribution || []
         const points: Point[] = raw.map((d: any, i: number) => ({
           count: d.count ?? d.state ?? i,
@@ -401,6 +407,8 @@ const PopulationProjectionView: React.FC<PopulationProjectionViewProps> = ({
               {error && (
                 <Alert color="red" variant="light" mb="md">{error}</Alert>
               )}
+
+              <SolverWarnings warnings={warnings} />
 
               {running && (
                 <Stack align="center" p="xl">

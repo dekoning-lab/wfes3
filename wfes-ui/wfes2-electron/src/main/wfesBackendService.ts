@@ -15,14 +15,6 @@ export interface ProcessResult {
 }
 
 /**
- * Progress update information sent to the renderer process
- */
-export interface ProgressUpdate {
-  progress: number
-  message: string
-}
-
-/**
  * Service for executing WFES command-line tools from the Electron main process.
  * Manages process lifecycle, argument building, and result parsing for all WFES executables.
  * 
@@ -113,14 +105,10 @@ export class WfesBackendService {
   /**
    * Executes the wfes_single command with specified parameters
    * @param {any} params - Configuration object containing model parameters
-   * @param {Function} [onProgress] - Optional callback for progress updates
    * @returns {Promise<any>} Parsed results including model outputs and optional matrices
    * @throws {Error} If execution fails or output cannot be parsed
    */
-  async executeWfesSingle(
-    params: any,
-    onProgress?: (update: ProgressUpdate) => void
-  ): Promise<any> {
+  async executeWfesSingle(params: any): Promise<any> {
     const processId = 'wfes_single_' + Date.now()
     
     try {
@@ -134,8 +122,7 @@ export class WfesBackendService {
       const result = await this.executeProcess(
         'wfes_single',
         args,
-        processId,
-        onProgress
+        processId
       )
       
       // Parse JSON output
@@ -182,8 +169,7 @@ export class WfesBackendService {
         const matrixRun = await this.executeProcess(
           'wfes_single',
           matrixArgs,
-          processId + '_matrix',
-          undefined
+          processId + '_matrix'
         )
 
         // The re-run is the same model with the same parameters, so its stderr
@@ -237,14 +223,10 @@ export class WfesBackendService {
   /**
    * Executes the wfes_sweep command for selective sweep analysis
    * @param {any} params - Configuration object with sweep parameters
-   * @param {Function} [onProgress] - Optional callback for progress updates
    * @returns {Promise<any>} Parsed JSON results from sweep analysis
    * @throws {Error} If execution fails or output cannot be parsed
    */
-  async executeWfesSweep(
-    params: any,
-    onProgress?: (update: ProgressUpdate) => void
-  ): Promise<any> {
+  async executeWfesSweep(params: any): Promise<any> {
     const processId = 'wfes_sweep_' + Date.now()
     
     try {
@@ -258,8 +240,7 @@ export class WfesBackendService {
       const result = await this.executeProcess(
         'wfes_sweep',
         args,
-        processId,
-        onProgress
+        processId
       )
       
       // Parse JSON output
@@ -275,14 +256,10 @@ export class WfesBackendService {
   /**
    * Executes phase_type_dist or phase_type_moments based on mode
    * @param {any} params - Configuration with mode and phase type parameters
-   * @param {Function} [onProgress] - Optional callback for progress updates
    * @returns {Promise<any>} Distribution data or moments statistics
    * @throws {Error} If execution fails or output parsing fails
    */
-  async executePhaseType(
-    params: any,
-    onProgress?: (update: ProgressUpdate) => void
-  ): Promise<any> {
+  async executePhaseType(params: any): Promise<any> {
     const processId = 'phase_type_' + Date.now()
     
     try {
@@ -296,8 +273,7 @@ export class WfesBackendService {
       const result = await this.executeProcess(
         command,
         args,
-        processId,
-        onProgress
+        processId
       )
       
       // Parse output based on mode
@@ -315,14 +291,10 @@ export class WfesBackendService {
   /**
    * Executes time distribution calculations (standard, dual, or SGV mode)
    * @param {any} params - Configuration with mode and time distribution parameters
-   * @param {Function} [onProgress] - Optional callback for progress updates
    * @returns {Promise<any>} Parsed distribution data with statistics
    * @throws {Error} If execution fails or output parsing fails
    */
-  async executeTimeDist(
-    params: any,
-    onProgress?: (update: ProgressUpdate) => void
-  ): Promise<any> {
+  async executeTimeDist(params: any): Promise<any> {
     const processId = 'time_dist_' + Date.now()
     
     try {
@@ -341,8 +313,7 @@ export class WfesBackendService {
       const result = await this.executeProcess(
         command,
         args,
-        processId,
-        onProgress
+        processId
       )
       
       // Parse and return results
@@ -365,14 +336,10 @@ export class WfesBackendService {
   /**
    * Executes WFAFS (Wright-Fisher Allele Frequency Spectrum) analysis
    * @param {any} params - Configuration with mode (deterministic/stochastic) and parameters
-   * @param {Function} [onProgress] - Optional callback for progress updates
    * @returns {Promise<any>} Allele frequency spectrum and statistics
    * @throws {Error} If execution fails or output parsing fails
    */
-  async executeWfafs(
-    params: any,
-    onProgress?: (update: ProgressUpdate) => void
-  ): Promise<any> {
+  async executeWfafs(params: any): Promise<any> {
     const processId = 'wfafs_' + Date.now()
     
     try {
@@ -386,8 +353,7 @@ export class WfesBackendService {
       const result = await this.executeProcess(
         command,
         args,
-        processId,
-        onProgress
+        processId
       )
       
       // Parse and return results
@@ -403,14 +369,10 @@ export class WfesBackendService {
   /**
    * Executes WFAFD (Wright-Fisher Allele Frequency Distribution) analysis
    * @param {any} params - Configuration with demographic components and parameters
-   * @param {Function} [onProgress] - Optional callback for progress updates
    * @returns {Promise<any>} Frequency distribution and statistics
    * @throws {Error} If execution fails or output parsing fails
    */
-  async executeWfafd(
-    params: any,
-    onProgress?: (update: ProgressUpdate) => void
-  ): Promise<any> {
+  async executeWfafd(params: any): Promise<any> {
     const processId = 'wfafd_' + Date.now()
     
     try {
@@ -424,8 +386,7 @@ export class WfesBackendService {
       const result = await this.executeProcess(
         command,
         args,
-        processId,
-        onProgress
+        processId
       )
       
       // Parse and return results
@@ -452,14 +413,11 @@ export class WfesBackendService {
    * Verified against theory: from count 2 at N1=5 (p = 0.2) into N2=10, the
    * result is Binomial(20, 0.2) to within the mutation rate.
    */
-  async executeProjection(
-    params: any,
-    onProgress?: (update: ProgressUpdate) => void
-  ): Promise<any> {
+  async executeProjection(params: any): Promise<any> {
     const processId = 'projection_' + Date.now()
     try {
       const args = this.buildProjectionArgs(params)
-      const result = await this.executeProcess('wfafs_deterministic', args, processId, onProgress)
+      const result = await this.executeProcess('wfafs_deterministic', args, processId)
       const parsed = this.parseWfafdOutput(result.stdout)
       return {
         ...parsed,
@@ -1583,17 +1541,15 @@ export class WfesBackendService {
    * @param {string} toolName - Name of the executable to run
    * @param {string[]} args - Command line arguments
    * @param {string} processId - Unique identifier for process tracking
-   * @param {Function} [onProgress] - Optional progress callback
    * @returns {Promise<ProcessResult>} Process output and exit code
    * @private
    * @throws {Error} If process fails to start, times out, or exits with error
-   * @remarks Includes 10-minute timeout and progress parsing from stderr
+   * @remarks Includes a 10-minute timeout
    */
   private executeProcess(
     toolName: string,
     args: string[],
-    processId: string,
-    onProgress?: (update: ProgressUpdate) => void
+    processId: string
   ): Promise<ProcessResult> {
     return new Promise((resolve, reject) => {
       try {
@@ -1625,41 +1581,21 @@ export class WfesBackendService {
           stdout += data.toString()
         })
         
+        // stderr is accumulated, not interpreted. A scraper used to sit here
+        // looking for "Progress: n%", "n% complete", "Step n of m" and
+        // "Iteration n", and drove a percentage bar in five views from what it
+        // found. No WFES binary prints any of those four -- checked against
+        // every tool -- so the callback never fired and the bars sat at 0%
+        // for the whole run while claiming to measure it. The "Iteration n"
+        // pattern was worse than inert: it read an iteration COUNT as a
+        // PERCENTAGE, so a solver that did print one would have shown a
+        // meaningless number as progress.
+        //
+        // What the tools do write here are the warnings that qualify a
+        // successful result; those are split out by warningsFrom() once the
+        // process exits, from this same accumulated text.
         childProcess.stderr?.on('data', (data) => {
-          const message = data.toString()
-          stderr += message
-          
-          // Parse progress updates from stderr
-          if (onProgress && !isKilled) {
-            // Look for various progress patterns
-            const progressPatterns = [
-              /Progress:\s*(\d+)%/,
-              /(\d+)%\s*complete/i,
-              /Step\s*(\d+)\s*of\s*(\d+)/i,
-              /Iteration\s*(\d+)/i
-            ]
-            
-            for (const pattern of progressPatterns) {
-              const match = message.match(pattern)
-              if (match) {
-                let progress = 0
-                if (pattern.source.includes('Step')) {
-                  // Calculate percentage for step progress
-                  const current = parseInt(match[1])
-                  const total = parseInt(match[2])
-                  progress = Math.round((current / total) * 100)
-                } else {
-                  progress = parseInt(match[1])
-                }
-                
-                onProgress({ 
-                  progress: Math.min(progress, 100), 
-                  message: message.trim() 
-                })
-                break
-              }
-            }
-          }
+          stderr += data.toString()
         })
         
         childProcess.on('error', (error) => {
@@ -2845,14 +2781,10 @@ export class WfesBackendService {
   /**
    * Executes wfes_sequential for multi-epoch demographic analysis
    * @param {any} params - Sequential model parameters with population arrays
-   * @param {Function} [onProgress] - Optional callback for progress updates
    * @returns {Promise<any>} Parsed results with extinction/fixation probabilities and times
    * @throws {Error} If execution fails
    */
-  async executeWfesSequential(
-    params: any,
-    onProgress?: (update: ProgressUpdate) => void
-  ): Promise<any> {
+  async executeWfesSequential(params: any): Promise<any> {
     const processId = 'wfes_sequential_' + Date.now()
     
     try {
@@ -2869,8 +2801,7 @@ export class WfesBackendService {
       const result = await this.executeProcess(
         'wfes_sequential',
         args,
-        processId,
-        onProgress
+        processId
       )
       
       // Parse CSV output
@@ -2889,14 +2820,10 @@ export class WfesBackendService {
   /**
    * Executes wfes_switching for time-heterogeneous population analysis
    * @param {any} params - Switching model parameters with states and transition matrix
-   * @param {Function} [onProgress] - Optional callback for progress updates
    * @returns {Promise<any>} Parsed results based on model type (absorption/fixation)
    * @throws {Error} If execution fails
    */
-  async executeWfesSwitching(
-    params: any,
-    onProgress?: (update: ProgressUpdate) => void
-  ): Promise<any> {
+  async executeWfesSwitching(params: any): Promise<any> {
     const processId = 'wfes_switching_' + Date.now()
     
     try {
@@ -2914,8 +2841,7 @@ export class WfesBackendService {
       const result = await this.executeProcess(
         'wfes_switching',
         args,
-        processId,
-        onProgress
+        processId
       )
       
       // Parse output based on model type

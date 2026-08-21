@@ -1,28 +1,34 @@
 import React from 'react'
 import { useExecuteShortcut } from '../../hooks/useExecuteShortcut'
-import { Button, Progress, Text, Stack, Group, Loader, Paper, Alert } from '@mantine/core'
+import { Button, Text, Stack, Group, Loader, Paper, Alert } from '@mantine/core'
 import { IconPlayerPlay, IconPlayerStop, IconAlertCircle } from '@tabler/icons-react'
 
+/**
+ * Run / stop, plus a busy indicator while a run is in flight.
+ *
+ * The busy indicator is INDETERMINATE by design. This panel used to take
+ * `progress` and `progressMessage` and draw a percentage bar from them, fed by
+ * a main-process scraper that looked for progress lines in the solvers' stderr.
+ * The solvers print no such lines, so the bar stayed at 0% for the whole of
+ * every run -- a measurement of nothing, presented as a measurement. The WFES
+ * tools do not report intermediate progress at all (a run is one sparse solve,
+ * not a loop that reports), so there is nothing here to be determinate about,
+ * and a spinner is the honest form.
+ */
 interface WfesExecutionPanelProps {
   isExecuting: boolean
-  progress?: number
-  progressMessage?: string
   error?: string
   onExecute: () => void
   onStop?: () => void
-  showProgress?: boolean
   executeLabel?: string
   compact?: boolean
 }
 
 export const WfesExecutionPanel: React.FC<WfesExecutionPanelProps> = ({
   isExecuting,
-  progress = 0,
-  progressMessage = '',
   error,
   onExecute,
   onStop,
-  showProgress = true,
   executeLabel = 'Execute',
   compact = false
 }) => {
@@ -57,7 +63,7 @@ export const WfesExecutionPanel: React.FC<WfesExecutionPanelProps> = ({
     )
   }
 
-  // Full mode with progress
+  // Full mode, with the busy indicator
   return (
     <Paper p="md" withBorder>
       <Stack gap="md">
@@ -94,26 +100,15 @@ export const WfesExecutionPanel: React.FC<WfesExecutionPanelProps> = ({
           {isExecuting && (
             <Group gap="xs">
               <Loader size="sm" />
-              <Text size="sm" c="dimmed">Processing...</Text>
+              <Text size="sm" c="dimmed">Running...</Text>
             </Group>
           )}
         </Group>
-        
-        {isExecuting && showProgress && (
-          <Stack gap="xs">
-            <Progress 
-              value={progress} 
-              size="lg"
-              animate
-              striped
-              color="blue"
-            />
-            {progressMessage && (
-              <Text size="sm" c="dimmed" ta="center">
-                {progressMessage}
-              </Text>
-            )}
-          </Stack>
+
+        {isExecuting && (
+          <Text size="sm" c="dimmed" ta="center">
+            The solver reports no intermediate progress; the run ends when it returns.
+          </Text>
         )}
       </Stack>
     </Paper>

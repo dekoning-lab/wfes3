@@ -35,7 +35,6 @@ export type {
   WfesOutputOptions,
   WfesResults,
   WfesResultItem,
-  WfesProgressUpdate,
   ExportFormat,
   ExportOptions
 } from '../../types/wfes'

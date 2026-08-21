@@ -17,8 +17,7 @@ import {
   ActionIcon,
   Box,
   Tooltip,
-  useMantineTheme,
-  Progress
+  useMantineTheme
 } from '@mantine/core'
 import { IconChartLine, IconCopy, IconPlayerPlay } from '@tabler/icons-react'
 import { 
@@ -109,8 +108,6 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
   const [truncation, setTruncation] = useState<{ captured: number; steps: number; cutoff: number } | null>(null)
   const [distribution, setDistribution] = useState<any[]>([])
   const [isExecuting, setIsExecuting] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [progressMessage, setProgressMessage] = useState('')
   const [executionTime, setExecutionTime] = useState('')
   const [error, setError] = useState('')
   const [showChartModal, setShowChartModal] = useState(false)
@@ -134,8 +131,6 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
     setDistribution([])
     setWarnings([])
     setExecutionTime('')
-    setProgress(0)
-    setProgressMessage('')
     setError('')
   }
 
@@ -173,22 +168,8 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
   
   const handleExecute = async () => {
     setIsExecuting(true)
-    setProgress(0)
     clearResults()
-    
-    // Set up progress listener
-    window.api.wfes.onProgress((data) => {
-      if (data.progress !== undefined) {
-        setProgress(data.progress)
-      }
-      if (data.message) {
-        setProgressMessage(data.message)
-      }
-      if (data.executionTime) {
-        setExecutionTime(data.executionTime)
-      }
-    })
-    
+
     try {
       // Convert population-scaled values to raw values if needed
       let processedMutationParams = { u, v }
@@ -327,9 +308,6 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
     } finally {
       setIsExecuting(false)
-      setProgress(100)
-      // Clean up progress listener
-      window.api.wfes.removeProgressListener()
     }
   }
   
@@ -712,15 +690,7 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
                   {isExecuting ? (
                     <>
                       <Loader size="lg" />
-                      <Text size="sm" c="dimmed" mt="md">{progressMessage || 'Processing...'}</Text>
-                      {progress > 0 && (
-                        <Progress 
-                          value={progress} 
-                          size="sm" 
-                          style={{ width: '200px' }} 
-                          mt="sm"
-                        />
-                      )}
+                      <Text size="sm" c="dimmed" mt="md">Running...</Text>
                       <Button 
                         variant="light" 
                         color="red"

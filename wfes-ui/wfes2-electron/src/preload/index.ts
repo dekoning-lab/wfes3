@@ -83,20 +83,13 @@ const api = {
      * Stop all running WFES computations
      * @returns {Promise<void>}
      */
-    stopExecution: () => ipcRenderer.invoke('wfes:stopExecution'),
-    /**
-     * Register a progress update callback
-     * @param {Function} callback - Function to call with progress updates
-     */
-    onProgress: (callback: (data: any) => void) => {
-      ipcRenderer.on('wfes:progress', (_event, data) => callback(data))
-    },
-    /**
-     * Remove all progress listeners
-     */
-    removeProgressListener: () => {
-      ipcRenderer.removeAllListeners('wfes:progress')
-    }
+    stopExecution: () => ipcRenderer.invoke('wfes:stopExecution')
+    // The subscribe/unsubscribe pair for run updates that used to sit here is
+    // gone, together with the main-process channel behind it: nothing was ever
+    // published on that channel. The main process forwarded only what a stderr
+    // scraper found, and no WFES binary prints any of the four patterns it
+    // looked for, so every subscriber received nothing for the whole of every
+    // run while the views it fed drew a bar frozen at 0%.
   },
   /**
    * System dialog APIs

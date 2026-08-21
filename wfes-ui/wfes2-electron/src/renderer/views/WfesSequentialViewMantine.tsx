@@ -134,8 +134,6 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
     { label: React.ReactNode; plain: string; description: string; values: string[]; raw: number[]; kind: 'probability' | 'time' }[]
   >([])
   const [isExecuting, setIsExecuting] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [progressMessage, setProgressMessage] = useState('')
   const [executionTime, setExecutionTime] = useState('')
   const [error, setError] = useState('')
   const [showChartModal, setShowChartModal] = useState(false)
@@ -149,8 +147,6 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
     setTrajectoryData([])
     setWarnings([])
     setExecutionTime('')
-    setProgress(0)
-    setProgressMessage('')
     setError('')
   }
   
@@ -270,7 +266,6 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
 
   const handleExecute = async () => {
     setIsExecuting(true)
-    setProgress(0)
     clearResults()
     
     try {
@@ -420,7 +415,6 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
     } finally {
       setIsExecuting(false)
-      setProgress(100)
     }
   }
   
@@ -428,8 +422,6 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
     try {
       await wfesService.stopExecution()
       setIsExecuting(false)
-      setProgress(0)
-      setProgressMessage('Execution stopped')
     } catch (err) {
       console.error('Error stopping execution:', err)
     }
@@ -682,8 +674,7 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
                 {isExecuting ? (
                   <>
                     <Loader size="lg" />
-                    <Text size="sm" c="dimmed">{progressMessage || 'Processing sequential epochs...'}</Text>
-                    {progress > 0 && <Text size="xs" c="dimmed">{progress}%</Text>}
+                    <Text size="sm" c="dimmed">Running the sequential epochs...</Text>
                   </>
                 ) : (
                   <>
