@@ -103,6 +103,17 @@ const double PROB_UNDERFLOW = std::numeric_limits<double>::min();
 // PROB_RANGE_TOL; clamp roundoff-level excursions into [0,1] with a stderr
 // note (never silently).
 void enforce_probability_range(dvec& B, const char* name) {
+    // This finiteness check MUST run before lo/hi are derived from B below --
+    // it is not a redundant special case of the range check that follows.
+    // IEEE 754 comparisons involving NaN are always false, so a NaN entry
+    // would not reliably move minCoeff()/maxCoeff() outside [0,1]: an
+    // implementation is free to return NaN itself (poisoning lo or hi so
+    // every `<`/`>` against it is silently false) or to skip the NaN entry
+    // entirely and return the max/min of the remaining finite ones, in which
+    // case `lo < 0.0 || hi > 1.0` below never even sees the bad entry. Either
+    // way a NaN in B would sail past both `if` blocks that follow and get
+    // printed as though it were a probability. Do not "simplify" this to
+    // rely on the range checks catching non-finite values -- they cannot.
     if (!B.allFinite()) {
         std::ostringstream os;
         os << name << " contains non-finite entries: the linear solve for the "
@@ -554,7 +565,16 @@ int main(int argc, char const *argv[]) {
                 {
                     const double one_residual =
                         (B_ext + B_fix - dvec::Ones(size)).cwiseAbs().maxCoeff();
-                    if (one_residual > PROB_RANGE_TOL) {
+                    // IEEE 754 trap: every comparison against NaN is false, so
+                    // a solve that produced NaN entries in B_ext or B_fix can
+                    // make one_residual itself NaN (or, depending on how
+                    // maxCoeff() treats a NaN entry, silently skip it and
+                    // return the max of whatever finite entries remain) --
+                    // either way `one_residual > PROB_RANGE_TOL` alone would
+                    // be false and let the worst case (a NaN solve) sail
+                    // straight through this refusal. Check non-finiteness
+                    // explicitly; do not simplify this back to a bare `>`.
+                    if (!std::isfinite(one_residual) || one_residual > PROB_RANGE_TOL) {
                         std::ostringstream os;
                         os << std::setprecision(std::numeric_limits<double>::max_digits10)
                            << "|B_ext + B_fix - 1| = " << one_residual
