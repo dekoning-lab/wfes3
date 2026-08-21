@@ -1,5 +1,6 @@
 #include "types.h"
 #include "output_formatter.hpp"
+#include <cmath>
 #include <iostream>
 #include <iomanip>
 #include <fstream>
@@ -9,6 +10,38 @@
 
 namespace wfes {
 namespace cli {
+
+// See the contract in output_formatter.hpp.
+double OutputFormatter::require_finite(double value, const char* field) {
+    if (std::isfinite(value)) return value;
+    std::ostringstream os;
+    os << "refusing to emit a non-finite value: " << field << " = "
+       << (std::isnan(value) ? "nan" : (value > 0 ? "inf" : "-inf"))
+       << ". Neither is a JSON number, and a CSV reader would coerce it into an "
+          "ordinary-looking finite value, so nothing usable can be printed for "
+          "this field. The result is not defined for these parameters";
+    throw std::runtime_error(os.str());
+}
+
+void OutputFormatter::require_finite_all(const dvec& values, const char* field) {
+    for (llong i = 0; i < values.size(); i++) {
+        if (std::isfinite(values(i))) continue;
+        std::string named = std::string(field) + "[" + std::to_string(i) + "]";
+        require_finite(values(i), named.c_str());
+    }
+}
+
+namespace {
+
+// Every print_* below validates the whole result set before writing the first
+// character, so a refusal cannot leave a truncated JSON object on stdout.
+// Applied to the JSON and CSV branches only: the plain-text branch is read by a
+// person, who is not misled by the word "nan" the way a parser is.
+bool structured(const CommandLineOptions& options) {
+    return options.json_output || options.csv_output;
+}
+
+}  // namespace
 
 void OutputFormatter::write_vector_to_file(const dvec& vec, const std::string& filename) {
     // Handle stdout as a special case
@@ -74,6 +107,11 @@ void OutputFormatter::write_matrix_to_file(const dmat& mat, const std::string& f
 
 void OutputFormatter::print_fixation_results(const CommandLineOptions& options, 
                                              double T_fix, double T_std, double rate) {
+    if (structured(options)) {
+        require_finite(T_fix, "T_fix");
+        require_finite(T_std, "T_std");
+        require_finite(rate, "rate");
+    }
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"fixation\"," << std::endl;
@@ -98,6 +136,17 @@ void OutputFormatter::print_absorption_results(const CommandLineOptions& options
                                               double T_abs, double T_abs_std,
                                               double T_ext, double T_ext_std, double N_ext,
                                               double T_fix, double T_fix_std) {
+    if (structured(options)) {
+        require_finite(P_ext, "P_ext");
+        require_finite(P_fix, "P_fix");
+        require_finite(T_abs, "T_abs");
+        require_finite(T_abs_std, "T_abs_std");
+        require_finite(T_ext, "T_ext");
+        require_finite(T_ext_std, "T_ext_std");
+        require_finite(N_ext, "N_ext");
+        require_finite(T_fix, "T_fix");
+        require_finite(T_fix_std, "T_fix_std");
+    }
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"absorption\"," << std::endl;
@@ -132,6 +181,7 @@ void OutputFormatter::print_absorption_results(const CommandLineOptions& options
 }
 
 void OutputFormatter::print_equilibrium_results(const CommandLineOptions& options, double e_freq) {
+    if (structured(options)) require_finite(e_freq, "E_freq");
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"equilibrium\"," << std::endl;
@@ -149,6 +199,10 @@ void OutputFormatter::print_equilibrium_results(const CommandLineOptions& option
 
 void OutputFormatter::print_equilibrium_results_with_distribution(
     const CommandLineOptions& options, double e_freq, const dvec& distribution) {
+    if (structured(options)) {
+        require_finite(e_freq, "E_freq");
+        require_finite_all(distribution, "distribution");
+    }
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"equilibrium\"," << std::endl;
@@ -181,6 +235,18 @@ void OutputFormatter::print_establishment_results(
     double T_seg_ext, double T_seg_ext_std,
     double T_seg_fix, double T_seg_fix_std,
     double T_est, double T_est_std) {
+    if (structured(options)) {
+        require_finite(est_freq, "est_freq");
+        require_finite(P_est, "P_est");
+        require_finite(T_seg, "T_seg");
+        require_finite(T_seg_std, "T_seg_std");
+        require_finite(T_seg_ext, "T_seg_ext");
+        require_finite(T_seg_ext_std, "T_seg_ext_std");
+        require_finite(T_seg_fix, "T_seg_fix");
+        require_finite(T_seg_fix_std, "T_seg_fix_std");
+        require_finite(T_est, "T_est");
+        require_finite(T_est_std, "T_est_std");
+    }
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"establishment\"," << std::endl;
@@ -219,6 +285,14 @@ void OutputFormatter::print_establishment_results(
 void OutputFormatter::print_allele_age_results(const CommandLineOptions& options,
                                               double age, double age_std,
                                               const std::vector<double>& raw_moments) {
+    if (structured(options)) {
+        require_finite(age, "E_T");
+        require_finite(age_std, "Std_T");
+        for (size_t k = 0; k < raw_moments.size(); k++) {
+            require_finite(raw_moments[k],
+                           ("age_raw_moments[" + std::to_string(k) + "]").c_str());
+        }
+    }
     // Central statistics from the raw moments, when higher moments were asked
     // for. Skewness needs K >= 3, excess kurtosis K >= 4.
     const size_t K = raw_moments.size();
@@ -283,6 +357,10 @@ void OutputFormatter::print_fundamental_results(const CommandLineOptions& option
     // An empty vector means no starting distribution was usable. The matrix is
     // the mode's actual output and is reported either way.
     const bool has_start = sojourn.size() > 0;
+    if (structured(options) && has_start) {
+        require_finite(T_abs, "T_abs");
+        require_finite_all(sojourn, "sojourn_times");
+    }
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"fundamental\"," << std::endl;
@@ -348,7 +426,19 @@ void OutputFormatter::print_switching_absorption_results(
     const dvec& T_uncond,
     const dvec& T_cond_ext,
     const dvec& T_cond_fix) {
-    
+
+    if (structured(options)) {
+        require_finite(P_ext, "P_ext");
+        require_finite(P_fix, "P_fix");
+        require_finite(T_ext, "T_ext");
+        require_finite(T_fix, "T_fix");
+        require_finite_all(P_cond_ext, "P_cond_ext");
+        require_finite_all(P_cond_fix, "P_cond_fix");
+        require_finite_all(T_uncond, "T_uncond");
+        require_finite_all(T_cond_ext, "T_cond_ext");
+        require_finite_all(T_cond_fix, "T_cond_fix");
+        require_finite(options.alpha, "alpha");
+    }
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"switching-absorption\"," << std::endl;
@@ -545,7 +635,11 @@ void OutputFormatter::print_wfafs_stochastic_results(
     const CommandLineOptions& options,
     const dvec& distribution,
     llong n_models) {
-    
+
+    if (structured(options)) {
+        require_finite_all(distribution, "distribution");
+        require_finite(options.alpha, "alpha");
+    }
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"wfafs-stochastic\"," << std::endl;

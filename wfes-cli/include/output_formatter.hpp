@@ -21,6 +21,37 @@ enum class OutputFormat {
 class OutputFormatter {
 public:
     /**
+     * @brief Last line of defence: no non-finite value reaches a structured stream.
+     *
+     * The per-tool mains refuse before calling in here -- that is where the
+     * refusal belongs, because only the main knows what the quantity meant and
+     * what the user should change. This exists for the case a future code path
+     * forgets to, and for the fields no main checks individually.
+     *
+     * Printing a bare nan or inf is not a smaller failure than crashing. It
+     * produces INVALID JSON (neither token is a JSON number, so a strict parser
+     * rejects the whole document), and in CSV it produces a value that a reader
+     * will silently coerce -- jq turns `inf` into 1.7976931348623157e+308, an
+     * ordinary-looking finite number that is not the answer to anything.
+     *
+     * Callers validate every value BEFORE the first character is written, so a
+     * refusal never leaves a half-finished JSON object on stdout. The check is
+     * about VALUES that arrive non-finite; fields the caller deliberately omits
+     * stay simply absent, which is a different and legitimate thing.
+     *
+     * @param value the value about to be emitted
+     * @param field the name it would have been emitted under
+     * @return value, when it is finite
+     * @throws std::runtime_error naming the field, otherwise
+     */
+    static double require_finite(double value, const char* field);
+
+    /**
+     * @brief require_finite over a whole vector, naming the offending index.
+     */
+    static void require_finite_all(const dvec& values, const char* field);
+
+    /**
      * @brief Format and output results from wfes_single in fixation mode
      * 
      * @param options Command-line options used for the calculation
