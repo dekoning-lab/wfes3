@@ -3,6 +3,7 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <utility>
 #include <chrono>
 #include "backend_config.h"
 #ifdef WFES_USE_MKL
@@ -125,7 +126,32 @@ int main(int argc, char const *argv[]) {
     try {
         // Parse command line arguments using unified parser
         CommandLineOptions options = Args_Parser::parse_wfafs_stochastic_args(argc, argv);
-        
+
+        // Four of the output flags the shared parser offers name quantities this
+        // model does not have. wfafs_stochastic builds a NON_ABSORBING switching
+        // chain (WF::Switching below), so it has no absorbing state: W.R is
+        // (size x 0), and extinction-, fixation- and timeout-conditional sojourn
+        // times are undefined for a chain that never absorbs. The parser accepted
+        // and stored all four paths and nothing ever read them, so the run exited
+        // 0 having written no file -- indistinguishable, to a script, from having
+        // written one. Refuse instead. (The Qt-era wfafs.cpp reached the same
+        // conclusion: its R and B writes are commented out for this model.)
+        const std::pair<const std::string*, const char*> unsupported_outputs[] = {
+            {&options.output_R_path,     "--output-R (transient-to-absorbing matrix R)"},
+            {&options.output_N_ext_path, "--output-N-ext (extinction-conditional sojourn times)"},
+            {&options.output_N_fix_path, "--output-N-fix (fixation-conditional sojourn times)"},
+            {&options.output_N_tmo_path, "--output-N-tmo (timeout-conditional sojourn times)"},
+        };
+        for (const auto& [path, description] : unsupported_outputs) {
+            if (!path->empty()) {
+                throw std::runtime_error(
+                    std::string(description) + " is not produced by this tool: "
+                    "wfafs_stochastic builds a non-absorbing Wright-Fisher chain "
+                    "(no extinction or fixation state), so this quantity does not "
+                    "exist for its model.");
+            }
+        }
+
         // Start timer if verbose
         time_point t_start, t_end;
         if (options.verbose) {
@@ -322,9 +348,20 @@ int main(int argc, char const *argv[]) {
         llong nk = 2 * population_sizes[n_models - 1] + 1;
         dvec d = initial.transpose() * B.transpose().rightCols(nk);
         
-        // Apply projection if factors differ from 1
+        // Apply projection if factors differ from 1.
+        //
+        // The scaled-down state space is projected UP to the real population
+        // size, then back DOWN onto the model's own states for output.
+        // --no-project ("Do not project the distribution down") turns off the
+        // second step only -- that is what the inner `else` below is for.
+        // The outer condition used to read `factors[lt] != 1.0 &&
+        // !options.no_project`, which skipped the up-projection as well and
+        // left that `else` unreachable, so the flag returned the un-projected
+        // scaled-size spectrum rather than the full-resolution one its help
+        // promises. The Qt-era wfafs.cpp gates only on the factor; that is the
+        // behaviour restored here. Runs without the flag are unaffected.
         llong lt = n_models - 1;
-        if (factors[lt] != 1.0 && !options.no_project) {
+        if (factors[lt] != 1.0) {
             llong n = 2 * population_sizes[lt] + 1;
             llong m = 2 * static_cast<llong>(population_sizes[lt] * factors[lt]) + 1;
             
