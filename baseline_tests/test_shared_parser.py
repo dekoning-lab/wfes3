@@ -57,6 +57,17 @@ What each section locks in, and why it is not a style preference:
       --fundamental. Six figures is lossy: the value cannot be round-tripped
       back to the double that was computed.
 
+  Non-finite values reaching the raw --output-* file writers
+      require_finite/require_finite_all (see above) guard the JSON/CSV
+      streams; the raw --output-Q/R/N/B/I/E/V family goes through two
+      DIFFERENT functions -- OutputFormatter::write_vector_to_file and
+      write_matrix_to_file -- which had no such check at all.
+      wfafs_stochastic's --output-Q wrote a 42x42 matrix with 32 nan entries
+      to disk (confirmed against this build) before its own unrelated
+      "matrix is singular" guard fired on exit -- and the GUI stores several
+      of these files with a .csv extension, so a bare "nan" token would
+      reach a real consumer, not just a terminal.
+
 Usage
 -----
     python3 baseline_tests/test_shared_parser.py [--bin <dir>]
@@ -110,12 +121,12 @@ def tool_invocations(n: str) -> list[tuple[str, list[str]]]:
     return [
         ("wfes_single", ["--absorption", "-N", n]),
         ("wfes_switching", ["--absorption", "-N", f"{n},{n}",
-                            "-R", "0.5,0.5;0.5,0.5"]),
-        ("wfes_sequential", ["-N", f"{n},{n}", "-e", "10,10"]),
-        ("wfes_sweep", ["--fixation", "-N", n, "-s", "0.01,0.02", "-L", "0.5"]),
+                            "-r", "0.5,0.5;0.5,0.5"]),
+        ("wfes_sequential", ["-N", f"{n},{n}", "-t", "10,10"]),
+        ("wfes_sweep", ["--fixation", "-N", n, "-s", "0.01,0.02", "-l", "0.5"]),
         ("time_dist", ["-N", n]),
         ("time_dist_dual", ["-N", n]),
-        ("time_dist_sgv", ["-N", n, "-L", "0.5", "-s", "0.01,0.01"]),
+        ("time_dist_sgv", ["-N", n, "-l", "0.5", "-s", "0.01,0.01"]),
         ("phase_type_dist", ["-N", n]),
         ("phase_type_moments", ["-N", n]),
         ("wfafs_stochastic", ["-N", f"{n},{n}", "-G", "10,10", "-f", "1,1"]),
@@ -189,7 +200,7 @@ def section_observed_copies(bindir: Path):
 def section_sgv_distribution_cutoff(bindir: Path):
     print("\n== time_dist_sgv -d/--distribution-cutoff is range checked ==")
     sgv = bindir / "time_dist_sgv"
-    base = ["-N", "20", "-L", "0.5", "-s", "0.01,0.01"]
+    base = ["-N", "20", "-l", "0.5", "-s", "0.01,0.01"]
 
     for d in ("-1", "0", "5"):
         proc = run(sgv, base + ["-d", d, "--csv"])
@@ -212,8 +223,8 @@ def section_advisories(bindir: Path):
     # 4 * 20 * 0.5 = 40, far past the diffusion limit these tools assume.
     cases = [
         ("wfes_switching", ["--absorption", "-N", "20,20", "-u", "0.5,0.5",
-                            "-R", "0.5,0.5;0.5,0.5"]),
-        ("wfes_sequential", ["-N", "20,20", "-e", "10,10", "-u", "0.5,0.5"]),
+                            "-r", "0.5,0.5;0.5,0.5"]),
+        ("wfes_sequential", ["-N", "20,20", "-t", "10,10", "-u", "0.5,0.5"]),
         ("wfafs_stochastic", ["-N", "20,20", "-G", "10,10", "-f", "1,1",
                               "-u", "0.5,0.5"]),
     ]
@@ -240,8 +251,8 @@ def section_advisories(bindir: Path):
     print("\n== 2Ns <= -100 advisory reaches the vector tools ==")
     strong = [
         ("wfes_switching", ["--absorption", "-N", "100,100", "-s", "-0.9,-0.9",
-                            "-R", "0.5,0.5;0.5,0.5"]),
-        ("wfes_sequential", ["-N", "100,100", "-e", "10,10", "-s", "-0.9,-0.9"]),
+                            "-r", "0.5,0.5;0.5,0.5"]),
+        ("wfes_sequential", ["-N", "100,100", "-t", "10,10", "-s", "-0.9,-0.9"]),
     ]
     for name, args in strong:
         proc = run(bindir / name, args)
@@ -290,23 +301,23 @@ def section_non_finite_parameters(bindir: Path):
     # table/spectrum, and the other three exited nonzero blaming an "invalid
     # column index" or a "singular matrix".
     cases = [
-        ("time_dist_sgv", ["-N", "10", "-L", "0.5", "-s", "nan,nan", "--csv"]),
+        ("time_dist_sgv", ["-N", "10", "-l", "0.5", "-s", "nan,nan", "--csv"]),
         ("wfafs_stochastic", ["-N", "10,10", "-G", "10,10", "-f", "1,1",
                               "-s", "nan,nan", "--csv"]),
         ("wfes_switching", ["--absorption", "-N", "10,10", "-s", "nan,nan",
-                            "-R", "0.5,0.5;0.5,0.5", "--json"]),
-        ("wfes_sequential", ["-N", "10,10", "-e", "10,10", "-s", "nan,nan",
+                            "-r", "0.5,0.5;0.5,0.5", "--json"]),
+        ("wfes_sequential", ["-N", "10,10", "-t", "10,10", "-s", "nan,nan",
                              "--json"]),
-        ("wfes_sweep", ["--fixation", "-N", "10", "-s", "nan,nan", "-L", "0.5",
+        ("wfes_sweep", ["--fixation", "-N", "10", "-s", "nan,nan", "-l", "0.5",
                         "--json"]),
         ("wfafs_deterministic", ["-N", "10", "-G", "10", "-s", "nan", "-p", "1",
                                  "--json"]),
         # inf takes the same path: 1.0 + inf < 0.0 is false, so it slipped
         # through the fitness range checks exactly as nan did.
         ("wfes_switching", ["--absorption", "-N", "10,10", "-s", "inf,inf",
-                            "-R", "0.5,0.5;0.5,0.5", "--json"]),
+                            "-r", "0.5,0.5;0.5,0.5", "--json"]),
         # ...and it is not only -s: u and v reach the same clamp.
-        ("time_dist_sgv", ["-N", "10", "-L", "0.5", "-s", "0.01,0.01",
+        ("time_dist_sgv", ["-N", "10", "-l", "0.5", "-s", "0.01,0.01",
                            "-u", "nan,nan", "--csv"]),
     ]
     for name, args in cases:
@@ -320,7 +331,7 @@ def section_non_finite_parameters(bindir: Path):
               text.strip().splitlines()[-1][:200] if text.strip() else "<empty>")
 
     # A finite parameter must cost nothing.
-    for name, args in (("time_dist_sgv", ["-N", "10", "-L", "0.5",
+    for name, args in (("time_dist_sgv", ["-N", "10", "-l", "0.5",
                                           "-s", "0.01,0.01", "--csv"]),
                        ("wfafs_stochastic", ["-N", "10,10", "-G", "10,10",
                                              "-f", "1,1", "--csv"])):
@@ -536,6 +547,71 @@ def section_wfafs_stochastic_help(bindir: Path):
               " ".join(blurb.split())[:160])
 
 
+# --------------------------------------------------------------------------
+# 10. Non-finite policy extended to the raw --output-* file writers
+# --------------------------------------------------------------------------
+def section_file_writer_guard(bindir: Path):
+    print("\n== write_vector_to_file/write_matrix_to_file refuse non-finite entries ==")
+    # Two parts, deliberately kept separate:
+    #
+    # 1. A positive control across three tools/flags that DO route through
+    #    the two newly-guarded functions (found by grepping every
+    #    *_main.cpp for write_vector_to_file/write_matrix_to_file): a
+    #    healthy run must still write its file, unchanged, so the new check
+    #    is a refusal on bad input, not a tax on good input.
+    #
+    # 2. The wfafs_stochastic --output-Q repro that motivated this guard,
+    #    asserting only what is actually true of it: this build refuses the
+    #    run (a pre-existing, unrelated "matrix is singular" guard). What is
+    #    deliberately NOT asserted is that the Q file itself comes out clean
+    #    -- --output-Q on every tool that offers it writes Q via
+    #    SparseMatrix::saveMarket, a path that does not go through
+    #    OutputFormatter at all (wfes_switching's --absorption mode is the
+    #    one exception, and does not reproduce this case). That
+    #    Q-construction defect is real, pre-existing and confirmed on this
+    #    build, and out of scope for output_formatter.cpp/.hpp -- see
+    #    CX6-report.md Concern #3 and this task's "Corrections after
+    #    review" section.
+    #
+    # A search focused on every write_vector_to_file/write_matrix_to_file
+    # call site with no pre-existing finiteness check upstream did not find
+    # a parameter set -- across phase_type_moments, phase_type_dist and
+    # wfafs_stochastic -- that delivers a non-finite value to one of them
+    # without an earlier refusal or solver exception firing first. That
+    # matches section 7's own finding for the stdout guards, so, as there,
+    # no fake stand-in binary is built to force a case that does not
+    # currently occur from the CLI.
+    for name, args, flag in (
+        ("wfes_single", ["--absorption", "-N", "20"], "--output-N"),
+        ("phase_type_moments", ["-N", "10"], "--output-R"),
+        ("wfafs_stochastic", ["-N", "10,10", "-G", "10,10", "-f", "1,1"],
+         "--output-N"),
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "out.mtx"
+            proc = run(bindir / name, args + [flag, str(path), "--json"])
+            label = f"{name} {flag} (healthy)"
+            check(proc.returncode == 0, f"{label}: exits 0",
+                  f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}")
+            written = check(path.exists(), f"{label}: file is written")
+            if written:
+                text = path.read_text()
+                check("nan" not in text and "inf" not in text,
+                      f"{label}: file has no nan/inf token")
+
+    with tempfile.TemporaryDirectory() as td:
+        qpath = Path(td) / "Q.mtx"
+        proc = run(bindir / "wfafs_stochastic",
+                   ["-N", "10,10", "-G", "10,10", "-f", "1,1", "-u", "1e-9",
+                    "--output-Q", str(qpath), "--json"])
+        check(proc.returncode != 0,
+              "wfafs_stochastic --output-Q non-finite repro: exits nonzero",
+              f"exit={proc.returncode}")
+        # NOT asserted: qpath being absent or nan-free -- see the comment
+        # above. This half of the repro is a regression lock-in on the
+        # tool's pre-existing refusal, not a demonstration of this guard.
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -563,6 +639,7 @@ def main() -> int:
     section_non_finite_policy(bindir)
     section_banner(bindir)
     section_wfafs_stochastic_help(bindir)
+    section_file_writer_guard(bindir)
 
     print(f"\n{PASS} passed, {FAIL} failed")
     if FAILURES:
