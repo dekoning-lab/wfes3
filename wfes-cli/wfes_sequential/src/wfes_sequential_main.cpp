@@ -546,6 +546,48 @@ int main(int argc, char const *argv[]) {
             T_cond_tmo_m(i) = E_tmo.segment(start, length).sum();
         }
         
+        // Nothing that is not a finite number may be published, whatever
+        // produced it, and nothing may be written to disk before that is
+        // established.
+        //
+        // `-N 2,2 -t 1,1 --json` reached this point with P_ext = 0.316 and
+        // T_ext = nan: E[T | extinction] divides each starting state's sojourn
+        // vector by that state's extinction probability, and with an expected
+        // epoch length of one generation a state that cannot reach an
+        // extinction boundary before the epoch times out has probability
+        // exactly 0, so the quotient is 0/0. All three output branches printed
+        // it, and `"T_ext": nan` is not JSON any parser will read.
+        auto require_finite = [](double value, const std::string &name) {
+            if (!std::isfinite(value)) {
+                throw std::runtime_error(
+                    "Computed " + name + " = " + num_str(value) + ", which is "
+                    "not a number this tool can report. The computation did not "
+                    "produce a usable result -- an expectation conditional on an "
+                    "outcome is undefined when that outcome cannot occur from "
+                    "the starting states. Check -N and --exp-time");
+            }
+        };
+        auto require_finite_vec = [&](const dvec &vals, const char *name) {
+            for (llong i = 0; i < vals.size(); i++) {
+                require_finite(vals(i), std::string(name) + "[" + std::to_string(i) + "]");
+            }
+        };
+        require_finite(P_ext, "P_ext");
+        require_finite(P_fix, "P_fix");
+        require_finite(P_tmo, "P_tmo");
+        require_finite(T_ext, "T_ext");
+        require_finite(T_fix, "T_fix");
+        require_finite(T_tmo, "T_tmo");
+        require_finite(T_ext_std, "T_ext_std");
+        require_finite(T_fix_std, "T_fix_std");
+        require_finite(T_tmo_std, "T_tmo_std");
+        require_finite_vec(P_cond_ext, "P_cond_ext");
+        require_finite_vec(P_cond_fix, "P_cond_fix");
+        require_finite_vec(T_uncond_m, "T_uncond");
+        require_finite_vec(T_cond_ext_m, "T_cond_ext");
+        require_finite_vec(T_cond_fix_m, "T_cond_fix");
+        require_finite_vec(T_cond_tmo_m, "T_cond_tmo");
+
         // Output additional vectors if requested
         if (!options.output_N_ext_path.empty()) {
             CLI::OutputFormatter::write_vector_to_file(E_ext, options.output_N_ext_path);

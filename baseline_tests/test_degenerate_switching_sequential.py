@@ -96,9 +96,8 @@ def context(r, limit=400):
 def expect_refusal(r, what, needles):
     """A refusal is a nonzero exit AND a diagnostic naming the offending input."""
     ok = check(r.returncode != 0, "%s: exits nonzero" % what, context(r))
-    combined = (r.stderr + r.stdout).lower()
     for needle in needles:
-        ok &= check(needle.lower() in combined,
+        ok &= check(needle.lower() in r.stderr.lower(),
                     "%s: diagnostic mentions %r" % (what, needle), context(r))
     ok &= check(r.stderr.strip() != "", "%s: diagnostic goes to stderr" % what,
                 context(r))
@@ -191,6 +190,18 @@ def test_cutoff_above_every_starting_state_refused():
 #    than accept and ignore it.  The parser default (1e-10) is indistinguishable
 #    from an unsupplied -c and stays accepted, so the GUI keeps working.
 # ---------------------------------------------------------------------------
+
+def test_non_finite_result_refused():
+    """`-t 1,1` leaves every starting state unable to reach an extinction or
+    fixation boundary before its epoch times out, so E[T | extinction] divides
+    0 by 0. The run used to report P_ext = 0.316 alongside T_ext = nan and
+    exit 0 -- and `"T_ext": nan` is not valid JSON."""
+    print("test_non_finite_result_refused")
+    r = run("wfes_sequential", ["-N", "2,2", "-t", "1,1", "--json"])
+    expect_refusal(r, "sequential -N 2,2 -t 1,1", ["T_ext"])
+    check(BAD_JSON_TOKEN.search(r.stdout) is None,
+          "sequential -N 2,2 -t 1,1: emits no nan/inf", context(r))
+
 
 def test_fixation_refuses_meaningful_integration_cutoff():
     print("test_fixation_refuses_meaningful_integration_cutoff")
@@ -338,6 +349,7 @@ TESTS = [
     test_zero_starting_probability_refused,
     test_unnormalised_starting_probability_is_normalised_with_warning,
     test_cutoff_above_every_starting_state_refused,
+    test_non_finite_result_refused,
     test_fixation_refuses_meaningful_integration_cutoff,
     test_json_parameters_record_the_values_used,
     test_csv_output_has_a_header,

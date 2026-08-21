@@ -794,6 +794,35 @@ int main(int argc, char const *argv[]) {
                 }
             }
 
+            // Nothing that is not a finite number may be published, whatever
+            // produced it, and nothing may be written to disk before that is
+            // established. The conditional sojourn vectors above divide by the
+            // starting state's absorption probability, which is the same 0/0
+            // that let wfes_sequential report T_ext = nan alongside a positive
+            // P_ext, with exit status 0 and a JSON document no parser accepts.
+            auto require_finite = [](double value, const std::string &name) {
+                if (!std::isfinite(value)) {
+                    throw std::runtime_error(
+                        "Computed " + name + " = " + num_str(value) + ", which "
+                        "is not a number this tool can report. The computation "
+                        "did not produce a usable result -- an expectation "
+                        "conditional on an outcome is undefined when that "
+                        "outcome cannot occur from the starting states. Check "
+                        "-N, -r and -p");
+                }
+            };
+            auto require_finite_vec = [&](const dvec &vals, const char *name) {
+                for (llong i = 0; i < vals.size(); i++) {
+                    require_finite(vals(i), std::string(name) + "[" + std::to_string(i) + "]");
+                }
+            };
+            require_finite(P_ext, "P_ext");
+            require_finite(P_fix, "P_fix");
+            require_finite(T_ext, "T_ext");
+            require_finite(T_fix, "T_fix");
+            require_finite_vec(P_cond_ext, "P_cond_ext");
+            require_finite_vec(P_cond_fix, "P_cond_fix");
+
             // --output-N-ext / --output-N-fix were declared and parsed into
             // options, but nothing ever read them: both flags were accepted,
             // exited 0, and wrote no file. The conditional sojourn vectors they
@@ -819,6 +848,13 @@ int main(int argc, char const *argv[]) {
                 T_uncond(i) = E_uncond.segment(start, length).sum();
             }
             
+            // The per-model dwell times are derived from the vectors checked
+            // above, so a non-finite entry here would already have shown up in
+            // T_ext or T_fix -- checked anyway, since these are published.
+            require_finite_vec(T_uncond, "T_uncond");
+            require_finite_vec(T_cond_ext, "T_cond_ext");
+            require_finite_vec(T_cond_fix, "T_cond_fix");
+
             // Print results using OutputFormatter
             CLI::OutputFormatter::print_switching_absorption_results(
                 options, n_models, population_sizes.cast<double>(), s, h, u, v, p,
