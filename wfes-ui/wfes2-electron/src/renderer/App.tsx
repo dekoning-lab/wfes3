@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react'
 import { useMantineColorScheme } from '@mantine/core'
-import WfesSingleView from './views/WfesSingleView'
-import WfesSingleViewMantine from './views/WfesSingleViewMantine'
 import WfesSingleViewMantine2 from './views/WfesSingleViewMantine2'
 import WfesSweepViewMantine from './views/WfesSweepViewMantine'
 import WfesSequentialViewMantine from './views/WfesSequentialViewMantine'

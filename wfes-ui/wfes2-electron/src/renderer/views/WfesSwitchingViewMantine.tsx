@@ -906,7 +906,7 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
                   <>
                     <Loader size="lg" />
                     <Text size="sm" c="dimmed">{progressMessage || 'Processing switching dynamics...'}</Text>
-                    <Text size="xs" c="dimmed">{progress}%</Text>
+                    {progress > 0 && <Text size="xs" c="dimmed">{progress}%</Text>}
                   </>
                 ) : (
                   <>

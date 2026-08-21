@@ -188,8 +188,8 @@ export function sequentialDiagram(
   }))
   const captions = [GEOMETRIC_CAPTION]
   captions.push(start
-    ? 'Starting epoch drawn from the -p distribution shown on the nodes.'
-    : 'The process starts in Epoch 1 (the CLI default when -p is omitted).')
+    ? 'Starting epoch distribution as specified, shown on the nodes.'
+    : 'The process starts in Epoch 1.')
   return { states, edges, layout: 'chain', captions }
 }
 

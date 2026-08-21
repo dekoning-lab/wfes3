@@ -753,7 +753,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                 <Stack align="center" justify="center" style={{ height: '200px' }}>
                   <Loader size="lg" />
                   <Text size="sm" c="dimmed">{progressMessage}</Text>
-                  <Text size="xs" c="dimmed">{progress}%</Text>
+                  {progress > 0 && <Text size="xs" c="dimmed">{progress}%</Text>}
                 </Stack>
               ) : results ? (
                 <Stack gap="sm">
