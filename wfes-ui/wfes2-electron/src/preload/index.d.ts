@@ -9,6 +9,9 @@ declare global {
           execute: (params: any) => Promise<{
             success: boolean
             results: any
+            // Verbatim stderr lines from a run that still succeeded: truncation
+            // and normalisation warnings that qualify the numbers above.
+            warnings?: string[]
             executionTime: string
             error?: string
           }>
@@ -36,6 +39,7 @@ declare global {
             success: boolean
             moments: string[]
             distribution: string[]
+            warnings?: string[]
             executionTime: string
             error?: string
           }>

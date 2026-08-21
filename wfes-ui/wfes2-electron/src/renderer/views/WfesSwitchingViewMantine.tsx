@@ -39,7 +39,7 @@ import {
 } from '../components/shared'
 import { WfesSwitchingParams, WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
-import { Math as MathTeX } from '../components/shared'
+import { Math as MathTeX, SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import SwitchingRatesMatrix from '../components/SwitchingRatesMatrix'
 import { useExecuteShortcut } from '../hooks/useExecuteShortcut'
@@ -143,6 +143,8 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
   const [progressMessage, setProgressMessage] = useState('')
   const [executionTime, setExecutionTime] = useState('')
   const [error, setError] = useState('')
+  // Whatever the solver wrote to stderr while still exiting 0.
+  const [warnings, setWarnings] = useState<string[]>([])
   const [showChartModal, setShowChartModal] = useState(false)
   
   // Set up progress monitoring
@@ -166,6 +168,7 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
   // Helper function to clear results and reset execution state
   const clearResults = () => {
     setResults([])
+    setWarnings([])
     setExecutionTime('')
     setProgress(0)
     setProgressMessage('')
@@ -545,6 +548,7 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
           setError('No results were returned from the computation')
         } else {
           setResults(resultItems)
+          setWarnings(result.warnings || [])
           setExecutionTime(result.executionTime || '0s')
         }
         
@@ -812,7 +816,9 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
                 </Group>
               )}
             </Group>
-            
+
+            <SolverWarnings warnings={warnings} />
+
             <Box style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
               {error && (
                 <Alert color="red" mb="md">

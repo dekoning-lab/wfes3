@@ -47,6 +47,12 @@ export interface WfesSingleParams {
 export interface WfesResult {
   success: boolean
   results: any
+  /**
+   * Verbatim stderr lines from a run that still exited 0 -- truncation and
+   * normalisation warnings that qualify `results`. Empty when the solver had
+   * nothing to say.
+   */
+  warnings?: string[]
   executionTime: string
   error?: string
 }

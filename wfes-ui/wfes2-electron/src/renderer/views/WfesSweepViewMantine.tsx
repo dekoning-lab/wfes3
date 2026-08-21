@@ -32,7 +32,7 @@ import {
 } from '../components/shared'
 import { WfesSweepParams, WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
-import { Math as MathTeX } from '../components/shared'
+import { Math as MathTeX, SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import { numOrUndefined, intOrUndefined } from '../utils/numeric'
 import { useExecuteShortcut } from '../hooks/useExecuteShortcut'
@@ -128,11 +128,13 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
   const [regimeSplit, setRegimeSplit] = useState<number[] | null>(null)
   const [showChartModal, setShowChartModal] = useState(false)
   const [error, setError] = useState('')
-  
-  
+  // Whatever the solver wrote to stderr while still exiting 0.
+  const [warnings, setWarnings] = useState<string[]>([])
+
   // Helper function to clear results and reset execution state
   const clearResults = () => {
     setResults([])
+    setWarnings([])
     setExecutionTime('')
     setProgress(0)
     setProgressMessage('')
@@ -303,6 +305,7 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
         // the results table holds model quantities only.
         
         setResults(resultItems)
+        setWarnings(response.warnings || [])
         setExecutionTime(response.executionTime)
       } else {
         setError(response.error || 'Unknown error occurred')
@@ -611,13 +614,15 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
                   </Group>
                 )}
               </Group>
-              
+
+              <SolverWarnings warnings={warnings} />
+
               {error && (
                 <Alert color="red" mb="md">
                   {error}
                 </Alert>
               )}
-              
+
               {results.length > 0 ? (
                 <Stack>
                   <WfesResultsTable data={results} columns={2} />

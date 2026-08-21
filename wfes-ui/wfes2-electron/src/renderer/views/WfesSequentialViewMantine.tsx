@@ -38,7 +38,7 @@ import {
 } from '../components/shared'
 import { WfesSequentialParams, WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
-import { Math as MathTeX } from '../components/shared'
+import { Math as MathTeX, SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import { useExecuteShortcut } from '../hooks/useExecuteShortcut'
 import SwitchingStateDiagram from '../components/shared/SwitchingStateDiagram'
@@ -140,11 +140,14 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
   const [error, setError] = useState('')
   const [showChartModal, setShowChartModal] = useState(false)
   const [showTrajectoryModal, setShowTrajectoryModal] = useState(false)
-  
+  // Whatever the solver wrote to stderr while still exiting 0.
+  const [warnings, setWarnings] = useState<string[]>([])
+
   // Helper function to clear results and reset execution state
   const clearResults = () => {
     setResults([])
     setTrajectoryData([])
+    setWarnings([])
     setExecutionTime('')
     setProgress(0)
     setProgressMessage('')
@@ -374,6 +377,7 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
         setDecomp(decompRows)
 
         setResults(resultItems)
+        setWarnings(result.warnings || [])
         setExecutionTime(result.executionTime || '0s')
         
         // Note: Trajectory data would need to be implemented separately
@@ -556,7 +560,9 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
                 </Group>
               )}
             </Group>
-            
+
+            <SolverWarnings warnings={warnings} />
+
             {error && (
               <Alert color="red" mb="md">
                 {error}

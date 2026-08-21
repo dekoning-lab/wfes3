@@ -64,6 +64,34 @@ export class WfesBackendService {
   }
 
   /**
+   * Splits a completed run's stderr into the warning lines shown next to its
+   * results.
+   *
+   * The solvers use stderr to qualify a result they still return: the
+   * distribution was truncated at --max-t so every moment from it is a lower
+   * bound, a quantity was renormalised, a fallback stopping rule was used.
+   * They say so and exit 0, and until now only the failure branch ever read
+   * stderr -- so the GUI presented underestimates as final answers.
+   *
+   * Verbatim by design: lines are trimmed and empties dropped, nothing is
+   * classified, reworded, filtered or collapsed. A repeated line is a repeated
+   * line (wfes_sequential can warn once per epoch) and stays repeated. A run
+   * with nothing to say yields an empty array, which renders nothing -- checked
+   * against the binaries: a converged run writes nothing to stderr, and
+   * --verbose output goes to stdout.
+   *
+   * @param {string} stderr - Raw stderr captured from the process
+   * @returns {string[]} Non-empty stderr lines, trimmed, in order
+   * @private
+   */
+  private warningsFrom(stderr: string): string[] {
+    return (stderr ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+  }
+
+  /**
    * Gets the full path to a specific WFES executable
    * @param {string} toolName - Name of the tool (e.g., 'wfes_single', 'time_dist')
    * @returns {string} Full path to the executable
@@ -112,7 +140,8 @@ export class WfesBackendService {
       
       // Parse JSON output
       const parsedResult = this.parseJsonOutput(result.stdout)
-      
+      const warnings = this.warningsFrom(result.stderr)
+
       // For fundamental model, check if we need to read the matrix from file
       if (params.model_type === 'fundamental' && parsedResult.model === 'fundamental') {
         console.log('Processing fundamental matrix...')
@@ -150,13 +179,21 @@ export class WfesBackendService {
         
         console.log('Running with matrix output to:', matrixFile)
         // Re-run with matrix output
-        await this.executeProcess(
+        const matrixRun = await this.executeProcess(
           'wfes_single',
           matrixArgs,
           processId + '_matrix',
           undefined
         )
-        
+
+        // The re-run is the same model with the same parameters, so its stderr
+        // repeats what the first run already said. Only something the first run
+        // did not say is added -- the user is not shown the same warning twice
+        // for what is, to them, one computation.
+        for (const line of this.warningsFrom(matrixRun.stderr)) {
+          if (!warnings.includes(line)) warnings.push(line)
+        }
+
         // Read and parse the matrices
         const matrixData = await this.readFundamentalMatrix(matrixFile)
         console.log('Matrix data read:', matrixData ? `${matrixData.length}x${matrixData[0]?.length}` : 'null')
@@ -191,7 +228,7 @@ export class WfesBackendService {
         }
       }
       
-      return parsedResult
+      return { ...parsedResult, warnings }
     } finally {
       this.activeProcesses.delete(processId)
     }
@@ -226,7 +263,10 @@ export class WfesBackendService {
       )
       
       // Parse JSON output
-      return this.parseJsonOutput(result.stdout)
+      return {
+        ...this.parseJsonOutput(result.stdout),
+        warnings: this.warningsFrom(result.stderr)
+      }
     } finally {
       this.activeProcesses.delete(processId)
     }
@@ -261,10 +301,11 @@ export class WfesBackendService {
       )
       
       // Parse output based on mode
+      const warnings = this.warningsFrom(result.stderr)
       if (params.mode === 'moments') {
-        return this.parsePhaseTypeMomentsOutput(result.stdout)
+        return { ...this.parsePhaseTypeMomentsOutput(result.stdout), warnings }
       } else {
-        return this.parsePhaseTypeDistOutput(result.stdout)
+        return { ...this.parsePhaseTypeDistOutput(result.stdout), warnings }
       }
     } finally {
       this.activeProcesses.delete(processId)
@@ -305,7 +346,10 @@ export class WfesBackendService {
       )
       
       // Parse and return results
-      const parsedResult = this.parseTimeDistOutput(result.stdout, params.mode)
+      const parsedResult = {
+        ...this.parseTimeDistOutput(result.stdout, params.mode),
+        warnings: this.warningsFrom(result.stderr)
+      }
       console.log(`Time dist ${params.mode} parsed result:`, {
         hasResults: !!parsedResult.results,
         resultsLength: parsedResult.results?.length || 0,
@@ -347,7 +391,10 @@ export class WfesBackendService {
       )
       
       // Parse and return results
-      return this.parseWfafsOutput(result.stdout, params.mode)
+      return {
+        ...this.parseWfafsOutput(result.stdout, params.mode),
+        warnings: this.warningsFrom(result.stderr)
+      }
     } finally {
       this.activeProcesses.delete(processId)
     }
@@ -382,7 +429,10 @@ export class WfesBackendService {
       )
       
       // Parse and return results
-      return this.parseWfafdOutput(result.stdout)
+      return {
+        ...this.parseWfafdOutput(result.stdout),
+        warnings: this.warningsFrom(result.stderr)
+      }
     } finally {
       this.activeProcesses.delete(processId)
     }
@@ -411,7 +461,11 @@ export class WfesBackendService {
       const args = this.buildProjectionArgs(params)
       const result = await this.executeProcess('wfafs_deterministic', args, processId, onProgress)
       const parsed = this.parseWfafdOutput(result.stdout)
-      return { ...parsed, commandLine: `wfafs_deterministic ${args.join(' ')}` }
+      return {
+        ...parsed,
+        warnings: this.warningsFrom(result.stderr),
+        commandLine: `wfafs_deterministic ${args.join(' ')}`
+      }
     } finally {
       this.activeProcesses.delete(processId)
     }
@@ -2820,8 +2874,11 @@ export class WfesBackendService {
       )
       
       // Parse CSV output
-      return this.parseWfesSequentialOutput(result.stdout)
-      
+      return {
+        ...this.parseWfesSequentialOutput(result.stdout),
+        warnings: this.warningsFrom(result.stderr)
+      }
+
     } catch (error) {
       throw error
     } finally {
@@ -2862,7 +2919,10 @@ export class WfesBackendService {
       )
       
       // Parse output based on model type
-      return this.parseWfesSwitchingOutput(result.stdout, params.model_type || 'absorption')
+      return {
+        ...this.parseWfesSwitchingOutput(result.stdout, params.model_type || 'absorption'),
+        warnings: this.warningsFrom(result.stderr)
+      }
     } finally {
       this.activeProcesses.delete(processId)
     }

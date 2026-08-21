@@ -35,7 +35,7 @@ import { TimeDistParams, WfesResultItem } from '../types/wfes'
 import { qtyRow, sdRow } from '../utils/quantityLabels'
 import { wfesService } from '../services/wfesService'
 import TimeDistChartModal from '../components/TimeDistChartModal'
-import { Math as MathTeX } from '../components/shared'
+import { Math as MathTeX, SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import { useExecuteShortcut } from '../hooks/useExecuteShortcut'
 
@@ -114,7 +114,9 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
   const [executionTime, setExecutionTime] = useState('')
   const [error, setError] = useState('')
   const [showChartModal, setShowChartModal] = useState(false)
-  
+  // Whatever the solver wrote to stderr while still exiting 0.
+  const [warnings, setWarnings] = useState<string[]>([])
+
   // Detect platform for library default
   useEffect(() => {
     const isMac = typeof navigator !== 'undefined' && 
@@ -130,6 +132,7 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
     setResults([])
     setTruncation(null)
     setDistribution([])
+    setWarnings([])
     setExecutionTime('')
     setProgress(0)
     setProgressMessage('')
@@ -318,6 +321,7 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
         setResults(statResults)
       }
       
+      setWarnings(result.warnings || [])
       setExecutionTime(result.executionTime || '')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
@@ -660,6 +664,13 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
                   </Text>
                 </Alert>
               )}
+
+              {/* Below the structured banner above, which covers truncation
+                  specifically: this is everything the solver itself said,
+                  including whatever the banner does not model. Both can appear
+                  for one run and neither is suppressed on account of the
+                  other. */}
+              <SolverWarnings warnings={warnings} />
 
               {error && (
                 <Alert color="red" mb="md">

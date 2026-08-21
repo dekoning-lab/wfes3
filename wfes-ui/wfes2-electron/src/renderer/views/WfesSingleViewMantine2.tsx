@@ -44,7 +44,7 @@ import {
 import EquilibriumChartModal from '../components/EquilibriumChartModal'
 import EquilibriumChartModalNew from '../components/EquilibriumChartModalNew'
 import FundamentalMatrixModal from '../components/FundamentalMatrixModal'
-import { AboutContentPanel, Math as MathTeX } from '../components/shared'
+import { AboutContentPanel, Math as MathTeX, SolverWarnings } from '../components/shared'
 import { numOrUndefined, intOrUndefined, finiteOrUndefined } from '../utils/numeric'
 import { useExecuteShortcut } from '../hooks/useExecuteShortcut'
 import WfesResultsTable from '../components/shared/WfesResultsTable'
@@ -87,6 +87,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   // Helper function to clear results and reset execution state
   const clearResults = () => {
     setResults(null)
+    setWarnings([])
     setExecutionTime('')
     setProgress(0)
     setProgressMessage('')
@@ -192,6 +193,8 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   const [progress, setProgress] = useState(0)
   const [progressMessage, setProgressMessage] = useState('')
   const [executionTime, setExecutionTime] = useState('')
+  // Whatever the solver wrote to stderr while still exiting 0.
+  const [warnings, setWarnings] = useState<string[]>([])
   const [showEquilibriumChart, setShowEquilibriumChart] = useState(false)
   const [showFundamentalMatrix, setShowFundamentalMatrix] = useState(false)
   const [sojournType, setSojournType] = useState<'unconditional' | 'extinction' | 'fixation'>('unconditional')
@@ -318,6 +321,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
       if (response.success) {
         console.log('Received results:', response.results)
         setResults(response.results)
+        setWarnings(response.warnings || [])
         setExecutionTime(response.executionTime || `${((Date.now() - startTime) / 1000).toFixed(3)}s`)
       } else {
         alert(`Execution failed: ${response.error || 'Unknown error'}`)
@@ -776,7 +780,9 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                   </Group>
                 )}
               </Group>
-              
+
+              <SolverWarnings warnings={warnings} />
+
               {isExecuting ? (
                 <Stack align="center" justify="center" style={{ height: '200px' }}>
                   <Loader size="lg" />

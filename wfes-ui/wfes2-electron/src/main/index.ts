@@ -377,6 +377,11 @@ function setupIpcHandlers(): void {
       return {
         success: true,
         results: results.results,
+        // What the solver said on stderr while still exiting 0. This handler
+        // picks fields out of the service result rather than passing it
+        // through, so without this line the warnings stop here and the view
+        // presents qualified numbers as final ones.
+        warnings: results.warnings || [],
         executionTime: `${executionTime}s`
       }
     } catch (error) {
@@ -436,6 +441,7 @@ function setupIpcHandlers(): void {
       return {
         success: true,
         results: results.results,
+        warnings: results.warnings || [],
         executionTime: `${executionTime}s`
       }
     } catch (error) {
@@ -523,12 +529,14 @@ function setupIpcHandlers(): void {
           mean: results.mean,
           std: results.std,
           moments: results.moments || [],
+          warnings: results.warnings || [],
           executionTime: `${executionTime}s`
         }
       } else {
         return {
           success: true,
           distribution: results.distribution || [],
+          warnings: results.warnings || [],
           // The parser has always produced `statistics`; this handler dropped
           // it, so everything it carried -- including whether the solver
           // converged or merely ran out of generations -- never reached the
@@ -597,6 +605,7 @@ function setupIpcHandlers(): void {
         success: true,
         results: results.results || [],
         distribution: results.distribution || [],
+        warnings: results.warnings || [],
         // Dropped here, exactly as in the phase-type handler: the solver's own
         // account of whether it converged never reached the view, so a run that
         // stopped at the generation limit looked identical to one that finished.
@@ -637,6 +646,7 @@ function setupIpcHandlers(): void {
         success: true,
         spectrum: results.spectrum || [],
         statistics: results.statistics || {},
+        warnings: results.warnings || [],
         executionTime: `${executionTime}s`
       }
     } catch (error) {
@@ -673,6 +683,7 @@ function setupIpcHandlers(): void {
         success: true,
         distribution: results.distribution || [],
         statistics: results.statistics || {},
+        warnings: results.warnings || [],
         executionTime: `${executionTime}s`
       }
     } catch (error) {
@@ -703,6 +714,7 @@ function setupIpcHandlers(): void {
         success: true,
         distribution: results.distribution || [],
         statistics: results.statistics || {},
+        warnings: results.warnings || [],
         commandLine: results.commandLine,
         executionTime: `${executionTime}s`
       }
@@ -759,6 +771,7 @@ function setupIpcHandlers(): void {
       return {
         success: true,
         results: results.results,
+        warnings: results.warnings || [],
         executionTime: `${executionTime}s`
       }
     } catch (error) {
@@ -790,10 +803,15 @@ function setupIpcHandlers(): void {
         }
       )
       const executionTime = ((Date.now() - startTime) / 1000).toFixed(3)
-      
+
+      // This is the one handler that returns the service object wholesale, so
+      // the warnings are lifted out to sit alongside `results` here as they do
+      // in every other handler -- one place for the view to read them.
+      const { warnings = [], ...modelResults } = results
       return {
         success: true,
-        results: results,
+        results: modelResults,
+        warnings,
         executionTime: `${executionTime}s`
       }
     } catch (error) {

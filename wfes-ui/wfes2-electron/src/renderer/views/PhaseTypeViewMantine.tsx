@@ -38,7 +38,7 @@ import { WfesOutputOptions, WfesResultItem } from '../types/wfes'
 import { qtyRow, sdRow } from '../utils/quantityLabels'
 import { wfesService } from '../services/wfesService'
 import TimeToSubstitutionChartModal from '../components/TimeToSubstitutionChartModal'
-import { Math as MathTeX } from '../components/shared'
+import { Math as MathTeX, SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import SwitchingStateDiagram from '../components/shared/SwitchingStateDiagram'
 import { sweepDiagram } from '../utils/switchingDiagrams'
@@ -167,7 +167,9 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
   const [executionTime, setExecutionTime] = useState('')
   const [error, setError] = useState('')
   const [showChartModal, setShowChartModal] = useState(false)
-  
+  // Whatever the solver wrote to stderr while still exiting 0.
+  const [warnings, setWarnings] = useState<string[]>([])
+
   // Detect platform for library default
   useEffect(() => {
     const isMac = typeof navigator !== 'undefined' && 
@@ -184,6 +186,7 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
     setTruncation(null)
     setDistribution([])
     setMoments([])
+    setWarnings([])
     setExecutionTime('')
     setProgress(0)
     setProgressMessage('')
@@ -364,6 +367,7 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
           // and the statistics above must see every point.
           setDistribution(result.distribution)
         }
+        setWarnings(result.warnings || [])
         setExecutionTime(result.executionTime || '')
       } else {
         // Non-SGV modes (phase-type-dist with or without moments)
@@ -452,6 +456,7 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
             setDistribution(result.distribution)
           }
         }
+        setWarnings(result.warnings || [])
         setExecutionTime(result.executionTime || '')
       }
     } catch (err) {
@@ -914,6 +919,13 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
                   </Text>
                 </Alert>
               )}
+
+              {/* Below the structured banner above, which covers truncation
+                  specifically: this is everything the solver itself said,
+                  including whatever the banner does not model. Both can appear
+                  for one run and neither is suppressed on account of the
+                  other. */}
+              <SolverWarnings warnings={warnings} />
 
               {error && (
                 <Alert color="red" mb="md">

@@ -37,7 +37,7 @@ import {
 } from '../components/shared'
 import { WfafdParams, WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
-import { Math as MathTeX } from '../components/shared'
+import { Math as MathTeX, SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import SwitchingStateDiagram from '../components/shared/SwitchingStateDiagram'
 import { wfafdDiagram } from '../utils/switchingDiagrams'
@@ -131,11 +131,14 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
   const [error, setError] = useState('')
   const [showChartModal, setShowChartModal] = useState(false)
   const [showTableModal, setShowTableModal] = useState(false)
-  
+  // Whatever the solver wrote to stderr while still exiting 0.
+  const [warnings, setWarnings] = useState<string[]>([])
+
   // Helper function to clear results and reset execution state
   const clearResults = () => {
     setResults([])
     setDistribution([])
+    setWarnings([])
     setExecutionTime('')
     setProgress(0)
     setProgressMessage('')
@@ -292,7 +295,8 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
       }
       
       setResults(processedResults)
-      
+      setWarnings(result.warnings || [])
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
     } finally {
@@ -556,7 +560,9 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
                   </Group>
                 )}
               </Group>
-              
+
+              <SolverWarnings warnings={warnings} />
+
               {error && (
                 <Alert color="red" mb="md">
                   {error}

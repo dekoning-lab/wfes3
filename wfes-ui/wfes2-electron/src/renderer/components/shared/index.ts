@@ -19,6 +19,7 @@ export {
   generateFilename
 } from './WfesExportButtons'
 export { WfesViewLayout } from './WfesViewLayout'
+export { SolverWarnings } from './SolverWarnings'
 
 // Technical details component with LaTeX support
 export { default as TechnicalDetailsPanel, Math } from '../TechnicalDetailsPanel'

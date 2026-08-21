@@ -34,7 +34,7 @@ import {
   exportToCSV
 } from '../components/shared'
 import { WfafsParams, WfesResultItem } from '../types/wfes'
-import { Math as MathTeX } from '../components/shared'
+import { Math as MathTeX, SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import SwitchingStateDiagram from '../components/shared/SwitchingStateDiagram'
 import { wfafsDiagram } from '../utils/switchingDiagrams'
@@ -120,7 +120,9 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
   const [error, setError] = useState('')
   const [showChartModal, setShowChartModal] = useState(false)
   const [showTableModal, setShowTableModal] = useState(false)
-  
+  // Whatever the solver wrote to stderr while still exiting 0.
+  const [warnings, setWarnings] = useState<string[]>([])
+
   // Helper functions
   const addComponent = () => {
     const lastComponent = components[components.length - 1]
@@ -147,6 +149,7 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
   const clearResults = () => {
     setResults([])
     setSpectrum([])
+    setWarnings([])
     setExecutionTime('')
     setProgress(0)
     setProgressMessage('')
@@ -288,7 +291,8 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
         }
         
         setResults(resultItems)
-        
+        setWarnings(result.warnings || [])
+
         // Set spectrum data if available.
         //
         // This read `result.distribution`, a key the IPC handler never sets --
@@ -647,7 +651,9 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
                   </Group>
                 )}
               </Group>
-              
+
+              <SolverWarnings warnings={warnings} />
+
               {error && (
                 <Alert color="red" mb="md">
                   {error}
