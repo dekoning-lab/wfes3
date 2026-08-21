@@ -1,8 +1,12 @@
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 #include <chrono>
+#include <cmath>
+#include <limits>
 #include "backend_config.h"
 #ifdef WFES_USE_MKL
 #include <mkl.h>
@@ -94,6 +98,122 @@ dvec parse_vector(const std::string& str) {
     }
     return result;
 }
+
+/**
+ * Format a double at full precision for a diagnostic.
+ *
+ * std::to_string fixes six decimal places, which renders every value this
+ * function is asked about ("what did the vector actually sum to?", "what was
+ * the cutoff?") as "0.000000" -- useless in a message whose whole job is to
+ * show the user the offending number.
+ */
+static std::string num_str(double x) {
+    std::ostringstream os;
+    os << std::setprecision(std::numeric_limits<double>::max_digits10) << x;
+    return os.str();
+}
+
+/**
+ * Escape a string for use as a JSON string value.
+ *
+ * Only file paths go through this, but a path may legitimately contain a
+ * backslash or a quote, and one of those in the parameters block would make
+ * the whole document unparseable.
+ */
+static std::string json_escape(const std::string &raw) {
+    std::string out;
+    out.reserve(raw.size());
+    for (char c : raw) {
+        if (c == '"' || c == '\\') {
+            out.push_back('\\');
+            out.push_back(c);
+        } else if (static_cast<unsigned char>(c) < 0x20) {
+            std::ostringstream os;
+            os << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+               << static_cast<int>(static_cast<unsigned char>(c));
+            out += os.str();
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+/**
+ * Validate the epoch starting-probability vector (-p) and normalise it to sum 1.
+ *
+ * -p was used raw as the weight on each epoch's starting states, so it never
+ * had to be a probability vector for the run to report a result: `-p 1,1`
+ * gave P_ext = 1.8261973686, and a negative entry gave negative
+ * "probabilities" -- with exit status 0, and with numbers a reader would take
+ * for probabilities.
+ *
+ * The rules and the wording follow the --initial check in
+ * initial_distribution.h (and wfes_switching, which has the same flag): a
+ * negative entry or a non-positive (or non-finite) sum is a hard error, and a
+ * sum that is not 1 is renormalised out loud rather than silently, since
+ * renormalising without saying so hides a malformed command line.
+ */
+static void normalise_starting_probabilities(dvec &p, const char *name) {
+    if ((p.array() < 0).any()) {
+        throw std::runtime_error(
+            std::string(name) + " (-p) contain a negative entry; "
+            "every entry must be a probability.");
+    }
+    const double total = p.sum();
+    if (!std::isfinite(total) || total <= 0) {
+        throw std::runtime_error(
+            std::string(name) + " (-p) sum to " + num_str(total) +
+            "; they must contain positive probability.");
+    }
+    if (std::abs(total - 1.0) > 1e-9) {
+        std::cerr << "Warning: starting probabilities (-p) sum to " << num_str(total)
+                  << ", not 1; renormalising.\n";
+        p /= total;
+    }
+}
+
+/**
+ * One CSV row, built as (column name, formatted value) pairs.
+ *
+ * This branch used to emit a bare data row whose column order lived in a
+ * comment -- and that comment had drifted: it documented 21 columns for a row
+ * that emits 13k + 10 of them (36 for a two-epoch run). Adding the name and
+ * the value together, and printing both lines from the same list, is what
+ * stops a header from drifting the same way.
+ *
+ * Values are formatted through a stream that copies std::cout's formatting
+ * state, so the numbers are exactly what a direct `std::cout << value` wrote.
+ */
+struct CsvRow {
+    std::vector<std::pair<std::string, std::string>> cols;
+
+    template <typename T>
+    void add(const std::string &name, const T &value) {
+        std::ostringstream os;
+        os.copyfmt(std::cout);
+        os << value;
+        cols.emplace_back(name, os.str());
+    }
+
+    template <typename V>
+    void add_per_model(const std::string &prefix, const V &values) {
+        for (llong i = 0; i < values.size(); i++) {
+            add(prefix + std::to_string(i), values(i));
+        }
+    }
+
+    void print() const {
+        for (size_t i = 0; i < cols.size(); i++) {
+            std::cout << (i ? "," : "") << cols[i].first;
+        }
+        std::cout << std::endl;
+        for (size_t i = 0; i < cols.size(); i++) {
+            std::cout << (i ? "," : "") << cols[i].second;
+        }
+        std::cout << std::endl;
+    }
+};
 
 int main(int argc, char const *argv[]) {
     time_point t_start, t_end;
@@ -187,6 +307,11 @@ int main(int argc, char const *argv[]) {
         // single-model tools get in validate_*_parameters happens here instead.
         CLI::Args_Parser::validate_model_domain_vectors(
             population_sizes, s, h, u, v, options.alpha);
+
+        // -p is a probability distribution over the epochs, not a free weight.
+        // Done before the echo below and before any use, so what is printed and
+        // recorded is what the run actually integrates with.
+        normalise_starting_probabilities(p, "Epoch starting probabilities");
 
         // Set message level for solvers
         llong msg_level = options.verbose ? MKL_PARDISO_MSG_VERBOSE : MKL_PARDISO_MSG_QUIET;
@@ -313,6 +438,18 @@ int main(int argc, char const *argv[]) {
                     start_weights.emplace_back(si[i_] + o_, p0[i_](o_) * p[i_]);
                 }
             }
+            // The --initial branch above already refuses an empty integration;
+            // this branch did not, and every accumulator below is
+            // zero-initialised, so `-c 1` printed a full set of zeroed results
+            // (P_ext = P_fix = P_tmo = T_ext = ... = 0) and exited 0. That is a
+            // placeholder presented as an answer.
+            if (start_weights.empty()) {
+                throw std::runtime_error(
+                    "No starting state is above the integration cutoff (-c = " +
+                    num_str(options.integration_cutoff) +
+                    "); lower -c so the starting distribution has mass to "
+                    "integrate over.");
+            }
         }
 
         // Calculate N matrices for integration
@@ -437,40 +574,53 @@ int main(int argc, char const *argv[]) {
         
         // Print results.
         // wfes_sequential was the only one of the eleven tools with no
-        // structured output at all. Its CSV branch also omits the three
+        // structured output at all. Its CSV branch also omitted the three
         // uncertainty values that the plain-text branch prints (T_ext_std,
-        // T_fix_std, T_tmo_std), which is why the GUI -- which always requests
-        // CSV -- rendered "+/- std" figures it could never actually receive.
-        // The JSON form below carries every computed quantity.
+        // T_fix_std, T_tmo_std), which is why the GUI -- which requested CSV --
+        // rendered "+/- std" figures it could never actually receive. Both
+        // forms now carry every computed quantity, and the GUI asks for JSON.
         if (options.json_output) {
+            // The parameters block records what the run used, so a JSON result
+            // is self-describing. It used to carry only N, t, s, h and alpha --
+            // while the same program's text and CSV branches already emitted u,
+            // v and p, so the structured output was the least informative of
+            // the three. p is the NORMALISED vector, i.e. the one the
+            // integration actually weighted with; and which of the three
+            // mutually exclusive starting rules was in effect is recorded too,
+            // since -c does nothing under --starting-copies and p does nothing
+            // under either --starting-copies or --initial.
+            auto json_param_vec = [&](const char *name, const auto &vals) {
+                std::cout << "    \"" << name << "\": [";
+                for (llong i = 0; i < n_models; i++) {
+                    std::cout << vals(i);
+                    if (i < n_models - 1) std::cout << ", ";
+                }
+                std::cout << "]," << std::endl;
+            };
             std::cout << "{" << std::endl;
             std::cout << "  \"model\": \"sequential\"," << std::endl;
             std::cout << "  \"parameters\": {" << std::endl;
             std::cout << "    \"n_models\": " << n_models << "," << std::endl;
-            std::cout << "    \"population_sizes\": [";
-            for (llong i = 0; i < n_models; i++) {
-                std::cout << population_sizes(i);
-                if (i < n_models - 1) std::cout << ", ";
+            json_param_vec("population_sizes", population_sizes);
+            json_param_vec("expected_times", expected_times);
+            json_param_vec("selection_coefficients", s);
+            json_param_vec("dominance_coefficients", h);
+            json_param_vec("backward_mutation_rates", u);
+            json_param_vec("forward_mutation_rates", v);
+            if (!options.initial_distribution_path.empty()) {
+                std::cout << "    \"initial_distribution\": \""
+                          << json_escape(options.initial_distribution_path)
+                          << "\"," << std::endl;
+                std::cout << "    \"integration_cutoff\": "
+                          << options.integration_cutoff << "," << std::endl;
+            } else if (options.starting_copies >= 0) {
+                std::cout << "    \"starting_copies\": "
+                          << options.starting_copies << "," << std::endl;
+            } else {
+                json_param_vec("starting_probabilities", p);
+                std::cout << "    \"integration_cutoff\": "
+                          << options.integration_cutoff << "," << std::endl;
             }
-            std::cout << "]," << std::endl;
-            std::cout << "    \"expected_times\": [";
-            for (llong i = 0; i < n_models; i++) {
-                std::cout << expected_times(i);
-                if (i < n_models - 1) std::cout << ", ";
-            }
-            std::cout << "]," << std::endl;
-            std::cout << "    \"selection_coefficients\": [";
-            for (llong i = 0; i < n_models; i++) {
-                std::cout << s(i);
-                if (i < n_models - 1) std::cout << ", ";
-            }
-            std::cout << "]," << std::endl;
-            std::cout << "    \"dominance_coefficients\": [";
-            for (llong i = 0; i < n_models; i++) {
-                std::cout << h(i);
-                if (i < n_models - 1) std::cout << ", ";
-            }
-            std::cout << "]," << std::endl;
             std::cout << "    \"alpha\": " << options.alpha << std::endl;
             std::cout << "  }," << std::endl;
             std::cout << "  \"results\": {" << std::endl;
@@ -500,56 +650,41 @@ int main(int argc, char const *argv[]) {
             std::cout << "  }" << std::endl;
             std::cout << "}" << std::endl;
         } else if (options.csv_output) {
-            // CSV format: N1,N2,t1,t2,s1,s2,h1,h2,u1,u2,v1,v2,p1,p2,a,P_ext,P_fix,P_tmo,T_ext,T_fix,T_tmo
-            for (llong i = 0; i < n_models; i++) {
-                std::cout << population_sizes(i);
-                if (i < n_models - 1) std::cout << ",";
-            }
-            std::cout << ",";
-            for (llong i = 0; i < n_models; i++) {
-                std::cout << expected_times(i);
-                if (i < n_models - 1) std::cout << ",";
-            }
-            std::cout << ",";
-            for (llong i = 0; i < n_models; i++) {
-                std::cout << s(i);
-                if (i < n_models - 1) std::cout << ",";
-            }
-            std::cout << ",";
-            for (llong i = 0; i < n_models; i++) {
-                std::cout << h(i);
-                if (i < n_models - 1) std::cout << ",";
-            }
-            std::cout << ",";
-            for (llong i = 0; i < n_models; i++) {
-                std::cout << u(i);
-                if (i < n_models - 1) std::cout << ",";
-            }
-            std::cout << ",";
-            for (llong i = 0; i < n_models; i++) {
-                std::cout << v(i);
-                if (i < n_models - 1) std::cout << ",";
-            }
-            std::cout << ",";
-            for (llong i = 0; i < n_models; i++) {
-                std::cout << p(i);
-                if (i < n_models - 1) std::cout << ",";
-            }
-            std::cout << ",";
-            std::cout << options.alpha << ",";
-            std::cout << P_ext << "," << P_fix << "," << P_tmo << ",";
-            // The three std values were computed but omitted here, so any CSV
-            // consumer silently lost them. Appended rather than interleaved so
-            // existing column positions are preserved.
-            std::cout << T_ext << "," << T_fix << "," << T_tmo << ",";
-            std::cout << T_ext_std << "," << T_fix_std << "," << T_tmo_std;
-            auto csv_vec = [](const dvec& v) {
-                for (llong i = 0; i < v.size(); i++) std::cout << "," << v(i);
-            };
-            csv_vec(P_cond_ext); csv_vec(P_cond_fix);
-            csv_vec(T_uncond_m); csv_vec(T_cond_ext_m);
-            csv_vec(T_cond_fix_m); csv_vec(T_cond_tmo_m);
-            std::cout << std::endl;
+            // Header plus one data row, both from the same column list, in the
+            // order the bare row already used: 13k + 10 columns for k epochs
+            // (36 for two). The comment that used to sit here documented 21 of
+            // them, which is what an independently written header would have
+            // inherited.
+            //
+            // The three std values are at the end because they were added after
+            // the fact -- they were computed but omitted from this row entirely,
+            // so any CSV consumer silently lost them -- and appending kept the
+            // existing column positions.
+            CsvRow row;
+            row.add_per_model("N", population_sizes);
+            row.add_per_model("t", expected_times);
+            row.add_per_model("s", s);
+            row.add_per_model("h", h);
+            row.add_per_model("u", u);
+            row.add_per_model("v", v);
+            row.add_per_model("p", p);
+            row.add("a", options.alpha);
+            row.add("P_ext", P_ext);
+            row.add("P_fix", P_fix);
+            row.add("P_tmo", P_tmo);
+            row.add("T_ext", T_ext);
+            row.add("T_fix", T_fix);
+            row.add("T_tmo", T_tmo);
+            row.add("T_ext_std", T_ext_std);
+            row.add("T_fix_std", T_fix_std);
+            row.add("T_tmo_std", T_tmo_std);
+            row.add_per_model("P_cond_ext", P_cond_ext);
+            row.add_per_model("P_cond_fix", P_cond_fix);
+            row.add_per_model("T_uncond", T_uncond_m);
+            row.add_per_model("T_cond_ext", T_cond_ext_m);
+            row.add_per_model("T_cond_fix", T_cond_fix_m);
+            row.add_per_model("T_cond_tmo", T_cond_tmo_m);
+            row.print();
         } else {
             std::cout << "P_ext = " << std::setprecision(10) << P_ext << std::endl;
             std::cout << "P_fix = " << std::setprecision(10) << P_fix << std::endl;

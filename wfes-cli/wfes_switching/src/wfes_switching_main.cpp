@@ -1,8 +1,12 @@
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 #include <chrono>
+#include <cmath>
+#include <limits>
 #include "backend_config.h"
 #ifdef WFES_USE_MKL
 #include <mkl.h>
@@ -149,6 +153,124 @@ dmat parse_matrix(const std::string& str) {
     return result;
 }
 
+/**
+ * Format a double at full precision for a diagnostic.
+ *
+ * std::to_string fixes six decimal places, which renders every value this
+ * function is asked about ("what did the vector actually sum to?") as
+ * "0.000000" or "nan" -- useless in a message whose whole job is to show the
+ * user the offending number.
+ */
+static std::string num_str(double x) {
+    std::ostringstream os;
+    os << std::setprecision(std::numeric_limits<double>::max_digits10) << x;
+    return os.str();
+}
+
+/**
+ * Escape a string for use as a JSON string value.
+ *
+ * Only file paths go through this, but a path may legitimately contain a
+ * backslash or a quote, and one of those in the parameters block would make
+ * the whole document unparseable.
+ */
+static std::string json_escape(const std::string &raw) {
+    std::string out;
+    out.reserve(raw.size());
+    for (char c : raw) {
+        if (c == '"' || c == '\\') {
+            out.push_back('\\');
+            out.push_back(c);
+        } else if (static_cast<unsigned char>(c) < 0x20) {
+            std::ostringstream os;
+            os << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+               << static_cast<int>(static_cast<unsigned char>(c));
+            out += os.str();
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+/**
+ * Validate the starting-probability vector (-p) and normalise it to sum 1.
+ *
+ * -p was used raw as the weight on each model's starting states, so it never
+ * had to be a probability vector for the run to report a result:
+ * `-p 1,1` gave P_ext = 1.8749999928, `-p 5,5` gave P_ext = 9.375, `-p -2,1`
+ * gave P_ext = -0.9375 and `-p 0,0` gave zeros -- every one of them with exit
+ * status 0, and every one of them a number a reader would take for a
+ * probability.
+ *
+ * The rules and the wording follow the --initial check in
+ * initial_distribution.h: a negative entry or a non-positive (or non-finite)
+ * sum is a hard error, and a sum that is not 1 is renormalised out loud rather
+ * than silently, since renormalising without saying so hides a malformed
+ * command line.
+ */
+static void normalise_starting_probabilities(dvec &p, const char *name) {
+    if ((p.array() < 0).any()) {
+        throw std::runtime_error(
+            std::string(name) + " (-p) contain a negative entry; "
+            "every entry must be a probability.");
+    }
+    const double total = p.sum();
+    if (!std::isfinite(total) || total <= 0) {
+        throw std::runtime_error(
+            std::string(name) + " (-p) sum to " + num_str(total) +
+            "; they must contain positive probability.");
+    }
+    if (std::abs(total - 1.0) > 1e-9) {
+        std::cerr << "Warning: starting probabilities (-p) sum to " << num_str(total)
+                  << ", not 1; renormalising.\n";
+        p /= total;
+    }
+}
+
+/**
+ * One CSV row, built as (column name, formatted value) pairs.
+ *
+ * The --fixation branch used to emit a bare data row with the column order
+ * recorded only in a comment -- while absorption mode of the same binary does
+ * emit a header, so whether `wfes_switching --csv` had one depended on the
+ * model type. Writing that header as a separate list of literals is the other
+ * failure mode, since the two lists then drift apart, so the name and the value
+ * are added together here and both lines are printed from the same list.
+ *
+ * Values are formatted through a stream that copies std::cout's formatting
+ * state, so the numbers are exactly what a direct `std::cout << value` wrote.
+ */
+struct CsvRow {
+    std::vector<std::pair<std::string, std::string>> cols;
+
+    template <typename T>
+    void add(const std::string &name, const T &value) {
+        std::ostringstream os;
+        os.copyfmt(std::cout);
+        os << value;
+        cols.emplace_back(name, os.str());
+    }
+
+    template <typename V>
+    void add_per_model(const std::string &prefix, const V &values) {
+        for (llong i = 0; i < values.size(); i++) {
+            add(prefix + std::to_string(i), values(i));
+        }
+    }
+
+    void print() const {
+        for (size_t i = 0; i < cols.size(); i++) {
+            std::cout << (i ? "," : "") << cols[i].first;
+        }
+        std::cout << std::endl;
+        for (size_t i = 0; i < cols.size(); i++) {
+            std::cout << (i ? "," : "") << cols[i].second;
+        }
+        std::cout << std::endl;
+    }
+};
+
 int main(int argc, char const *argv[]) {
     time_point t_start, t_end;
     
@@ -235,6 +357,41 @@ int main(int argc, char const *argv[]) {
         // once the vectors exist and their lengths agree.
         CLI::Args_Parser::validate_model_domain_vectors(
             population_sizes, s, h, u, v, options.alpha);
+
+        // -p is a probability distribution over the models, not a free weight.
+        // Done before the echo below and before any use, so what is printed and
+        // recorded is what the run actually integrates with.
+        normalise_starting_probabilities(p, "Starting probabilities");
+
+        // -c (--integration-cutoff) drops starting COPY NUMBERS whose
+        // probability under the mutation-injection distribution p0 falls below
+        // it. --fixation has no such integration: FIXATION_ONLY keeps allele
+        // count 0 transient and each model contributes exactly that one
+        // starting state, weighted by -p. The flag was consequently read only
+        // in the absorption branch, and --fixation accepted every value of -c
+        // and produced byte-identical output for -c 1e-10, -c 0.9 and -c 1.
+        //
+        // Silently ignoring a parameter the user set deliberately is not an
+        // option for a tool whose numbers go into papers, and there is no
+        // honest way to honour it here -- p0 is degenerate in this mode, so a
+        // cutoff could only ever mean "keep the one state" or "keep none". So
+        // refuse. The parser collapses "not supplied" and "supplied as the
+        // default 1e-10" into one value (CommandLineOptions has no
+        // was-it-supplied flag), so a -c equal to the default is accepted as
+        // the no-op it is; any other value is refused.
+        if (options.model_type == CLI::ModelType::FIXATION &&
+            options.integration_cutoff != 1e-10) {
+            throw std::runtime_error(
+                "--integration-cutoff (-c) is not applicable to --fixation: "
+                "that model has no distribution over starting copy numbers to "
+                "integrate over or to truncate. Each of the " +
+                std::to_string(n_models) + " models contributes a single "
+                "starting state (allele count 0) weighted by -p, and --initial "
+                "supplies one distribution that is used whole. The value given "
+                "(" + num_str(options.integration_cutoff) + ") would have had "
+                "no effect on the result. Use --absorption to integrate over "
+                "starting copy numbers, or drop -c");
+        }
 
         // In --fixation there is only one absorbing state, so there is no
         // extinction to condition on and these two outputs do not exist. They
@@ -352,8 +509,21 @@ int main(int argc, char const *argv[]) {
                 }
             }
             
-            // Calculate fixation time and rate
+            // Calculate fixation time and rate.
+            //
+            // The reciprocal was taken unguarded, so a zeroed N (which -p 0,0
+            // used to produce) gave T_fix = 0 and printed "rate": inf into a
+            // JSON document -- unparseable, and no more meaningful in the CSV
+            // and text branches. A non-positive or non-finite expected time is
+            // a failed computation, not a result to report.
             double T_fix = N.sum();
+            if (!std::isfinite(T_fix) || T_fix <= 0) {
+                throw std::runtime_error(
+                    "Expected time to fixation came out as " + num_str(T_fix) +
+                    ", so the fixation rate 1/T_fix is not defined. This "
+                    "computation did not produce a usable result; check -N, -p "
+                    "and -r");
+            }
             double rate = 1.0 / T_fix;
             
             // Calculate B matrix if needed
@@ -378,28 +548,41 @@ int main(int argc, char const *argv[]) {
             // does emit JSON. Any caller requesting JSON (the GUI included) got
             // unparseable text back.
             if (options.json_output) {
+                // The parameters block records what the run used, so that a
+                // JSON result is self-describing. It used to carry only N, s, h
+                // and alpha -- while -p scales T_fix directly (T_fix doubles
+                // between no -p and -p 1,1) and u and v set the mutation
+                // pressure the whole fixation-only model runs on. Two runs that
+                // differed in any of those were indistinguishable from their
+                // recorded parameters. p is the NORMALISED vector, i.e. the one
+                // the integration actually weighted with.
+                auto json_vec = [&](const char *name, const auto &vals) {
+                    std::cout << "    \"" << name << "\": [";
+                    for (llong i = 0; i < n_models; i++) {
+                        std::cout << vals(i);
+                        if (i < n_models - 1) std::cout << ", ";
+                    }
+                    std::cout << "]," << std::endl;
+                };
                 std::cout << "{" << std::endl;
                 std::cout << "  \"model\": \"switching_fixation\"," << std::endl;
                 std::cout << "  \"parameters\": {" << std::endl;
                 std::cout << "    \"n_models\": " << n_models << "," << std::endl;
-                std::cout << "    \"population_sizes\": [";
-                for (llong i = 0; i < n_models; i++) {
-                    std::cout << population_sizes(i);
-                    if (i < n_models - 1) std::cout << ", ";
+                json_vec("population_sizes", population_sizes);
+                json_vec("selection_coefficients", s);
+                json_vec("dominance_coefficients", h);
+                json_vec("backward_mutation_rates", u);
+                json_vec("forward_mutation_rates", v);
+                // --initial replaces the per-model starting states and their -p
+                // weights with one supplied distribution, so exactly one of the
+                // two is what the run started from.
+                if (options.initial_distribution_path.empty()) {
+                    json_vec("starting_probabilities", p);
+                } else {
+                    std::cout << "    \"initial_distribution\": \""
+                              << json_escape(options.initial_distribution_path)
+                              << "\"," << std::endl;
                 }
-                std::cout << "]," << std::endl;
-                std::cout << "    \"selection_coefficients\": [";
-                for (llong i = 0; i < n_models; i++) {
-                    std::cout << s(i);
-                    if (i < n_models - 1) std::cout << ", ";
-                }
-                std::cout << "]," << std::endl;
-                std::cout << "    \"dominance_coefficients\": [";
-                for (llong i = 0; i < n_models; i++) {
-                    std::cout << h(i);
-                    if (i < n_models - 1) std::cout << ", ";
-                }
-                std::cout << "]," << std::endl;
                 std::cout << "    \"alpha\": " << options.alpha << std::endl;
                 std::cout << "  }," << std::endl;
                 std::cout << "  \"results\": {" << std::endl;
@@ -408,40 +591,23 @@ int main(int argc, char const *argv[]) {
                 std::cout << "  }" << std::endl;
                 std::cout << "}" << std::endl;
             } else if (options.csv_output) {
-                // CSV format: N1,N2,s1,s2,h1,h2,u1,u2,v1,v2,p1,p2,a,T_fix,rate
-                for (llong i = 0; i < n_models; i++) {
-                    std::cout << population_sizes(i);
-                    if (i < n_models - 1) std::cout << ",";
-                }
-                std::cout << ",";
-                for (llong i = 0; i < n_models; i++) {
-                    std::cout << s(i);
-                    if (i < n_models - 1) std::cout << ",";
-                }
-                std::cout << ",";
-                for (llong i = 0; i < n_models; i++) {
-                    std::cout << h(i);
-                    if (i < n_models - 1) std::cout << ",";
-                }
-                std::cout << ",";
-                for (llong i = 0; i < n_models; i++) {
-                    std::cout << u(i);
-                    if (i < n_models - 1) std::cout << ",";
-                }
-                std::cout << ",";
-                for (llong i = 0; i < n_models; i++) {
-                    std::cout << v(i);
-                    if (i < n_models - 1) std::cout << ",";
-                }
-                std::cout << ",";
-                for (llong i = 0; i < n_models; i++) {
-                    std::cout << p(i);
-                    if (i < n_models - 1) std::cout << ",";
-                }
-                std::cout << ",";
-                std::cout << options.alpha << ",";
-                std::cout << T_fix << ",";
-                std::cout << rate << std::endl;
+                // Header plus one data row, both from the same column list.
+                // This branch used to emit the bare data row: the column order
+                // lived in a comment, so the output was self-describing only if
+                // you had the source open -- and absorption mode of the same
+                // binary does print a header, so whether `--csv` had one
+                // depended on the model type.
+                CsvRow row;
+                row.add_per_model("N", population_sizes);
+                row.add_per_model("s", s);
+                row.add_per_model("h", h);
+                row.add_per_model("u", u);
+                row.add_per_model("v", v);
+                row.add_per_model("p", p);
+                row.add("a", options.alpha);
+                row.add("T_fix", T_fix);
+                row.add("rate", rate);
+                row.print();
             } else {
                 std::cout << "T_fix = " << std::setprecision(10) << T_fix << std::endl;
                 std::cout << "Rate = " << std::setprecision(10) << rate << std::endl;
@@ -539,6 +705,18 @@ int main(int argc, char const *argv[]) {
                         start_weights.emplace_back(start_state_index(i_) + o_,
                                                    p0[i_](o_) * p(i_));
                     }
+                }
+                // The --initial branch above already refuses an empty
+                // integration; this branch did not, and every accumulator below
+                // is zero-initialised, so `-c 1` printed a full set of zeroed
+                // results (P_ext = P_fix = T_ext = T_fix = 0) and exited 0. That
+                // is a placeholder presented as an answer.
+                if (start_weights.empty()) {
+                    throw std::runtime_error(
+                        "No starting state is above the integration cutoff "
+                        "(-c = " + num_str(options.integration_cutoff) +
+                        "); lower -c so the starting distribution has mass to "
+                        "integrate over.");
                 }
             }
 
