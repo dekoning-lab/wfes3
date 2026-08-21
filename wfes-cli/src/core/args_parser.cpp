@@ -603,6 +603,9 @@ CommandLineOptions Args_Parser::parse_wfes_sequential_args(int argc, char const 
     try {
         parser.ParseCLI(argc, argv);
     } catch (args::Help&) {
+        if (!structured_output) {
+            wfes::banner::displayBanner("wfes_sequential");
+        }
         // An explicit --help is a successful invocation: print the usage to
         // STDOUT and exit 0. This used to write to stderr and exit 1, which
         // makes `wfes_single --help` look like a crash to anything that checks
@@ -613,9 +616,20 @@ CommandLineOptions Args_Parser::parse_wfes_sequential_args(int argc, char const 
         std::cout << parser;
         exit(EXIT_SUCCESS);
     } catch (args::Error& e) {
+        if (!structured_output) {
+            wfes::banner::displayBanner("wfes_sequential");
+        }
         std::cerr << e.what() << std::endl;
         std::cerr << parser;
         exit(EXIT_FAILURE);
+    }
+
+    // Display banner for successful parsing (unless structured output is
+    // requested). wfes_sequential was the one tool of the eleven whose parse
+    // function never called this, so it identified itself nowhere in its
+    // output -- the plain-text run began straight at "N = [...]".
+    if (!structured_output) {
+        wfes::banner::displayBanner("wfes_sequential");
     }
 
     CommandLineOptions options;
