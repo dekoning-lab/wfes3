@@ -71,7 +71,7 @@ async function runElevated(script: string): Promise<void> {
   const escaped = script.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
   await execFileAsync('/usr/bin/osascript', [
     '-e',
-    `do shell script "${escaped}" with prompt "WFES3 needs permission to install its command-line programs in ${INSTALL_DIR}." with administrator privileges`
+    `do shell script "${escaped}" with prompt "WFES3 needs permission to install its command-line programs." with administrator privileges`
   ])
 }
 

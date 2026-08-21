@@ -90,12 +90,10 @@ async function offerCliInstallOnFirstRun(parent: BrowserWindow): Promise<void> {
     buttons: ['Install', 'Not Now'],
     defaultId: 0,
     cancelId: 1,
-    message: 'Install the WFES3 command-line programs?',
+    message: 'Install the command-line programs?',
     detail:
-      `The eleven programs this application runs can also be used directly from a terminal. ` +
-      `Installing them links them into ${current.installDir}, which is already on your PATH, ` +
-      `so you can run wfes_single and the others by name.\n\n` +
-      `You can do this later from the Tools menu. Administrator permission may be required.`
+      'The eleven WFES3 programs can also be run from a terminal. ' +
+      'You can do this later from the Tools menu.'
   })
 
   // Record the offer whichever way it goes, so declining is respected.
@@ -111,17 +109,13 @@ async function installCliTools(parent: BrowserWindow): Promise<void> {
     await dialog.showMessageBox(parent, {
       type: 'info',
       message: 'Command-line programs installed.',
-      detail:
-        `${result.installed.length} programs are linked into ${result.installDir}.\n\n` +
-        `Open a new terminal and try:\n    wfes_single --help\n\n` +
-        `The links point into the application, so moving or deleting WFES3 will ` +
-        `break them. Use Tools > Remove Command-Line Programs to undo this.`
+      detail: 'Open a new terminal and run wfes_single --help to get started.'
     })
   } else {
     await dialog.showMessageBox(parent, {
       type: 'error',
       message: 'The command-line programs could not be installed.',
-      detail: `${result.error ?? 'Unknown error.'}\n\nThey remain available inside the application.`
+      detail: result.error ?? 'Unknown error.'
     })
   }
 }
@@ -132,7 +126,7 @@ async function uninstallCliTools(parent: BrowserWindow): Promise<void> {
     await dialog.showMessageBox(parent, {
       type: 'info',
       message: 'Nothing to remove.',
-      detail: `No programs in ${before.installDir} point to this copy of WFES3.`
+      detail: 'The command-line programs are not installed.'
     })
     return
   }
@@ -144,7 +138,7 @@ async function uninstallCliTools(parent: BrowserWindow): Promise<void> {
     type: result.ok ? 'info' : 'error',
     message: result.ok ? 'Command-line programs removed.' : 'They could not all be removed.',
     detail: result.ok
-      ? `The links in ${result.installDir} are gone. The programs are still inside the application.`
+      ? 'They are still available inside the application.'
       : (result.error ?? 'Unknown error.')
   })
 }
