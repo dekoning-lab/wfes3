@@ -204,8 +204,13 @@ int main(int argc, char const *argv[]) {
                    "precision beyond order " << last_finite;
             if (last_finite >= 1) {
                 msg << " (moment " << last_finite << " = " << moment(last_finite) << ")";
+                msg << ". Rerun with -k " << last_finite << " or smaller.";
+            } else {
+                // last_finite == 0: even the first moment overflows, so there
+                // is no smaller-but-still-positive -k to suggest (-k must be
+                // >= 1; the parser rejects -k 0 outright).
+                msg << ". This model has no representable moments in double precision.";
             }
-            msg << ". Rerun with -k " << last_finite << " or smaller.";
             throw std::runtime_error(msg.str());
         }
         if (!std::isfinite(mean) || !std::isfinite(std_dev)) {

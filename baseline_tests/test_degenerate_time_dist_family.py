@@ -274,13 +274,11 @@ def test_phase_type_moments_safe_k():
     # past the end of the moment matrix.
     proc = run("phase_type_moments", ["-N", "10", "-k", "1", "--json"])
     label = "ptm -N 10 -k 1"
-    check(f"{label}: does not crash", proc.returncode in (0, 1),
-          f"exit={proc.returncode}")
-    if proc.returncode == 0:
-        d = assert_clean_json(label, proc)
-        if d:
-            check(f"{label}: 1 moment returned",
-                  len(d["results"]["raw_moments"]) == 1)
+    check(f"{label}: exit 0", proc.returncode == 0, f"exit={proc.returncode}")
+    d = assert_clean_json(label, proc)
+    if d:
+        check(f"{label}: 1 moment returned",
+              len(d["results"]["raw_moments"]) == 1)
 
 
 def test_sgv_rejects_unwired_recurrent_mutation_flag():
