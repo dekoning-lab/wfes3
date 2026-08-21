@@ -24,17 +24,15 @@ import {
   useMantineTheme
 } from '@mantine/core'
 import { IconChartLine, IconCopy, IconPlus, IconX, IconArrowRight, IconPlayerPlay } from '@tabler/icons-react'
-import { 
+import {
   WfesViewLayout,
   WfesParameterInput,
   WfesResultsTable,
-  WfesExecutionPanel,
   WfesExportButtons,
   validateScientificNotation,
   validatePositiveInteger,
   validateProbability,
-  generateFilename,
-  exportToCSV
+  generateFilename
 } from '../components/shared'
 import { WfesSequentialParams, WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
@@ -110,17 +108,19 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
   // Output options
   // Standard keys consumed by buildWfesSequentialArgs. The previous keys
   // (writeEpochTimes / writeTrajectories / writeFinalFrequencies) matched no
-  // CLI flag and nothing in the builder.
+  // CLI flag and nothing in the builder. No writeRes: no WFES binary has a
+  // results-summary flag, and its old default of true made the options badge
+  // read "1" on a fresh view.
   const [outputOptions, setOutputOptions] = useState({
     writeQ: false, writeR: false, writeN: false, writeB: false,
-    writeNExt: false, writeNFix: false, writeRes: true
+    writeNExt: false, writeNFix: false
   })
   
   // Execution options
   const [executionOptions, setExecutionOptions] = useState({
     force: false,
     threads: navigator.hardwareConcurrency || 4,
-    library: 'Accelerate' as const
+    library: 'Accelerate' as 'Accelerate' | 'Pardiso' | 'SuiteSparse' | 'ParU'
   })
   
   // Results state
@@ -265,9 +265,18 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
     initialMode === 'integrate' ? 1e-10 : undefined
 
   const handleExecute = async () => {
+    // Fixed-p mode needs a usable count BEFORE anything is sent: with a blank
+    // or non-numeric p, startingCopiesArg() returns undefined, so the run
+    // would carry neither --starting-copies nor -c -- and the CLI then
+    // silently integrates over starting copies while the UI says "Fixed p".
+    // A red border on the field is a hint, not a gate; this is the gate.
+    if (initialMode === 'fixed' && !validatePositiveInteger(startingCopies)) {
+      setError('Fixed p needs a positive whole number of starting copies. Enter one, or switch the initial state to "Integrate over p".')
+      return
+    }
     setIsExecuting(true)
     clearResults()
-    
+
     try {
       // Prepare parameters for wfes_sequential
       const populationSizes: number[] = []
@@ -504,8 +513,9 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
     navigator.clipboard.writeText(command)
   }
   
-  // Count active output options for badge
-  const activeOutputOptions = Object.values(outputOptions).filter(Boolean).length + 
+  // Count active output options for badge. Only real checkbox states count:
+  // the drawer also stores the outputDirectory string in this object.
+  const activeOutputOptions = Object.values(outputOptions).filter(v => v === true).length +
     (executionOptions.force ? 1 : 0)
   
   // Cmd+Enter (Ctrl+Enter off macOS) fires Execute / Re-execute.
@@ -888,8 +898,11 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
         {initialMode === 'fixed' && (
           <WfesParameterInput
             type="text"
-            label="Starting copies (p)"
-            description="Initial number of copies of the allele in Epoch 1; NOT a sample size"
+            // Not "(p)": on wfes_sequential this field is the long-only
+            // --starting-copies flag, while -p is the SEPARATE starting
+            // probability vector over epochs. The old label equated the two.
+            label="Starting copies"
+            description="Initial number of copies of the allele in Epoch 1 (--starting-copies); NOT a sample size"
             value={startingCopies}
             onChange={setStartingCopies}
             error={!validatePositiveInteger(startingCopies)}

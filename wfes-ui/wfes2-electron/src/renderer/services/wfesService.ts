@@ -30,13 +30,13 @@ export interface WfesSingleParams {
     writeI: boolean
     writeE: boolean
     writeV: boolean
-    writeRes: boolean
+    /** Destination folder for the files above; Downloads when unset. */
+    outputDirectory?: string
   }
   executionOptions: {
     force: boolean
     threads: number
     library: string
-    solver?: string
     initialDistFile?: string
   }
 }

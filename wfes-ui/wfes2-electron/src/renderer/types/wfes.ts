@@ -15,16 +15,23 @@ export interface WfesBaseParams {
 }
 
 /**
- * Execution options for WFES computations
+ * Execution options for WFES computations.
+ *
+ * No `solver`: no WFES binary declares a --solver flag (passing one is a
+ * fatal parse error), so a solver value is state no control can deliver.
  */
 export interface WfesExecutionOptions {
   threads: number
-  library: 'Accelerate' | 'ViennaCL' | 'Pardiso'
+  library: 'Accelerate' | 'Pardiso' | 'SuiteSparse' | 'ParU'
   force: boolean
-  solver?: string
   initialDistFile?: string
 }
 
+/**
+ * The write-checkbox states, one per CLI --output-* flag. Each view offers
+ * only the subset its binary declares (see WfesOptionsDrawer.outputFlags).
+ * There is no writeRes: no WFES binary has a results-summary output flag.
+ */
 export interface WfesOutputOptions {
   /** Destination folder for the matrix/vector files the write* flags request. */
   outputDirectory?: string
@@ -34,7 +41,8 @@ export interface WfesOutputOptions {
   writeN?: boolean
   writeNExt?: boolean
   writeNFix?: boolean
-  writeRes?: boolean
+  /** --output-P: the computed distribution (phase_type_dist, time_dist family). */
+  writeP?: boolean
 }
 
 /**
@@ -110,7 +118,6 @@ export interface PhaseTypeParams {
   dominanceCoefficient: number
   mutationRateForward: number
   mutationRateBackward: number
-  samplingFrequency?: number
 }
 
 export interface TimeDistParams extends WfesBaseParams {

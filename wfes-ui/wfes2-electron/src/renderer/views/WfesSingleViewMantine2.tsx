@@ -149,7 +149,9 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   const [ageMoments, setAgeMoments] = useState('2')
   const [oddsRatio, setOddsRatio] = useState('1.0')  // for establishment mode
 
-  // Output options
+  // Output options. No writeRes: no WFES binary declares a results-summary
+  // flag, so the "Write Res" checkbox that used to sit in this view's drawer
+  // could never produce a file.
   const [writeQ, setWriteQ] = useState(false)
   const [writeR, setWriteR] = useState(false)
   const [writeB, setWriteB] = useState(false)
@@ -159,7 +161,8 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   const [writeI, setWriteI] = useState(false)
   const [writeE, setWriteE] = useState(false)
   const [writeV, setWriteV] = useState(false)
-  const [writeRes, setWriteRes] = useState(false)
+  // Destination folder for the files above; Downloads when unset.
+  const [outputDirectory, setOutputDirectory] = useState('')
 
   // --output-E is written only inside the CLI's --equilibrium branch and
   // --output-V only inside its --fundamental branch; in any other mode the
@@ -173,11 +176,11 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   const emitE = writeE && canWriteE
   const emitV = writeV && canWriteV
 
-  // Execution options
+  // Execution options. No solver state: no WFES binary declares --solver,
+  // and the Select that once chose one is long gone.
   const [force, setForce] = useState(false)
   const [threads, setThreads] = useState(getCpuCount().toString())
-  const [library, setLibrary] = useState<'Accelerate' | 'ViennaCL'>('Accelerate')
-  const [solver, setSolver] = useState<'direct' | 'BicGStab' | 'GMRES'>('BicGStab')
+  const [library, setLibrary] = useState<'Accelerate' | 'ParU'>('Accelerate')
   const [initialDistribution, setInitialDistribution] = useState('')
   // Which of the three mutually exclusive initial-state specifications is in
   // use. Single source of truth: the command builder, the execute-time param
@@ -279,13 +282,14 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
         outputOptions: {
           writeQ, writeR, writeB, writeN, writeNExt, writeNFix,
           writeI, writeE: emitE, writeV: emitV,
-          writeRes
+          // Where the requested files are written (outputPath in the main
+          // process reads this; Downloads when empty).
+          outputDirectory: outputDirectory || undefined
         },
         executionOptions: {
           force,
           threads: parseInt(threads),
           library,
-          solver: library === 'ViennaCL' ? solver : undefined,
           // --fundamental refuses --initial: sojourn times are conditioned on a
           // starting state, not averaged over a distribution of them.
           initialDistFile: modelType !== 'fundamental' && initialMode === 'file'
@@ -394,7 +398,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     parts.push(`--library ${library}`)
     if (initialMode === 'file' && initialDistribution) parts.push(`--initial ${initialDistribution}`)
     if (force) parts.push('--force')
-    const dir = '~/Downloads'
+    const dir = outputDirectory || '~/Downloads'
     if (writeQ) parts.push(`--output-Q ${dir}/wfes_single_Q.mtx`)
     if (writeR) parts.push(`--output-R ${dir}/wfes_single_R.csv`)
     if (writeB) parts.push(`--output-B ${dir}/wfes_single_B.csv`)
@@ -429,7 +433,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   }
 
   // Count active output options
-  const activeOutputOptions = [writeQ, writeR, writeB, writeN, writeNExt, writeNFix, writeI, emitE, emitV, writeRes].filter(Boolean).length
+  const activeOutputOptions = [writeQ, writeR, writeB, writeN, writeNExt, writeNFix, writeI, emitE, emitV].filter(Boolean).length
 
   /**
    * The quantities this mode reports, in display order.
@@ -884,7 +888,10 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                         : 'Starting number of copies'}
                       value={startingCopies}
                       onChange={(value) => setStartingCopies(value?.toString() || '')}
-                      disabled={initialMode === 'integrate' || !(modelType === 'absorption' || modelType === 'fixation' || modelType === 'establishment' || modelType === 'alleleAge')}
+                      // Editable only in the mode that reads it ('fixed'): in
+                      // file mode too the run sends no --starting-copies, so an
+                      // enabled field there would edit a number the run ignores.
+                      disabled={initialMode !== 'fixed' || !(modelType === 'absorption' || modelType === 'fixation' || modelType === 'establishment' || modelType === 'alleleAge')}
                       min={modelType === 'fixation' ? 0 : 1}
                       max={populationSize ? parseInt(populationSize) * 2 - 1 : undefined}
                       error={startingCopies !== '' && !validateStartingCopies()}
@@ -1194,15 +1201,30 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                   {!canWriteV && ' \u2014 requires the Fundamental model'}
                 </Text>
               </div>
+              {/* No "Write Res" here any more: wfes_single (like every WFES
+                  binary) declares no results-summary flag, so that checkbox
+                  could never produce a file. */}
+              <Divider my="xs" />
               <div>
-                <Checkbox 
-                  label="Write Res" 
-                  checked={writeRes} 
-                  onChange={(e) => setWriteRes(e.currentTarget.checked)} 
-                />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Full results summary file
+                <Text size="sm" fw={500}>Output folder</Text>
+                <Text size="xs" c="dimmed" mb={6}>
+                  Where the files selected above are written. Defaults to Downloads.
                 </Text>
+                <Group gap="xs" align="center">
+                  <Text size="xs" style={{ flex: 1, wordBreak: 'break-all' }}>
+                    {outputDirectory || '(Downloads)'}
+                  </Text>
+                  <Button
+                    size="xs"
+                    variant="default"
+                    onClick={async () => {
+                      const dir = await (window as any).api.dialog.selectDirectory()
+                      if (dir) setOutputDirectory(dir)
+                    }}
+                  >
+                    Choose...
+                  </Button>
+                </Group>
               </div>
             </Stack>
           </Paper>
@@ -1227,7 +1249,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
               <Select
                 label="Library"
                 value={library}
-                onChange={(value) => setLibrary(value as 'Accelerate' | 'ViennaCL')}
+                onChange={(value) => setLibrary(value as 'Accelerate' | 'ParU')}
                 data={[
                   // Only backends compiled into the shipped binaries: ViennaCL
                   // needs OpenCL support that is not built, and Pardiso is

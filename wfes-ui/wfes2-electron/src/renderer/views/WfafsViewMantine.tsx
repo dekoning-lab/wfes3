@@ -30,8 +30,7 @@ import {
   validateScientificNotation,
   validatePositiveInteger,
   validateProbability,
-  generateFilename,
-  exportToCSV
+  generateFilename
 } from '../components/shared'
 import { WfafsParams, WfesResultItem } from '../types/wfes'
 import { Math as MathTeX, SolverWarnings } from '../components/shared'
@@ -93,21 +92,25 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
     noProj: false
   })
   
-  // Output options
+  // Output options -- exactly the flags wfafs_stochastic can honour.
+  // --output-Q/-N/-B work; --output-R and --output-N-ext/-fix/-tmo REFUSE at
+  // runtime (the chain is non-absorbing, so those quantities do not exist)
+  // and are not offered. The writeRes key that used to sit here matched no
+  // CLI flag, and its default of true made the options badge read "1" on a
+  // fresh view.
   const [outputOptions, setOutputOptions] = useState({
     writeQ: false,
     writeN: false,
-    writeB: false,
-    writeRes: true  // Results/distribution
+    writeB: false
   })
-  
-  // Execution options
+
+  // Execution options. No `solver` (no WFES binary declares --solver) and no
+  // second file-path field: the initial distribution is chosen through the
+  // Initial state selector below, the one path the run actually reads.
   const [executionOptions, setExecutionOptions] = useState({
     force: false,
     threads: navigator.hardwareConcurrency || 4,
-    library: 'Accelerate' as const,
-    solver: 'gmres' as const,
-    initialDistribution: ''
+    library: 'Accelerate' as 'Accelerate' | 'Pardiso' | 'SuiteSparse' | 'ParU'
   })
   
   // Results state
@@ -153,20 +156,6 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
   }
   
   // Handle population scaling toggle
-  const handleFileSelect = async () => {
-    try {
-      const result = await window.api.dialog.showOpenDialog({
-        filters: [{ name: 'CSV files', extensions: ['csv'] }],
-        properties: ['openFile']
-      })
-      if (!result.canceled && result.filePaths.length > 0) {
-        setExecutionOptions({ ...executionOptions, initialDistribution: result.filePaths[0] })
-      }
-    } catch (error) {
-      console.error('Error selecting file:', error)
-    }
-  }
-
   const handlePopulationScaledToggle = (checked: boolean) => {
     const updatedComponents = components.map(comp => {
       const N = parseFloat(comp.N) || 1000
@@ -243,12 +232,10 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
           p: initialMode === 'fixed' ? commonParams.p : undefined
         },
         integrationCutoff: initialMode === 'integrate' ? integrationCutoff : undefined,
-        outputOptions: {
-          Q: outputOptions.writeQ,
-          N: outputOptions.writeN,
-          B: outputOptions.writeB,
-          Dist: outputOptions.writeRes
-        },
+        // The write* keys the builder reads, outputDirectory included. The
+        // {Q, N, B, Dist} renaming this replaces matched nothing on the other
+        // side, so every one of these checkboxes was inert.
+        output_options: outputOptions,
         executionParams: {
           ...executionOptions,
           // Reaches buildWfafsArgs as --initial.
@@ -383,13 +370,17 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
     if (initialMode === 'fixed') parts.push(`--initial-count ${commonParams.p}`)
     if (initialMode === 'integrate') parts.push(`--integration-cutoff ${integrationCutoff}`)
     if (commonParams.noProj) parts.push('--no-project')
-    if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
-    if (executionOptions.force) parts.push('--force')
-    const dir = '~/Downloads'
-    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/wfafs_Q.mtx`)
-    if (outputOptions.writeR) parts.push(`--output-R ${dir}/wfafs_R.csv`)
+    // Order below mirrors buildWfafsArgs exactly: threads and library, then
+    // the output flags (Q/N/B -- the three wfafs_stochastic can honour; it
+    // REFUSES --output-R at runtime), then --initial, --force, --json.
     parts.push(`--num-threads ${executionOptions.threads}`)
     parts.push(`--library ${executionOptions.library}`)
+    const dir = (outputOptions as any).outputDirectory || '~/Downloads'
+    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/wfafs_Q.mtx`)
+    if (outputOptions.writeN) parts.push(`--output-N ${dir}/wfafs_N.csv`)
+    if (outputOptions.writeB) parts.push(`--output-B ${dir}/wfafs_B.csv`)
+    if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
+    if (executionOptions.force) parts.push('--force')
     parts.push('--json')
     return parts.join(' ')
   }
@@ -399,8 +390,9 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
     navigator.clipboard.writeText(command)
   }
   
-  // Count active output options for badge
-  const activeOutputOptions = Object.values(outputOptions).filter(Boolean).length + 
+  // Count active output options for badge. Only real checkbox states count:
+  // the drawer also stores the outputDirectory string in this object.
+  const activeOutputOptions = Object.values(outputOptions).filter(v => v === true).length +
     (executionOptions.force ? 1 : 0)
   
   // Live state diagram: stochastic epoch chain with factor-scaling notes.
@@ -416,6 +408,17 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
       hideBackButton={hideBackButton}
       outputOptions={outputOptions}
       onOutputOptionsChange={setOutputOptions}
+      // Only the outputs wfafs_stochastic can honour. Its --output-R and
+      // --output-N-ext/-fix/-tmo refuse at runtime (non-absorbing chain), so
+      // offering them would be checkboxes that abort the run.
+      outputFlags={[
+        // Descriptions are the tool's own --help wording; this model is
+        // non-absorbing, so the absorbing-chain descriptions the shared
+        // defaults carry would be wrong here.
+        { key: 'writeQ', label: 'Write Q', description: 'Q matrix of the compound switching model (--output-Q)' },
+        { key: 'writeN', label: 'Write N', description: 'N matrix (--output-N)' },
+        { key: 'writeB', label: 'Write B', description: 'B vectors (--output-B)' }
+      ]}
       executionOptions={executionOptions}
       onExecutionOptionsChange={setExecutionOptions}
       activeOptionsCount={activeOutputOptions}
@@ -566,31 +569,12 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
         {/* Column 2: Results and Execution */}
         <Grid.Col span={6}>
           <Stack>
-            {/* Additional Execution Options */}
-            <Paper p="md" withBorder>
-              <Title order={6} mb="sm">Execution Options</Title>
-              <Stack gap="sm">
-                
-                <div>
-                  <WfesParameterInput
-                    type="text"
-                    label="Initial Distribution"
-                    description="Path to initial distribution file (CSV)"
-                    value={executionOptions.initialDistribution || ''}
-                    onChange={(value) => setExecutionOptions({ ...executionOptions, initialDistribution: value })}
-                  />
-                  <Button
-                    size="sm"
-                    mt="xs"
-                    fullWidth
-                    onClick={handleFileSelect}
-                  >
-                    Browse...
-                  </Button>
-                </div>
-              </Stack>
-            </Paper>
-            
+            {/* The "Initial Distribution" path field that used to sit here was
+                a second, dead way to name a file: it wrote a key
+                (initialDistribution) that no builder read, so a path typed or
+                browsed into it was silently ignored. The Initial state
+                selector below is the control the run reads. */}
+
             {/* Results */}
             <Paper p="md" withBorder style={{ minHeight: '400px' }}>
               <Group justify="space-between" mb="md">

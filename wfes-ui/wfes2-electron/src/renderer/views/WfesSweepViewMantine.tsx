@@ -20,12 +20,10 @@ import {
   useMantineTheme
 } from '@mantine/core'
 import { IconCopy, IconPlayerPlay, IconChartBar } from '@tabler/icons-react'
-import { 
+import {
   WfesViewLayout,
   WfesParameterInput,
   WfesResultsTable,
-  WfesExecutionPanel,
-  WfesExportButtons,
   validateScientificNotation,
   validatePositiveInteger,
   validateProbability
@@ -112,11 +110,13 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
     return 'Accelerate'
   }
   
+  // No `solver`: no WFES binary declares --solver, and the handler drops the
+  // key deliberately -- keeping a value here would be state no control can
+  // ever deliver.
   const [executionOptions, setExecutionOptions] = useState({
     force: false,
     threads: navigator.hardwareConcurrency || 4,
-    library: getDefaultLibrary() as 'Accelerate' | 'Pardiso' | 'ViennaCL',
-    solver: 'direct' as const
+    library: getDefaultLibrary() as 'Accelerate' | 'Pardiso' | 'SuiteSparse' | 'ParU'
   })
   
   // Results state
@@ -139,8 +139,19 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
   
   // Handle population scaling toggle
   const handlePopulationScaledToggle = (newValue: boolean) => {
-    const N = parseInt(populationSize) || 1000
-    
+    // The conversion divides or multiplies by the N on screen, and execute
+    // later divides the scaled values by the N on screen AT THAT TIME. Those
+    // two agree only if this conversion never fabricates an N: the old
+    // `parseInt(populationSize) || 1000` converted against 1000 when the N
+    // field was blank or invalid, so a later execute at the user's real N
+    // decoded values that were silently off by the ratio. Refuse instead.
+    if (!validatePositiveInteger(populationSize)) {
+      setError('Set a valid population size (N) before switching the scaled display.')
+      return
+    }
+    setError('')
+    const N = parseInt(populationSize)
+
     if (newValue && !populationScaled) {
       // Converting from raw to scaled values
       // u → 4Nu, v → 4Nv, s → 2Ns
@@ -228,7 +239,12 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
         alpha: numOrUndefined(alpha),
         lambda: numOrUndefined(lambda),
         integration_cutoff: numOrUndefined(integrationCutoff),
-        starting_copies: intOrUndefined(startingCopies),
+        // Only the "Fixed p" mode sends a starting count. This used to be
+        // sent unconditionally, so "Integrate over p" still passed
+        // --starting-copies and the CLI never integrated: the selector chose
+        // between two labels that ran the same model. Same pattern as the
+        // single view.
+        starting_copies: initialMode === 'fixed' ? intOrUndefined(startingCopies) : undefined,
         // Arrays for comma-separated CLI values
         selection_coefficients: [rawSelectionCoeff1, rawSelectionCoeff2],
         dominance: [parseFloat(comp1DominanceCoeff), parseFloat(comp2DominanceCoeff)],
@@ -238,12 +254,10 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
         n_threads: executionOptions.threads,
         force: executionOptions.force,
         library: executionOptions.library,
-        solver: executionOptions.library === 'ViennaCL' ? executionOptions.solver : undefined,
-        // Output options
-        output_Q: outputOptions.writeQ,
-        output_R: outputOptions.writeR,
-        output_N: outputOptions.writeN,
-        output_B: outputOptions.writeB
+        // Output options: the nested write* object the builder reads,
+        // outputDirectory included. The flat output_Q..output_B keys this
+        // replaced matched nothing on the other side of the IPC boundary.
+        output_options: outputOptions
       }
       
       const response = await wfesService.executeSweep(params)
@@ -325,17 +339,24 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
     parts.push(`--dominance ${parseFloat(comp1DominanceCoeff) || 0.5},${parseFloat(comp2DominanceCoeff) || 0.5}`)
     parts.push(`--backward-mu ${raw(comp1BackwardMutation, 4)},${raw(comp2BackwardMutation, 4)}`)
     parts.push(`--forward-mu ${raw(comp1ForwardMutation, 4)},${raw(comp2ForwardMutation, 4)}`)
-    parts.push(`--alpha ${parseFloat(alpha) || 1e-20}`)
+    parts.push(`--alpha ${numOrUndefined(alpha) ?? 1e-20}`)
     parts.push(`--num-threads ${executionOptions.threads}`)
-    parts.push(`--integration-cutoff ${parseFloat(integrationCutoff) || 1e-10}`)
-    if (startingCopies !== '') parts.push(`--starting-copies ${parseInt(startingCopies)}`)
+    parts.push(`--integration-cutoff ${numOrUndefined(integrationCutoff) ?? 1e-10}`)
+    // Same gate as the run: a starting count is a fixed-p concept, and the
+    // run drops it in the other two modes.
+    if (initialMode === 'fixed' && intOrUndefined(startingCopies) !== undefined) {
+      parts.push(`--starting-copies ${intOrUndefined(startingCopies)}`)
+    }
     if (executionOptions.force) parts.push('--force')
-    const dir = '~/Downloads'
+    // Flag order below mirrors buildWfesSweepArgs exactly (--library before
+    // the output flags); the preview used to print the outputs first, so it
+    // was never token-for-token the spawned command.
+    parts.push(`--library ${executionOptions.library}`)
+    const dir = (outputOptions as any).outputDirectory || '~/Downloads'
     if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/wfes_sweep_Q.mtx`)
     if (outputOptions.writeR) parts.push(`--output-R ${dir}/wfes_sweep_R.csv`)
     if (outputOptions.writeN) parts.push(`--output-N ${dir}/wfes_sweep_N.csv`)
     if (outputOptions.writeB) parts.push(`--output-B ${dir}/wfes_sweep_B.csv`)
-    parts.push(`--library ${executionOptions.library}`)
     if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
     parts.push('--json')
     return parts.join(' ')
@@ -346,8 +367,10 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
     navigator.clipboard.writeText(command)
   }
   
-  // Count active output options for badge
-  const activeOutputOptions = Object.values(outputOptions).filter(Boolean).length + 
+  // Count active output options for badge. Only real checkbox states count:
+  // the drawer also stores the outputDirectory string in this object, and a
+  // truthy path must not read as an "active option".
+  const activeOutputOptions = Object.values(outputOptions).filter(v => v === true).length +
     (executionOptions.force ? 1 : 0)
   
   // Cmd+Enter (Ctrl+Enter off macOS) fires Execute / Re-execute.
@@ -373,6 +396,14 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
       hideBackButton={hideBackButton}
       outputOptions={outputOptions}
       onOutputOptionsChange={setOutputOptions}
+      // The four matrix/vector outputs wfes_sweep declares. Not the shared
+      // default list: this binary has no --output-N-ext/-N-fix.
+      outputFlags={[
+        { key: 'writeQ', label: 'Write Q', description: 'Transient-to-transient transition probability sub-matrix' },
+        { key: 'writeR', label: 'Write R', description: 'Transient-to-absorbing transition probability sub-matrix' },
+        { key: 'writeN', label: 'Write N', description: 'Fundamental matrix: N = (I-Q)^(-1)' },
+        { key: 'writeB', label: 'Write B', description: 'Absorption (fixation) probability vector: B = NR' }
+      ]}
       executionOptions={executionOptions}
       onExecutionOptionsChange={setExecutionOptions}
       activeOptionsCount={activeOutputOptions}
@@ -423,6 +454,9 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
                   onChange={setLambda}
                   error={!validateProbability(lambda)}
                 />
+                {/* p and c follow the Initial state selector below: each is
+                    editable only in the mode that reads it, so a value typed
+                    here can never be silently ignored by the run. */}
                 <WfesParameterInput
                   type="scientific"
                   label="c"
@@ -431,6 +465,7 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
                   value={integrationCutoff}
                   onChange={setIntegrationCutoff}
                   error={!validateScientificNotation(integrationCutoff)}
+                  disabled={initialMode !== 'integrate'}
                 />
                 <WfesParameterInput
                   type="text"
@@ -439,6 +474,7 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
                   value={startingCopies}
                   onChange={setStartingCopies}
                   error={!validateStartingCopiesSweep(startingCopies)}
+                  disabled={initialMode !== 'fixed'}
                 />
               </Stack>
             </Paper>

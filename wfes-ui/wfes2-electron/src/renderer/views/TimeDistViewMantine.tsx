@@ -86,19 +86,21 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
   // No recurrent mutation checkbox
   const [noRecurrentMutation, setNoRecurrentMutation] = useState(false)
   
-  // Output options
+  // Output options -- one key per flag time_dist and time_dist_dual declare
+  // (--output-Q, --output-R, --output-P). The writeRes key that used to sit
+  // here matched no CLI flag, and its default of true made the options badge
+  // read "1" on a fresh view for an output that could never be written.
   const [outputOptions, setOutputOptions] = useState({
     writeQ: false,
     writeR: false,
-    writeP: false,
-    writeRes: true
+    writeP: false
   })
   
   // Execution options
   const [executionOptions, setExecutionOptions] = useState({
     force: false,
     threads: navigator.hardwareConcurrency || 4,
-    library: 'Accelerate' as const
+    library: 'Accelerate' as 'Accelerate' | 'Pardiso' | 'SuiteSparse' | 'ParU'
   })
   
   // Results state
@@ -396,11 +398,17 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
     // wfesBackendService. The previous version emitted flags that exist in no
     // WFES tool, so the "run the same analysis from the command line" promise
     // under the preview was unkeepable. Verified against the spawned command.
-    const parts = [mode === 'time-dist-dual' ? 'time_dist_dual' : 'time_dist']
+    // Flag order mirrors buildTimeDistArgs exactly: --initial first, the
+    // output flags after --library, --json last. No --force line: neither
+    // time_dist nor time_dist_dual declares the flag (it is a fatal parse
+    // error), so the preview used to promise a command that exits 1.
+    const toolName = mode === 'time-dist-dual' ? 'time_dist_dual' : 'time_dist'
+    const parts = [toolName]
     const N = parseInt(populationSize) || 1000
     const rawS = populationScaled ? (parseFloat(s) || 0) / (2 * N) : (parseFloat(s) || 0)
     const rawU = populationScaled ? (parseFloat(u) || 0) / (4 * N) : (parseFloat(u) || 0)
     const rawV = populationScaled ? (parseFloat(v) || 0) / (4 * N) : (parseFloat(v) || 0)
+    if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
     parts.push(`--pop-size ${N}`)
     parts.push(`--alpha ${a}`)
     parts.push(`--block-size ${l}`)
@@ -411,10 +419,12 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
     parts.push(`--backward-mu ${rawU}`)
     parts.push(`--forward-mu ${rawV}`)
     if (noRecurrentMutation) parts.push('--no-recurrent-mu')
-    if (executionOptions.force) parts.push('--force')
     parts.push(`--num-threads ${executionOptions.threads}`)
     parts.push(`--library ${executionOptions.library}`)
-    if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
+    const dir = (outputOptions as any).outputDirectory || '~/Downloads'
+    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/${toolName}_Q.mtx`)
+    if (outputOptions.writeR) parts.push(`--output-R ${dir}/${toolName}_R.csv`)
+    if (outputOptions.writeP) parts.push(`--output-P ${dir}/${toolName}_P.csv`)
     parts.push('--json')
     return parts.join(' ')
   }
@@ -424,9 +434,11 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
     navigator.clipboard.writeText(command)
   }
   
-  // Count active output options for badge
-  const activeOutputOptions = Object.values(outputOptions).filter(Boolean).length + 
-    (executionOptions.force ? 1 : 0)
+  // Count active output options for badge. Only real checkbox states count
+  // (the drawer stores the outputDirectory string in this object too), and
+  // Force is excluded: neither of this view's binaries declares --force, so
+  // the checkbox is disabled and can never reach a command line.
+  const activeOutputOptions = Object.values(outputOptions).filter(v => v === true).length
   
   // Cmd+Enter (Ctrl+Enter off macOS) fires Execute / Re-execute.
   useExecuteShortcut(handleExecute, isExecuting)
@@ -438,8 +450,15 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
       hideBackButton={hideBackButton}
       outputOptions={outputOptions}
       onOutputOptionsChange={setOutputOptions}
+      // The three flags time_dist and time_dist_dual declare.
+      outputFlags={[
+        { key: 'writeQ', label: 'Write Q', description: 'Transient-to-transient transition probability sub-matrix' },
+        { key: 'writeR', label: 'Write R', description: 'Transient-to-absorbing transition probability sub-matrix' },
+        { key: 'writeP', label: 'Write P', description: 'The computed time distribution as CSV (--output-P)' }
+      ]}
       executionOptions={executionOptions}
       onExecutionOptionsChange={setExecutionOptions}
+      forceDisabledReason="Not available: time_dist and time_dist_dual do not declare --force"
       activeOptionsCount={activeOutputOptions}
     >
       <style>{`

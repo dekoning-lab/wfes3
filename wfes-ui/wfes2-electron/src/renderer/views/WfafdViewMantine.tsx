@@ -32,8 +32,7 @@ import {
   validateScientificNotation,
   validatePositiveInteger,
   validateProbability,
-  generateFilename,
-  exportToCSV
+  generateFilename
 } from '../components/shared'
 import { WfafdParams, WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
@@ -103,22 +102,21 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
   const [startingCopies, setStartingCopies] = useState('1')
   const [integrationCutoff, setIntegrationCutoff] = useState('1e-10')
   
-  // Population size changes (optional)
-  
-  // Output options
-  const [outputOptions, setOutputOptions] = useState({
-    writeQ: false,
-    writeR: false,
-    writeN: false,
-    writeDist: true,
-    writeRes: true
-  })
-  
+  // No output options. wfafs_deterministic declares none of the --output-*
+  // matrix flags; its only file output is -o/--output-file, and that flag
+  // REDIRECTS the whole result stream into the file (stdout becomes empty
+  // and the file is the tab-separated spectrum, not JSON -- verified against
+  // the binary), so a GUI run that passed it would lose its own results.
+  // The five checkboxes that used to sit here (writeQ/writeR/writeN/
+  // writeDist/writeRes) were wired to nothing, and two defaulted true, so
+  // the options badge read "2" on a fresh view for outputs that could never
+  // be written. The results panel's export writes the spectrum to a file.
+
   // Execution options
   const [executionOptions, setExecutionOptions] = useState({
     force: false,
     threads: navigator.hardwareConcurrency || 4,
-    library: 'Accelerate' as const
+    library: 'Accelerate' as 'Accelerate' | 'Pardiso' | 'SuiteSparse' | 'ParU'
   })
   
   // Results state
@@ -193,15 +191,9 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
         integrationCutoff: initialMode === 'integrate' ? integrationCutoff : undefined,
         components,
         alpha,
-        outputOptions: {
-          writeQ: outputOptions.writeQ,
-          writeR: outputOptions.writeR,
-          writeN: outputOptions.writeN,
-          writeDist: outputOptions.writeDist,
-          writeRes: outputOptions.writeRes
-        },
         executionParams: {
-          force: executionOptions.force,
+          // No force: wfafs_deterministic does not declare --force, and the
+          // drawer disables the checkbox with that reason.
           threads: executionOptions.threads,
           library: executionOptions.library
         },
@@ -355,9 +347,10 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
     parts.push(`--backward-mu ${per('u', 4)}`)
     parts.push(`--forward-mu ${per('v', 4)}`)
     parts.push(`--alpha ${alpha}`)
+    // No --force line: wfafs_deterministic does not declare the flag, and
+    // the previewed command used to exit 1 when pasted into a terminal.
     parts.push(`--num-threads ${executionOptions.threads}`)
     parts.push(`--library ${executionOptions.library}`)
-    if (executionOptions.force) parts.push('--force')
     if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
     parts.push('--json')
     return parts.join(' ')
@@ -376,9 +369,8 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
   // fed: this tool reports nothing intermediate, so the view shows a spinner
   // for as long as the run takes and nothing that claims to measure it.
 
-  // Count active output options for badge
-  const activeOutputOptions = Object.values(outputOptions).filter(Boolean).length + 
-    (executionOptions.force ? 1 : 0)
+  // Badge: this tool has no write flags and no --force, so nothing counts.
+  const activeOutputOptions = 0
   
   // Live timeline: deterministic epochs derived exactly as the params builder
   // derives them from the size-change list.
@@ -391,10 +383,12 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
       title="Wright-Fisher Allele Frequency Distribution (WFAFD)"
       onBack={onBack}
       hideBackButton={hideBackButton}
-      outputOptions={outputOptions}
-      onOutputOptionsChange={setOutputOptions}
+      // No outputOptions: wfafs_deterministic has no side-output flags a GUI
+      // run can use (see the comment on the removed state above), so the
+      // drawer offers execution settings only.
       executionOptions={executionOptions}
       onExecutionOptionsChange={setExecutionOptions}
+      forceDisabledReason="Not available: wfafs_deterministic does not declare --force"
       activeOptionsCount={activeOutputOptions}
     >
       {/* Technical Details */}

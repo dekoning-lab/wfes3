@@ -424,14 +424,11 @@ function setupIpcHandlers(): void {
         // this changes no command line; it is forwarded because a handler that
         // drops what the view sends is how the two above went unnoticed.
         model_type: params.model_type,
-        // The write flags. Forwarding them does not yet emit --output-Q/R/N/B:
-        // the builder reads output_options.writeQ..writeB while the view sends
-        // these flat keys, a key-map mismatch left for the reconciliation task.
-        // The handler is now transparent, which that task needs.
-        output_Q: params.output_Q,
-        output_R: params.output_R,
-        output_N: params.output_N,
-        output_B: params.output_B
+        // The write flags, in the one nested shape every builder reads
+        // (output_options.writeQ..writeB, plus the outputDirectory the drawer
+        // stores there). The view used to send flat output_Q..output_B keys
+        // that nothing read, so the four Write checkboxes did nothing.
+        output_options: params.output_options
         // params.solver is deliberately NOT forwarded: no WFES binary declares
         // --solver (wfes_sweep_main.cpp lists no such flag, and passing one is
         // a fatal parse error), which is why the phase-type handler drops it
@@ -487,30 +484,26 @@ function setupIpcHandlers(): void {
         } : {}),
         selection_coefficient: parseFloat(params.selectionParams.s),
         dominance_coefficient: parseFloat(params.selectionParams.h),
+        // Recurrent mutation, moments mode. The builder reads
+        // noRecurrentMutation and emits --no-recurrent-mu; this handler used
+        // to forward the checkbox as `recurrent_mutation`, a key nothing
+        // read, so the control could not reach the argv. The polarity flips
+        // here: the checkbox says "recurrent mutation ON", the flag says
+        // "exclude it". Only an explicit false emits -- an absent r must not.
+        ...(params.mode === 'moments' && params.mutationParams.r === false ? {
+          noRecurrentMutation: true
+        } : {}),
         backward_mutation_rate: parseFloat(params.mutationParams.u),
         forward_mutation_rate: parseFloat(params.mutationParams.v),
-        // Recurrent mutation for moments mode
-        ...(params.mode === 'moments' ? {
-          recurrent_mutation: params.mutationParams.r
-        } : {}),
         force: params.executionParams.force,
         n_threads: parseInt(params.executionParams.threads) || 1,
         library: params.executionParams.library || 'Accelerate',
         // No solver is forwarded: no WFES binary declares --solver, and
         // passing one aborts the run at argument parsing.
-        // Output options
-        output_Q: params.outputOptions.Q,
-        output_R: params.outputOptions.R,
-        // Destination for the files the write flags request. Without this the
-        // arg builder's outputPath() had nothing to read and every file went
-        // to Downloads regardless of the folder chosen in the options drawer.
-        output_directory: params.outputOptions.outputDirectory,
-        ...(params.mode === 'dist' ? {
-          output_P: params.outputOptions.P
-        } : {}),
-        ...(params.mode === 'moments' ? {
-          output_Res: params.outputOptions.Res
-        } : {})
+        // Output options, in the one nested write* shape every builder reads.
+        // outputDirectory rides inside it, so outputPath() resolves the
+        // folder chosen in the options drawer.
+        output_options: params.outputOptions
       }
       
       // Execute using backend service
@@ -575,11 +568,19 @@ function setupIpcHandlers(): void {
         mutationParams: params.mutationParams,
         selectionParams: params.selectionParams,
         noRecurrentMutation: params.noRecurrentMutation,
-        outputOptions: params.outputOptions,
+        // The nested write* shape the builder reads (outputDirectory rides
+        // inside it). Forwarded under `outputOptions` until now -- a key the
+        // builder never read, which kept every write checkbox in this family
+        // inert.
+        output_options: params.outputOptions,
         executionParams: params.executionParams,
         // Pass through top-level execution params if they exist (for SGV compatibility)
         n_threads: params.n_threads,
-        library: params.library
+        library: params.library,
+        // --force is declared by time_dist_sgv only; the builder emits it in
+        // the sgv branch alone, so forwarding it here cannot reach the other
+        // two binaries.
+        force: params.force
       }
       
       // Execute using backend service

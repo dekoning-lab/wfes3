@@ -126,7 +126,12 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
   // Mutation parameters
   const [u, setU] = useState('0.001')
   const [v, setV] = useState('0.001')
-  const [r] = useState(true) // Recurrent mutation (always true for moments mode)
+  // Recurrent mutation, moments mode. phase_type_moments declares
+  // -m/--no-recurrent-mu, so this is a live choice: unticking it excludes
+  // recurrent mutation from the model. The checkbox used to be hardcoded
+  // true and disabled -- and the value it sent travelled under a key nothing
+  // read, so even the wiring behind the frozen control was dead.
+  const [r, setR] = useState(true)
   
   // Selection parameters
   const [s, setS] = useState('0')
@@ -134,18 +139,21 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
   
   // Output options - mode specific.
   //
-  // writeP defaults off. It used to default on while the flag it stood for was
-  // never emitted, so the badge counted an output that was never written; now
-  // that --output-P is wired up, defaulting it on would drop a CSV in the
-  // user's output folder on every run without them asking for one.
-  const [outputOptions, setOutputOptions] = useState<
-    WfesOutputOptions & { writeP?: boolean; writeMoments?: boolean }
-  >({
+  // Every key here names a real flag on the binary the current mode runs:
+  // writeQ/writeR exist on all three tools, writeP (--output-P) on
+  // phase_type_dist and time_dist_sgv, and writeN (--output-N, "Output
+  // moments to file") on phase_type_moments only. The writeMoments/writeRes
+  // keys that used to sit here matched no CLI flag and no builder key -- and
+  // writeMoments defaulted true, so the options badge read "1" on a fresh
+  // view for an output that was never written.
+  //
+  // writeP defaults off: defaulting it on would drop a CSV in the user's
+  // output folder on every run without them asking for one.
+  const [outputOptions, setOutputOptions] = useState<WfesOutputOptions & { writeP?: boolean }>({
     writeQ: false,
     writeR: false,
-    writeP: false, // Phase type distribution file (Dist mode only)
-    writeMoments: true, // Always true for Moments mode
-    writeRes: false // Results file (Moments mode only)
+    writeP: false, // Distribution file (dist and SGV modes only)
+    writeN: false  // Moments file (moments mode only)
   })
 
   // Execution options. No `solver`: no WFES binary declares --solver, and
@@ -153,7 +161,7 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
   const [executionOptions, setExecutionOptions] = useState({
     force: false,
     threads: navigator.hardwareConcurrency || 4,
-    library: 'Accelerate' as 'Accelerate' | 'Pardiso' | 'ViennaCL'
+    library: 'Accelerate' as 'Accelerate' | 'Pardiso' | 'SuiteSparse' | 'ParU'
   })
   
   // Results state
@@ -271,16 +279,19 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
       let result: any
       
       if (mode === 'phase-type-dist-sgv') {
-        // SGV mode uses time_dist_sgv with 2 components
+        // SGV mode uses time_dist_sgv with 2 components.
+        // Exact string conversion -- no toExponential(5). Rounding to six
+        // significant figures here was the value that actually shipped to
+        // the CLI, silently perturbing any parameter with more precision.
         const scaledComponents = components.map(comp => ({
-          u: populationScaled ? 
-            (parseFloat(comp.u) / (4 * N)).toExponential(5) : 
+          u: populationScaled ?
+            (parseFloat(comp.u) / (4 * N)).toString() :
             comp.u,
-          v: populationScaled ? 
-            (parseFloat(comp.v) / (4 * N)).toExponential(5) : 
+          v: populationScaled ?
+            (parseFloat(comp.v) / (4 * N)).toString() :
             comp.v,
-          s: populationScaled ? 
-            (parseFloat(comp.s) / (2 * N)).toExponential(5) : 
+          s: populationScaled ?
+            (parseFloat(comp.s) / (2 * N)).toString() :
             comp.s
         }))
         
@@ -301,14 +312,26 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
           })),
           populationParams: {
             a: a,
-            l: (1 / parseFloat(oneOverLambda)).toExponential(5),
+            l: (1 / parseFloat(oneOverLambda)).toString(),
             c: c,
             m: m,
             p: populationSize
           },
           // Pass execution parameters at top level for backend compatibility
           n_threads: parseInt(executionOptions.threads),
-          library: executionOptions.library
+          library: executionOptions.library,
+          // time_dist_sgv declares --force (unlike phase_type_dist), so the
+          // drawer's Force checkbox is live in this mode and forwarded here.
+          force: executionOptions.force,
+          // Write flags -- time_dist_sgv declares --output-Q/-R/-P, so the
+          // same checkboxes work in this mode; buildTimeDistArgs names the
+          // files time_dist_sgv_*.
+          outputOptions: {
+            writeQ: outputOptions.writeQ,
+            writeR: outputOptions.writeR,
+            writeP: outputOptions.writeP,
+            outputDirectory: outputOptions.outputDirectory
+          }
         }
         
         result = await wfesService.executeTimeDist(sgvParams)
@@ -363,34 +386,28 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
             ...(momentsOnly ? { k } : {})
           },
           mutationParams: {
-            u: populationScaled ? 
-              (parseFloat(u) / (4 * N)).toExponential(5) : 
+            // Exact string conversion -- no toExponential(5); see the SGV
+            // branch above for why rounding here corrupted what was run.
+            u: populationScaled ?
+              (parseFloat(u) / (4 * N)).toString() :
               u,
-            v: populationScaled ? 
-              (parseFloat(v) / (4 * N)).toExponential(5) : 
+            v: populationScaled ?
+              (parseFloat(v) / (4 * N)).toString() :
               v,
             ...(momentsOnly ? { r } : {})
           },
           selectionParams: {
-            s: populationScaled ? 
-              (parseFloat(s) / (2 * N)).toExponential(5) : 
+            s: populationScaled ?
+              (parseFloat(s) / (2 * N)).toString() :
               s,
             h
           },
-          outputOptions: {
-            Q: outputOptions.writeQ,
-            R: outputOptions.writeR,
-            // Where the files above are written. Rebuilding this object used
-            // to drop the folder the user chose in the options drawer.
-            outputDirectory: outputOptions.outputDirectory,
-            ...(!momentsOnly ? {
-              P: outputOptions.writeP
-            } : {}),
-            ...(momentsOnly ? {
-              Moments: true, // Always true for moments mode
-              Res: outputOptions.writeRes
-            } : {})
-          },
+          // The write* keys the builder reads, outputDirectory included.
+          // Passed whole: rebuilding this object under different key names
+          // (Q/R/P/Res) is what disconnected these checkboxes before.
+          // buildPhaseTypeArgs mode-gates writeP (dist only) and writeN
+          // (moments only) itself.
+          outputOptions,
           executionParams: executionOptions
         }
         
@@ -518,26 +535,34 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
     // Mirrors the actual run: view params -> IPC handler -> the arg builder in
     // wfesBackendService. Verified against the spawned command.
     const N = parseInt(populationSize) || 100
+    const dir = outputOptions.outputDirectory || '~/Downloads'
     if (mode === 'phase-type-dist-sgv') {
       // Routed through time_dist_sgv (see the SGV branch of handleExecute).
+      // Flag order mirrors buildTimeDistArgs: --initial first, outputs after
+      // --library, --json last.
       const parts = ['time_dist_sgv']
+      if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
       const comp = components.map(cp => ({
-        s: populationScaled ? ((parseFloat(cp.s) || 0) / (2 * N)).toExponential(5) : cp.s,
-        u: populationScaled ? ((parseFloat(cp.u) || 0) / (4 * N)).toExponential(5) : cp.u,
-        v: populationScaled ? ((parseFloat(cp.v) || 0) / (4 * N)).toExponential(5) : cp.v
+        s: populationScaled ? ((parseFloat(cp.s) || 0) / (2 * N)).toString() : cp.s,
+        u: populationScaled ? ((parseFloat(cp.u) || 0) / (4 * N)).toString() : cp.u,
+        v: populationScaled ? ((parseFloat(cp.v) || 0) / (4 * N)).toString() : cp.v
       }))
       parts.push(`--pop-size ${N}`)
       parts.push(`--selection ${comp.map(x => x.s).join(',')}`)
       parts.push(`--dominance 0.5,0.5`)
       parts.push(`--backward-mu ${comp.map(x => x.u).join(',')}`)
       parts.push(`--forward-mu ${comp.map(x => x.v).join(',')}`)
-      parts.push(`--lambda ${(1 / (parseFloat(oneOverLambda) || 1000)).toExponential(5)}`)
+      parts.push(`--lambda ${1 / (parseFloat(oneOverLambda) || 1000)}`)
       parts.push(`--alpha ${a}`)
       parts.push(`--distribution-cutoff ${c}`)
       parts.push(`--max-t ${m}`)
       parts.push(`--num-threads ${executionOptions.threads}`)
       parts.push(`--library ${executionOptions.library}`)
-      if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
+      // time_dist_sgv declares --force (the one tool in its family that does).
+      if (executionOptions.force) parts.push('--force')
+      if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/time_dist_sgv_Q.mtx`)
+      if (outputOptions.writeR) parts.push(`--output-R ${dir}/time_dist_sgv_R.csv`)
+      if (outputOptions.writeP) parts.push(`--output-P ${dir}/time_dist_sgv_P.csv`)
       parts.push('--json')
       return parts.join(' ')
     }
@@ -556,15 +581,18 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
     parts.push(`--dominance ${parseFloat(h) || 0.5}`)
     parts.push(`--backward-mu ${rawU}`)
     parts.push(`--forward-mu ${rawV}`)
+    // Excluding recurrent mutation is a real choice on phase_type_moments (-m).
+    if (momentsOnly && !r) parts.push('--no-recurrent-mu')
     parts.push(`--alpha ${a}`)
     parts.push(`--num-threads ${executionOptions.threads}`)
     // Only phase_type_moments declares --force; phase_type_dist exits 1 on it.
     if (momentsOnly && executionOptions.force) parts.push('--force')
     parts.push(`--library ${executionOptions.library}`)
-    const dir = outputOptions.outputDirectory || '~/Downloads'
     if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/phase_type_Q.mtx`)
     if (outputOptions.writeR) parts.push(`--output-R ${dir}/phase_type_R.csv`)
     if (!momentsOnly && outputOptions.writeP) parts.push(`--output-P ${dir}/phase_type_P.csv`)
+    if (momentsOnly && outputOptions.writeN) parts.push(`--output-N ${dir}/phase_type_N.csv`)
+    if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
     parts.push('--json')
     return parts.join(' ')
   }
@@ -574,9 +602,20 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
     navigator.clipboard.writeText(command)
   }
   
-  // Count active output options for badge
-  const activeOutputOptions = Object.values(outputOptions).filter(Boolean).length + 
-    (executionOptions.force ? 1 : 0)
+  // Which drawer controls are live depends on which binary this mode runs.
+  const forceAvailable = mode === 'phase-type-dist-sgv' || momentsOnly
+  const writePAvailable = mode === 'phase-type-dist-sgv' || (mode === 'phase-type-dist' && !momentsOnly)
+
+  // Count active output options for badge. Only checkbox states that the
+  // current mode can actually emit count (a ticked writeN is inert outside
+  // moments mode, writeP outside dist/SGV, Force where the binary lacks
+  // --force), and the outputDirectory string must not read as an option.
+  const activeOutputOptions =
+    (outputOptions.writeQ ? 1 : 0) +
+    (outputOptions.writeR ? 1 : 0) +
+    (writePAvailable && outputOptions.writeP ? 1 : 0) +
+    (momentsOnly && mode === 'phase-type-dist' && outputOptions.writeN ? 1 : 0) +
+    (forceAvailable && executionOptions.force ? 1 : 0)
   
   // Determine available library options based on platform
   const libraryOptions = (() => {
@@ -607,14 +646,32 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
       hideBackButton={hideBackButton}
       outputOptions={outputOptions}
       onOutputOptionsChange={setOutputOptions}
+      // Only flags the binary this mode runs actually declares. All three
+      // (phase_type_dist, phase_type_moments, time_dist_sgv) have --output-Q
+      // and --output-R; --output-N ("Output moments to file") exists on
+      // phase_type_moments alone.
+      outputFlags={[
+        { key: 'writeQ', label: 'Write Q', description: 'Transient-to-transient transition probability sub-matrix' },
+        { key: 'writeR', label: 'Write R', description: 'Transient-to-absorbing transition probability sub-matrix' },
+        ...(mode === 'phase-type-dist' && momentsOnly
+          ? [{ key: 'writeN' as const, label: 'Write moments (N)', description: 'The computed moments, one per row, as CSV (--output-N)' }]
+          : [])
+      ]}
       executionOptions={executionOptions}
       onExecutionOptionsChange={setExecutionOptions}
+      // --force exists on phase_type_moments and time_dist_sgv; phase_type_dist
+      // exits 1 on it, so in that mode the checkbox is visibly dead instead of
+      // silently dropped.
+      forceDisabledReason={forceAvailable
+        ? undefined
+        : 'Not available: phase_type_dist does not declare --force'}
       activeOptionsCount={activeOutputOptions}
       optionsContent={
         // The shared drawer has no Write P checkbox, so the flag had no
-        // control to be ticked from. Only phase_type_dist declares
-        // --output-P, so it is offered only where it can be honoured.
-        mode === 'phase-type-dist' && !momentsOnly ? (
+        // control to be ticked from. phase_type_dist and time_dist_sgv (the
+        // SGV mode's binary) declare --output-P; phase_type_moments does not,
+        // so it is offered only where it can be honoured.
+        writePAvailable ? (
           <Paper p="md" withBorder>
             <Title order={6} mb="sm">Distribution Output</Title>
             <Checkbox
@@ -625,8 +682,9 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
               }
             />
             <Text size="xs" c="dimmed" ml={22}>
-              Write the phase-type distribution to phase_type_P.csv in the output
-              folder. The distribution is shown and exported from the results panel
+              Write the computed distribution to{' '}
+              {mode === 'phase-type-dist-sgv' ? 'time_dist_sgv_P.csv' : 'phase_type_P.csv'} in the
+              output folder. The distribution is shown and exported from the results panel
               either way.
             </Text>
           </Paper>
@@ -785,10 +843,9 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
                     <WfesParameterInput
                       type="checkbox"
                       label="r"
-                      description="Recurrent mutation (always enabled for moments mode)"
-                      value={true}
-                      onChange={() => {}}
-                      disabled={true}
+                      description="Recurrent mutation (untick to exclude it: --no-recurrent-mu)"
+                      value={r}
+                      onChange={(checked: boolean) => setR(checked)}
                     />
                   )}
                 </Stack>

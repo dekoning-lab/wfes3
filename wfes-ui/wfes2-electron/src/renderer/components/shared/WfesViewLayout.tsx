@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Container } from '@mantine/core'
 import { WfesHeader } from './WfesHeader'
-import { WfesOptionsDrawer } from './WfesOptionsDrawer'
+import { WfesOptionsDrawer, OutputFlagSpec } from './WfesOptionsDrawer'
 import { WfesOutputOptions, WfesExecutionOptions } from '../../types/wfes'
 
 interface WfesViewLayoutProps {
@@ -13,8 +13,12 @@ interface WfesViewLayoutProps {
   optionsContent?: React.ReactNode
   outputOptions?: WfesOutputOptions
   onOutputOptionsChange?: (options: WfesOutputOptions) => void
+  /** Which write checkboxes this tool's drawer offers; see WfesOptionsDrawer. */
+  outputFlags?: OutputFlagSpec[]
   executionOptions?: WfesExecutionOptions
   onExecutionOptionsChange?: (options: WfesExecutionOptions) => void
+  /** When set, Force renders disabled with this reason; see WfesOptionsDrawer. */
+  forceDisabledReason?: string
   // Helper to count active options for badge
   activeOptionsCount?: number
 }
@@ -27,17 +31,21 @@ export const WfesViewLayout: React.FC<WfesViewLayoutProps> = ({
   optionsContent,
   outputOptions,
   onOutputOptionsChange,
+  outputFlags,
   executionOptions,
   onExecutionOptionsChange,
+  forceDisabledReason,
   activeOptionsCount
 }) => {
   const [optionsDrawerOpen, setOptionsDrawerOpen] = useState(false)
 
-  // Calculate active options if not provided
+  // Calculate active options if not provided. Only true checkbox states
+  // count: the outputDirectory string also lives in outputOptions and a
+  // truthy path must not read as an "active option".
   const activeOptions = activeOptionsCount !== undefined ? activeOptionsCount : (() => {
     let count = 0
     if (outputOptions) {
-      count += Object.values(outputOptions).filter(Boolean).length
+      count += Object.values(outputOptions).filter(v => v === true).length
     }
     if (executionOptions?.force) count++
     return count
@@ -65,8 +73,10 @@ export const WfesViewLayout: React.FC<WfesViewLayoutProps> = ({
           onClose={() => setOptionsDrawerOpen(false)}
           outputOptions={outputOptions}
           onOutputOptionsChange={onOutputOptionsChange}
+          outputFlags={outputFlags}
           executionOptions={executionOptions}
           onExecutionOptionsChange={onExecutionOptionsChange}
+          forceDisabledReason={forceDisabledReason}
         >
           {optionsContent}
         </WfesOptionsDrawer>

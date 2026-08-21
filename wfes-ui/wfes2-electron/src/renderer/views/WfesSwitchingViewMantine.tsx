@@ -25,17 +25,15 @@ import {
   useMantineTheme
 } from '@mantine/core'
 import { IconChartLine, IconCopy, IconPlus, IconX, IconClock, IconPlayerPlay } from '@tabler/icons-react'
-import { 
+import {
   WfesViewLayout,
   WfesParameterInput,
   WfesResultsTable,
-  WfesExecutionPanel,
   WfesExportButtons,
   validateScientificNotation,
   validatePositiveInteger,
   validateProbability,
-  generateFilename,
-  exportToCSV
+  generateFilename
 } from '../components/shared'
 import { WfesSwitchingParams, WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
@@ -109,21 +107,25 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
   const [modelType, setModelType] = useState('absorption')
   const [integrationCutoff, setIntegrationCutoff] = useState('1e-10') // c parameter
   
-  // Output options
+  // Output options -- the keys buildWfesSwitchingArgs reads, one per real
+  // wfes_switching flag. The previous initial keys (writePExt/writePFix/
+  // writeTExt/writeTFix/writeStateProbs/writeRes) matched no CLI flag and
+  // nothing in the builder: they could never reach the argv, and the
+  // default-true writeRes made the options badge read "1" on a fresh view.
   const [outputOptions, setOutputOptions] = useState({
-    writePExt: false,
-    writePFix: false,
-    writeTExt: false,
-    writeTFix: false,
-    writeStateProbs: false,
-    writeRes: true
+    writeQ: false,
+    writeR: false,
+    writeN: false,
+    writeB: false,
+    writeNExt: false,
+    writeNFix: false
   })
   
   // Execution options
   const [executionOptions, setExecutionOptions] = useState({
     force: false,
     threads: navigator.hardwareConcurrency || 4,
-    library: 'Accelerate' as const
+    library: 'Accelerate' as 'Accelerate' | 'Pardiso' | 'SuiteSparse' | 'ParU'
   })
   
   // Results state
@@ -309,7 +311,9 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
         errors.push('Invalid alpha value')
       }
       
-      if (!validateScientificNotation(integrationCutoff)) {
+      // The c field is read (and shown) only under --absorption; a disabled
+      // field must not be able to block an execute it takes no part in.
+      if (modelType === 'absorption' && !validateScientificNotation(integrationCutoff)) {
         errors.push('Invalid integration cutoff (c)')
       }
       
@@ -368,8 +372,14 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
         
         // Starting parameters
         starting_probabilities: startingProbs, // Starting probabilities from modal
-        integration_cutoff: parseFloat(integrationCutoff),
-        
+        // -c applies only to --absorption, where each model state integrates
+        // over the copy numbers a new mutation produces. Under --fixation the
+        // CLI refuses a non-default value outright ("--integration-cutoff
+        // (-c) is not applicable to --fixation", exit 1), so the flag is not
+        // sent there; the field below is disabled in that mode for the same
+        // reason.
+        integration_cutoff: modelType === 'absorption' ? parseFloat(integrationCutoff) : undefined,
+
         // Model parameters
         alpha: parseFloat(alpha),
         model_type: modelType,
@@ -455,7 +465,6 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
               const q = QUANTITIES[key]
               decompRows.push({
                 label: q.node, plain: q.plain, description: q.description,
-                raw: [], kind: 'probability',
                 values: arr.map(x =>
                   typeof x === 'number' && isFinite(x) ? formatNumber(x, time) : '—'),
                 raw: arr.map(x => (typeof x === 'number' && isFinite(x) ? x : NaN)),
@@ -615,18 +624,27 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
     parts.push(`--dominance ${h_values}`)
     parts.push(`--backward-mu ${u_values}`)
     parts.push(`--forward-mu ${v_values}`)
-    
+
+    // Starting probabilities. When the field is empty the run omits the flag
+    // and the CLI applies its uniform default -- so the preview omits it too.
+    // The previous fallback printed "--starting-prob 1,0" here, a flag the run
+    // never sent: anyone copying the preview to reproduce a GUI result got a
+    // DIFFERENT model (all mass in state 1 instead of uniform).
+    if (startingProbabilities.trim()) {
+      parts.push(`--starting-prob ${startingProbabilities}`)
+    }
+
     // Switching rates matrix - build matrix string
     const n_states = populationStates.length
     const matrix: number[][] = Array(n_states).fill(null).map(() => Array(n_states).fill(0))
-    
+
     // Fill in the off-diagonal rates
     switchingRates.forEach(rate => {
       const fromIdx = parseInt(rate.fromState) - 1
       const toIdx = parseInt(rate.toState) - 1
       matrix[fromIdx][toIdx] = parseFloat(rate.rate) || 0
     })
-    
+
     // Calculate and set diagonal elements (probability of staying in same state)
     for (let i = 0; i < n_states; i++) {
       let rowSum = 0
@@ -637,48 +655,42 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
       }
       matrix[i][i] = Math.max(0, 1 - rowSum)
     }
-    
+
     // Convert to string format: "row1col1,row1col2;row2col1,row2col2"
     const matrixStr = matrix.map(row => row.join(',')).join(';')
     parts.push(`--switching "${matrixStr}"`)
-    
-    // Starting probabilities. When the field is empty the run omits the flag
-    // and the CLI applies its uniform default -- so the preview omits it too.
-    // The previous fallback printed "--starting-prob 1,0" here, a flag the run
-    // never sent: anyone copying the preview to reproduce a GUI result got a
-    // DIFFERENT model (all mass in state 1 instead of uniform).
-    if (startingProbabilities.trim()) {
-      parts.push(`--starting-prob ${startingProbabilities}`)
-    }
-    
-    // Integration cutoff
-    parts.push(`--integration-cutoff ${integrationCutoff}`)
-    
+
     // Alpha
     parts.push(`--alpha ${alpha}`)
-    
+
+    // Integration cutoff -- absorption only, same gate as the run: under
+    // --fixation the CLI refuses a non-default -c (exit 1).
+    if (modelType === 'absorption') {
+      parts.push(`--integration-cutoff ${integrationCutoff}`)
+    }
+
+    // Execution options -- ordered as buildWfesSwitchingArgs emits them
+    // (threads, library, force, then the output flags, then --initial, with
+    // --json appended last by the execute method).
+    parts.push(`--num-threads ${executionOptions.threads}`)
+    // The run passes the library name through as-is; 'mkl'/'viennacl' were fictions.
+    parts.push(`--library ${executionOptions.library}`)
+    if (executionOptions.force) parts.push('--force')
+
     // Output options
     // Output flags mirror the run's builder: real keys, with the destination
     // paths the run resolves. The old writePExt/writePFix keys existed nowhere.
     const dir = (outputOptions as any).outputDirectory || '~/Downloads'
-    if ((outputOptions as any).writeQ) parts.push(`--output-Q ${dir}/wfes_switching_Q.mtx`)
-    if ((outputOptions as any).writeR) parts.push(`--output-R ${dir}/wfes_switching_R.csv`)
-    if ((outputOptions as any).writeN) parts.push(`--output-N ${dir}/wfes_switching_N.csv`)
-    if ((outputOptions as any).writeB) parts.push(`--output-B ${dir}/wfes_switching_B.csv`)
-    if ((outputOptions as any).writeNExt) parts.push(`--output-N-ext ${dir}/wfes_switching_N_ext.csv`)
-    if ((outputOptions as any).writeNFix) parts.push(`--output-N-fix ${dir}/wfes_switching_N_fix.csv`)
-    
-    // Add JSON output flag
+    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/wfes_switching_Q.mtx`)
+    if (outputOptions.writeR) parts.push(`--output-R ${dir}/wfes_switching_R.csv`)
+    if (outputOptions.writeN) parts.push(`--output-N ${dir}/wfes_switching_N.csv`)
+    if (outputOptions.writeB) parts.push(`--output-B ${dir}/wfes_switching_B.csv`)
+    if (outputOptions.writeNExt) parts.push(`--output-N-ext ${dir}/wfes_switching_N_ext.csv`)
+    if (outputOptions.writeNFix) parts.push(`--output-N-fix ${dir}/wfes_switching_N_fix.csv`)
+
     if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
     parts.push('--json')
-    
-    // Execution options
-    if (executionOptions.force) parts.push('--force')
-    parts.push(`--num-threads ${executionOptions.threads}`)
-    
-    // The run passes the library name through as-is; 'mkl'/'viennacl' were fictions.
-    parts.push(`--library ${executionOptions.library}`)
-    
+
     return parts.join(' ')
   }
   
@@ -687,8 +699,10 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
     navigator.clipboard.writeText(command)
   }
   
-  // Count active output options for badge
-  const activeOutputOptions = Object.values(outputOptions).filter(Boolean).length + 
+  // Count active output options for badge. Only real checkbox states count:
+  // the drawer also stores the outputDirectory string in this object, and a
+  // truthy path must not read as an "active option".
+  const activeOutputOptions = Object.values(outputOptions).filter(v => v === true).length +
     (executionOptions.force ? 1 : 0)
   
   // Cmd+Enter (Ctrl+Enter off macOS) fires Execute / Re-execute.
@@ -764,7 +778,10 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
 
         {/* Column 2: Results */}
         <Grid.Col span={8}>
-          <Paper p="md" withBorder style={{ height: '400px', display: 'flex', flexDirection: 'column' }}>
+          {/* minHeight, not height: long solver warnings plus the per-state
+              breakdown overflowed a fixed 400px box, squeezing the results
+              into a sliver. The box grows to contain, like the other views. */}
+          <Paper p="md" withBorder style={{ minHeight: '400px', display: 'flex', flexDirection: 'column' }}>
             <Group justify="space-between" mb="md" style={{ flexShrink: 0 }}>
               <Title order={6}>Results</Title>
               {results.length > 0 && (
@@ -1043,11 +1060,14 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
                 <WfesParameterInput
                   type="scientific"
                   label="c"
-                  description="Integration cutoff"
+                  description={modelType === 'absorption'
+                    ? 'Integration cutoff'
+                    : 'Integration cutoff — not applicable to the Substitution Model (each state starts at count 0, weighted by the start probabilities; there is nothing to integrate over)'}
                   helpText="Minimum probability threshold for including starting copy numbers in the integration. Lower values include more terms but increase computation time."
                   value={integrationCutoff}
                   onChange={setIntegrationCutoff}
-                  error={!validateScientificNotation(integrationCutoff)}
+                  error={modelType === 'absorption' && !validateScientificNotation(integrationCutoff)}
+                  disabled={modelType !== 'absorption'}
                 />
                 <WfesParameterInput
                   type="scientific"

@@ -477,7 +477,7 @@ export class WfesBackendService {
       args.push('--num-threads', String(params.executionParams.threads))
     }
     if (params.executionParams?.library) {
-      args.push('--library', String(params.executionParams.library))
+      args.push('--library', this.normalizeLibrary(params.executionParams.library))
     }
     args.push('--json')
     return args
@@ -510,6 +510,22 @@ export class WfesBackendService {
       app.getPath('downloads')
     const ext = label === 'Q' ? 'mtx' : 'csv'
     return join(dir, `${tool}_${label}.${ext}`)
+  }
+
+  /**
+   * Canonical capitalisation for the --library value, shared by every builder.
+   *
+   * Each builder used to carry its own partial chain: the sequential one knew
+   * SuiteSparse and ParU, the sweep one did not, and phase-type passed the
+   * value through raw -- so the same Select produced differently-normalised
+   * argv depending on the tool. Unknown names pass through unchanged; the CLI
+   * is the authority on what it accepts.
+   */
+  private normalizeLibrary(library: any): string {
+    const canonical = ['Accelerate', 'Pardiso', 'ViennaCL', 'SuiteSparse', 'ParU']
+    const name = String(library)
+    const hit = canonical.find((c) => c.toLowerCase() === name.toLowerCase())
+    return hit ?? (name.toLowerCase() === 'vienna' ? 'ViennaCL' : name)
   }
 
   private buildWfesSingleArgs(params: any): string[] {
@@ -606,18 +622,9 @@ export class WfesBackendService {
     
     // Library selection
     if (params.library) {
-      // Ensure proper capitalization for library names
-      let libraryName = params.library
-      if (libraryName.toLowerCase() === 'accelerate') {
-        libraryName = 'Accelerate'
-      } else if (libraryName.toLowerCase() === 'pardiso') {
-        libraryName = 'Pardiso'
-      } else if (libraryName.toLowerCase() === 'vienna' || libraryName.toLowerCase() === 'viennacl') {
-        libraryName = 'ViennaCL'
-      }
-      args.push('--library', libraryName)
+      args.push('--library', this.normalizeLibrary(params.library))
     }
-    
+
     // Parameters the tool accepts but the GUI never sent. Each is emitted only
     // when the caller supplies it, so existing calls are unchanged.
     if (params.block_size !== undefined) {
@@ -731,17 +738,8 @@ export class WfesBackendService {
       const platform = process.platform
       libraryName = platform === 'darwin' ? 'Accelerate' : 'Pardiso'
     }
-    
-    // Ensure proper capitalization for library names
-    if (libraryName.toLowerCase() === 'accelerate') {
-      libraryName = 'Accelerate'
-    } else if (libraryName.toLowerCase() === 'pardiso') {
-      libraryName = 'Pardiso'
-    } else if (libraryName.toLowerCase() === 'vienna' || libraryName.toLowerCase() === 'viennacl') {
-      libraryName = 'ViennaCL'
-    }
-    
-    args.push('--library', libraryName)
+
+    args.push('--library', this.normalizeLibrary(libraryName))
     
     // Same as wfes_single: the checkboxes existed, the flags never did.
     const so = params.output_options
@@ -769,17 +767,12 @@ export class WfesBackendService {
    */
   private buildPhaseTypeArgs(params: any): string[] {
     const args: string[] = []
-    
+
     // Population size (required)
     if (params.population_size !== undefined) {
       args.push('--pop-size', params.population_size.toString())
     }
-    
-    // Alpha (tail truncation weight/starting frequency)
-    if (params.starting_frequency !== undefined) {
-      args.push('--alpha', params.starting_frequency.toString())
-    }
-    
+
     // Mode-specific parameters
     if (params.mode === 'dist') {
       // Distribution cutoff
@@ -795,10 +788,8 @@ export class WfesBackendService {
       if (params.num_moments !== undefined) {
         args.push('--n-moments', params.num_moments.toString())
       }
-      // Note: phase_type_moments always uses recurrent mutation (hardcoded)
-      // The recurrent_mutation parameter is ignored
     }
-    
+
     // Selection parameters
     if (params.selection_coefficient !== undefined) {
       args.push('--selection', params.selection_coefficient.toString())
@@ -806,7 +797,7 @@ export class WfesBackendService {
     if (params.dominance_coefficient !== undefined) {
       args.push('--dominance', params.dominance_coefficient.toString())
     }
-    
+
     // Mutation parameters
     if (params.backward_mutation_rate !== undefined) {
       args.push('--backward-mu', params.backward_mutation_rate.toString())
@@ -814,12 +805,23 @@ export class WfesBackendService {
     if (params.forward_mutation_rate !== undefined) {
       args.push('--forward-mu', params.forward_mutation_rate.toString())
     }
-    
+    // Exclude recurrent mutation (-m on phase_type_moments). The moments-mode
+    // "r" checkbox used to arrive as `recurrent_mutation`, a key no builder
+    // read, so it could not reach the argv no matter what it held; the handler
+    // now forwards it under the name and polarity this flag actually has.
+    if (params.noRecurrentMutation) { args.push('--no-recurrent-mu') }
+
+    // Alpha (tail truncation weight). starting_frequency is the handler's
+    // historical name for the view's `a` field; it has always been --alpha.
+    if (params.starting_frequency !== undefined) {
+      args.push('--alpha', params.starting_frequency.toString())
+    }
+
     // Execution parameters
     if (params.n_threads !== undefined) {
       args.push('--num-threads', params.n_threads.toString())
     }
-    
+
     // Skip parameter checks. Only phase_type_moments declares this flag;
     // phase_type_dist does not, and args-parsing is fatal there -- the run
     // exits 1 with "Flag could not be matched: force" before computing
@@ -830,69 +832,55 @@ export class WfesBackendService {
 
     // Library selection
     if (params.library) {
-      args.push('--library', params.library)
+      args.push('--library', this.normalizeLibrary(params.library))
     }
 
     // No --solver here: no WFES binary declares one (phase_type_moments exits
     // 1 with "Flag could not be matched: solver"), and the ViennaCL backend
     // that the option existed for is no longer offered in the library Select.
 
-    // Output options
-    if (params.output_Q && params.output_Q !== false) {
+    // Output options -- the same nested output_options.write* shape every
+    // other tool uses (this builder used to read flat output_Q/output_R keys,
+    // a second convention that invited exactly the key mismatches that made
+    // the sweep and WFAF-S write checkboxes inert).
+    const po = params.output_options
+    if (po?.writeQ) {
       args.push('--output-Q', this.outputPath(params, 'phase_type', 'Q'))
     }
-    if (params.output_R && params.output_R !== false) {
+    if (po?.writeR) {
       args.push('--output-R', this.outputPath(params, 'phase_type', 'R'))
     }
-    // --output-P is a required-value flag, so a bare `--output-P` is an
-    // argument error that kills the run before it computes anything. The
-    // handler forwards a boolean (the checkbox state), which the previous
-    // string-only guard silently discarded -- Write P did nothing at all.
-    // Resolve a real destination for it the way every other write flag does.
-    // Only phase_type_dist declares --output-P; phase_type_moments does not.
-    // (time_dist_sgv declares it too, but that tool is built by
-    // buildTimeDistArgs and is left alone here.)
-    if (params.mode === 'dist' && params.output_P) {
-      args.push(
-        '--output-P',
-        typeof params.output_P === 'string' && params.output_P.trim() !== ''
-          ? params.output_P
-          : this.outputPath(params, 'phase_type', 'P')
-      )
+    // --output-P: only phase_type_dist declares it (phase_type_moments does
+    // not). It writes the distribution as CSV alongside the normal stdout.
+    if (params.mode === 'dist' && po?.writeP) {
+      args.push('--output-P', this.outputPath(params, 'phase_type', 'P'))
     }
-    // Note: phase_type_moments doesn't have --output-Res option
-    // It always outputs moments to stdout, with optional --output-N for file output
-    
-    // Both modes emit JSON now. dist mode's --json was declared but never
-    // consumed by the tool, which is why this was restricted to moments.
-    if (params.mode === 'moments' || params.mode === 'dist') {
-      args.push('--json')
+    // --output-N: only phase_type_moments declares it ("Output moments to
+    // file"); phase_type_dist has no such flag and would exit 1 on it.
+    if (params.mode === 'moments' && po?.writeN) {
+      args.push('--output-N', this.outputPath(params, 'phase_type', 'N'))
     }
-    
-    // Alpha parameter (tail truncation weight) - remove this, it's already added above
-    
-    // Verbose output for debugging
+
+    // Parameters the tool accepts but the GUI never sent. Each is emitted only
+    // when the caller supplies it, so existing calls are unchanged.
     if (params.verbose) {
       args.push('--verbose')
     }
-    
-    // Note: phase_type_dist outputs results to stdout by default
-    // We don't need the --output-P flag unless we want to write to a file
-    
-    // Parameters the tool accepts but the GUI never sent. Each is emitted only
-    // when the caller supplies it, so existing calls are unchanged.
     if (params.block_size !== undefined) {
       args.push('--block-size', params.block_size.toString())
     }
     if (params.populationParams?.integrationCutoff !== undefined) {
       args.push('--integration-cutoff', params.populationParams.integrationCutoff.toString())
     }
-    if (params.noRecurrentMutation) { args.push('--no-recurrent-mu') }
 
     // Initial state distribution. Every tool accepts one now; it replaces the
     // fixed starting count or the integration over starting copies.
     const initialFile = params.initial ?? params.executionOptions?.initialDistFile
     if (initialFile) { args.push('--initial', initialFile.toString()) }
+
+    // Both modes emit JSON now. dist mode's --json was declared but never
+    // consumed by the tool, which is why this was restricted to moments.
+    args.push('--json')
 
     return args
   }
@@ -987,20 +975,8 @@ export class WfesBackendService {
       const platform = process.platform
       libraryName = platform === 'darwin' ? 'Accelerate' : 'Pardiso'
     }
-    
-    if (libraryName.toLowerCase() === 'accelerate') {
-      libraryName = 'Accelerate'
-    } else if (libraryName.toLowerCase() === 'pardiso') {
-      libraryName = 'Pardiso'
-    } else if (libraryName.toLowerCase() === 'vienna' || libraryName.toLowerCase() === 'viennacl') {
-      libraryName = 'ViennaCL'
-    } else if (libraryName.toLowerCase() === 'suitesparse') {
-      libraryName = 'SuiteSparse'
-    } else if (libraryName.toLowerCase() === 'paru') {
-      libraryName = 'ParU'
-    }
-    
-    args.push('--library', libraryName)
+
+    args.push('--library', this.normalizeLibrary(libraryName))
     
     // Initial state distribution. Every tool accepts one now; it replaces the
     // fixed starting count or the integration over starting copies.
@@ -1114,16 +1090,8 @@ export class WfesBackendService {
         const platform = process.platform
         libraryName = platform === 'darwin' ? 'Accelerate' : 'Pardiso'
       }
-      
-      if (libraryName.toLowerCase() === 'accelerate') {
-        libraryName = 'Accelerate'
-      } else if (libraryName.toLowerCase() === 'pardiso') {
-        libraryName = 'Pardiso'
-      } else if (libraryName.toLowerCase() === 'vienna' || libraryName.toLowerCase() === 'viennacl') {
-        libraryName = 'ViennaCL'
-      }
-      
-      args.push('--library', libraryName)
+
+      args.push('--library', this.normalizeLibrary(libraryName))
       
       if (params.execution_options.force) {
         args.push('--force')
@@ -1165,44 +1133,46 @@ export class WfesBackendService {
    */
   private buildTimeDistArgs(params: any): string[] {
     const args: string[] = []
-    
+
     console.log('Building args for mode:', params.mode)
-    
-    // Initial state distribution, set before the mode branches: the sgv
-    
-    // path returns early, so a push after the branch reached only the
-    
-    // non-sgv tools and the flag was silently dropped for time_dist_sgv.
-    
+
+    // Initial state distribution, set before the mode branches so both the
+    // sgv and non-sgv tools receive it on the same code path.
     const initialFile = params.initial ?? params.executionOptions?.initialDistFile
-    
     if (initialFile) { args.push('--initial', initialFile.toString()) }
 
-    
+    // Which binary this run spawns, used to name its output files: the three
+    // tools share this builder but have different state spaces, so their
+    // matrices must not overwrite each other in the output folder.
+    const toolName =
+      params.mode === 'time-dist-sgv' ? 'time_dist_sgv'
+        : params.mode === 'time-dist-dual' ? 'time_dist_dual'
+        : 'time_dist'
+
     if (params.mode === 'time-dist-sgv') {
       // SGV mode has components with comma-separated values
       if (params.components && Array.isArray(params.components) && params.components.length > 0) {
         // For SGV, use single population size from first component
         const N = params.components[0].N
         args.push('--pop-size', N.toString())
-        
+
         // Build comma-separated lists for each parameter
         const s_values = params.components.map(c => c.s).join(',')
         const h_values = params.components.map(c => c.h).join(',')
         const u_values = params.components.map(c => c.u).join(',')
         const v_values = params.components.map(c => c.v).join(',')
-        
+
         args.push('--selection', s_values)
         args.push('--dominance', h_values)
         args.push('--backward-mu', u_values)
         args.push('--forward-mu', v_values)
       }
-      
+
       // Lambda parameter (rate of switching)
       if (params.populationParams?.l !== undefined) {
         args.push('--lambda', params.populationParams.l.toString())
       }
-      
+
       // Other SGV parameters
       if (params.populationParams?.a !== undefined) {
         args.push('--alpha', params.populationParams.a.toString())
@@ -1213,29 +1183,27 @@ export class WfesBackendService {
       if (params.populationParams?.m !== undefined) {
         args.push('--max-t', params.populationParams.m.toString())
       }
-      
+
       // SGV-specific execution parameters
       if (params.n_threads !== undefined) {
         args.push('--num-threads', params.n_threads.toString())
       } else if (params.executionParams?.threads !== undefined) {
         args.push('--num-threads', params.executionParams.threads.toString())
       }
-      
+
       // Library selection for SGV
       if (params.library !== undefined) {
-        args.push('--library', params.library)
+        args.push('--library', this.normalizeLibrary(params.library))
       } else if (params.executionParams?.library) {
-        args.push('--library', params.executionParams.library)
+        args.push('--library', this.normalizeLibrary(params.executionParams.library))
       }
-      
-      // Always use JSON output for SGV
-      args.push('--json')
-      
-      // Parameters the tool accepts but the GUI never sent. Each is emitted only
-      // when the caller supplies it, so existing calls are unchanged.
-      if (params.verbose) { args.push('--verbose') }
 
-      return args
+      // Skip parameter checks. Of the three time-dist binaries only
+      // time_dist_sgv declares --force; passing it to the other two is a
+      // fatal parse error, which is why this push sits inside the sgv branch.
+      if (params.force === true || params.executionParams?.force === true) {
+        args.push('--force')
+      }
     } else {
       // Non-SGV modes (time-dist and time-dist-dual)
       // Population parameters
@@ -1254,7 +1222,7 @@ export class WfesBackendService {
       if (params.populationParams?.m !== undefined) {
         args.push('--max-t', params.populationParams.m.toString())
       }
-      
+
       // Selection parameters
       if (params.selectionParams?.s !== undefined) {
         args.push('--selection', params.selectionParams.s.toString())
@@ -1262,7 +1230,7 @@ export class WfesBackendService {
       if (params.selectionParams?.h !== undefined) {
         args.push('--dominance', params.selectionParams.h.toString())
       }
-      
+
       // Mutation parameters
       if (params.mutationParams?.u !== undefined) {
         args.push('--backward-mu', params.mutationParams.u.toString())
@@ -1270,36 +1238,46 @@ export class WfesBackendService {
       if (params.mutationParams?.v !== undefined) {
         args.push('--forward-mu', params.mutationParams.v.toString())
       }
-      
+
       // No recurrent mutation flag
       if (params.noRecurrentMutation === true) {
         args.push('--no-recurrent-mu')
       }
-      
+
       // Common execution parameters for non-SGV modes
       if (params.n_threads !== undefined) {
         args.push('--num-threads', params.n_threads.toString())
       } else if (params.executionParams?.threads !== undefined) {
         args.push('--num-threads', params.executionParams.threads.toString())
       }
-      
+
       // Library selection
       if (params.library !== undefined) {
-        args.push('--library', params.library)
+        args.push('--library', this.normalizeLibrary(params.library))
       } else if (params.executionParams?.library) {
-        args.push('--library', params.executionParams.library)
+        args.push('--library', this.normalizeLibrary(params.executionParams.library))
       }
-      
-      // Always use JSON output for easier parsing
-      args.push('--json')
+      // No --force here: time_dist and time_dist_dual do not declare it.
     }
-    
+
+    // Matrix/vector outputs -- all three binaries declare --output-Q,
+    // --output-R and --output-P (verified against their --help). This builder
+    // used to read no output keys at all, so the view's write checkboxes
+    // could not reach the argv no matter what they held.
+    const to = params.output_options
+    if (to?.writeQ) { args.push('--output-Q', this.outputPath(params, toolName, 'Q')) }
+    if (to?.writeR) { args.push('--output-R', this.outputPath(params, toolName, 'R')) }
+    if (to?.writeP) { args.push('--output-P', this.outputPath(params, toolName, 'P')) }
+
     // Parameters the tool accepts but the GUI never sent. Each is emitted only
     // when the caller supplies it, so existing calls are unchanged.
     if (params.populationParams?.integrationCutoff !== undefined) {
       args.push('--integration-cutoff', params.populationParams.integrationCutoff.toString())
     }
     if (params.verbose) { args.push('--verbose') }
+
+    // Always use JSON output for easier parsing
+    args.push('--json')
 
     return args
   }
@@ -1375,41 +1353,47 @@ export class WfesBackendService {
     // Integration mode parameters (Note: wfafs_deterministic doesn't have integration mode options)
     // The integrationMode and aValue from the UI are for future enhancement
     
-    // Execution parameters
+    // Execution parameters. No --force: wfafs_deterministic does not declare
+    // the flag (it is a fatal parse error), so the Force checkbox is disabled
+    // with that reason in the WFAF-D view rather than silently dropped here.
     if (params.executionParams) {
       if (params.executionParams.threads !== undefined) {
         args.push('--num-threads', params.executionParams.threads.toString())
       }
       if (params.executionParams.library) {
-        args.push('--library', params.executionParams.library)
-      }
-      if (params.executionParams.force) {
-        // Note: wfafs_deterministic doesn't have a --force flag
-        // Parameter validation is always performed
+        args.push('--library', this.normalizeLibrary(params.executionParams.library))
       }
     }
-    
+
+    // No --output-* flags: wfafs_deterministic's only file output is
+    // -o/--output-file, and that flag REDIRECTS the whole result stream into
+    // the file (stdout becomes empty, and the file is the tab-separated
+    // spectrum, not JSON) -- verified against the binary. A GUI run that
+    // passed it would lose its own results, so the view offers no write
+    // checkboxes for this tool; the results panel's export writes the
+    // spectrum instead.
+
     // Verbose output for debugging
     if (params.verbose) {
       args.push('--verbose')
     }
-    
+
     // Parameters the tool accepts but the GUI never sent. Each is emitted only
     // when the caller supplies it, so existing calls are unchanged.
     if (params.block_size !== undefined) {
       args.push('--block-size', params.block_size.toString())
     }
 
+    // Initial state distribution. Every tool accepts one now; it replaces the
+    // fixed starting count or the integration over starting copies.
+    const initialFile = params.initial ?? params.executionOptions?.initialDistFile
+    if (initialFile) { args.push('--initial', initialFile.toString()) }
+
     // Structured output, like every other tool's run path. wfafd was the one
     // holdout still parsed by scraping the default tab-separated stream --
     // a parse that silently dropped zero-probability rows and re-normalized
     // the spectrum, both of which can mask real CLI output problems.
     args.push('--json')
-
-    // Initial state distribution. Every tool accepts one now; it replaces the
-    // fixed starting count or the integration over starting copies.
-    const initialFile = params.initial ?? params.executionOptions?.initialDistFile
-    if (initialFile) { args.push('--initial', initialFile.toString()) }
 
     return args
   }
@@ -1501,24 +1485,39 @@ export class WfesBackendService {
         args.push('--num-threads', params.executionParams.threads.toString())
       }
       if (params.executionParams.library) {
-        args.push('--library', params.executionParams.library)
+        args.push('--library', this.normalizeLibrary(params.executionParams.library))
       }
     }
-    
-    // Output options
-    if (params.outputOptions?.writeQ) {
-      args.push('--output-Q', this.outputPath(params, 'wfafs', 'Q'))
+
+    // Matrix/vector outputs, stochastic mode only. wfafs_stochastic declares
+    // --output-Q/-N/-B and they work (verified: files written, stdout JSON
+    // intact). It also declares --output-R/-N-ext/-N-fix/-N-tmo, but those
+    // REFUSE at runtime -- its chain is non-absorbing, so the quantities do
+    // not exist -- and are therefore not offered or emitted. The old code
+    // here read writeQ/writeR/writeSFS: writeR would have aborted the run,
+    // and --output-SFS matches no flag in any WFES binary (fatal parse
+    // error). wfafs_deterministic (the other user of this builder) declares
+    // none of these flags, hence the mode gate.
+    if (params.mode === 'wfafs-stochastic') {
+      const wo = params.output_options
+      if (wo?.writeQ) { args.push('--output-Q', this.outputPath(params, 'wfafs', 'Q')) }
+      if (wo?.writeN) { args.push('--output-N', this.outputPath(params, 'wfafs', 'N')) }
+      if (wo?.writeB) { args.push('--output-B', this.outputPath(params, 'wfafs', 'B')) }
     }
-    if (params.outputOptions?.writeR) {
-      args.push('--output-R', this.outputPath(params, 'wfafs', 'R'))
-    }
-    if (params.outputOptions?.writeSFS) {
-      args.push('--output-SFS', 'stdout')
-    }
-    
+
     // Verbose output for debugging
     if (params.verbose) {
       args.push('--verbose')
+    }
+
+    // Parameters the tool accepts but the GUI never sent. Each is emitted only
+    // when the caller supplies it, so existing calls are unchanged.
+    const wfafsInit = params.initial ?? params.executionParams?.initialDistFile ?? params.executionOptions?.initialDistFile
+    if (wfafsInit) { args.push('--initial', wfafsInit.toString()) }
+    // --force exists on wfafs_stochastic only; wfafs_deterministic exits 1 on it.
+    if (params.mode === 'wfafs-stochastic' &&
+        (params.force || (params.executionParams?.force ?? params.executionOptions?.force))) {
+      args.push('--force')
     }
 
     // Request structured output. Previously this builder asked for neither
@@ -1526,12 +1525,6 @@ export class WfesBackendService {
     // dump and parseWfafsOutput applied parseInt to the probability column,
     // truncating every value to 0.
     args.push('--json')
-
-    // Parameters the tool accepts but the GUI never sent. Each is emitted only
-    // when the caller supplies it, so existing calls are unchanged.
-    const wfafsInit = params.initial ?? params.executionParams?.initialDistFile ?? params.executionOptions?.initialDistFile
-    if (wfafsInit) { args.push('--initial', wfafsInit.toString()) }
-    if (params.force || (params.executionParams?.force ?? params.executionOptions?.force)) { args.push('--force') }
 
     return args
   }

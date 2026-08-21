@@ -2,6 +2,34 @@ import React from 'react'
 import { Drawer, Stack, Title, Paper, Checkbox, Text, NumberInput, Select, Divider, Button, Group } from '@mantine/core'
 import { WfesOutputOptions, WfesExecutionOptions } from '../../types/wfes'
 
+/**
+ * One write-checkbox row: which outputOptions key it toggles, and how it is
+ * described. Views pass the list of flags THEIR binary declares; a checkbox
+ * for a flag the tool does not have is a control that can only lie.
+ */
+export interface OutputFlagSpec {
+  key: keyof WfesOutputOptions
+  label: string
+  description: string
+}
+
+/**
+ * The default set: the six matrix/vector outputs of the absorbing-chain
+ * solvers (wfes_single is not a consumer of this drawer; wfes_sequential and
+ * wfes_switching declare all six). Views whose binaries declare fewer, or
+ * different, flags pass their own list. There is deliberately no "Write Res"
+ * here any more: no WFES binary declares such a flag, so the checkbox that
+ * used to offer it could never produce a file.
+ */
+export const DEFAULT_OUTPUT_FLAGS: OutputFlagSpec[] = [
+  { key: 'writeQ', label: 'Write Q', description: 'Transient-to-transient transition probability sub-matrix' },
+  { key: 'writeR', label: 'Write R', description: 'Transient-to-absorbing transition probability sub-matrix' },
+  { key: 'writeB', label: 'Write B', description: 'Absorption probability matrix: B = NR' },
+  { key: 'writeN', label: 'Write N', description: 'Fundamental matrix: N = (I-Q)^(-1)' },
+  { key: 'writeNExt', label: 'Write N_Ext', description: 'Fundamental matrix, conditioned on extinction' },
+  { key: 'writeNFix', label: 'Write N_Fix', description: 'Fundamental matrix, conditioned on fixation' }
+]
+
 interface WfesOptionsDrawerProps {
   opened: boolean
   onClose: () => void
@@ -10,9 +38,21 @@ interface WfesOptionsDrawerProps {
   // Standard output options
   outputOptions?: WfesOutputOptions
   onOutputOptionsChange?: (options: WfesOutputOptions) => void
+  /**
+   * Which write checkboxes this tool offers (defaults to the six standard
+   * matrix/vector outputs). Pass only flags the spawned binary declares.
+   */
+  outputFlags?: OutputFlagSpec[]
   // Standard execution options
   executionOptions?: WfesExecutionOptions
   onExecutionOptionsChange?: (options: WfesExecutionOptions) => void
+  /**
+   * When set, the Force checkbox renders disabled with this reason: some
+   * binaries (phase_type_dist, time_dist, time_dist_dual,
+   * wfafs_deterministic) do not declare --force and exit 1 on it, so for
+   * them the checkbox must be visibly dead rather than silently dropped.
+   */
+  forceDisabledReason?: string
   // Additional custom content can be passed as children
 }
 
@@ -23,8 +63,10 @@ export const WfesOptionsDrawer: React.FC<WfesOptionsDrawerProps> = ({
   children,
   outputOptions,
   onOutputOptionsChange,
+  outputFlags = DEFAULT_OUTPUT_FLAGS,
   executionOptions,
-  onExecutionOptionsChange
+  onExecutionOptionsChange,
+  forceDisabledReason
 }) => {
   const handleOutputOptionChange = (
     key: keyof WfesOutputOptions,
@@ -36,7 +78,7 @@ export const WfesOptionsDrawer: React.FC<WfesOptionsDrawerProps> = ({
   }
 
   const handleExecutionOptionChange = <K extends keyof WfesExecutionOptions>(
-    key: K, 
+    key: K,
     value: WfesExecutionOptions[K]
   ) => {
     if (onExecutionOptionsChange && executionOptions) {
@@ -59,13 +101,14 @@ export const WfesOptionsDrawer: React.FC<WfesOptionsDrawerProps> = ({
           <Paper p="md" withBorder>
             <Title order={6} mb="sm">Execution</Title>
             <Stack gap="sm">
-              <Checkbox 
-                label="Force" 
-                checked={executionOptions.force} 
+              <Checkbox
+                label="Force"
+                checked={executionOptions.force}
+                disabled={!!forceDisabledReason}
                 onChange={(e) => handleExecutionOptionChange('force', e.currentTarget.checked)}
-                description="Skip the parameter sanity checks (--force)"
+                description={forceDisabledReason ?? 'Skip the parameter sanity checks (--force)'}
               />
-              
+
               <NumberInput
                 label="Threads"
                 description="Number of CPU threads to use"
@@ -74,7 +117,7 @@ export const WfesOptionsDrawer: React.FC<WfesOptionsDrawerProps> = ({
                 min={1}
                 max={navigator.hardwareConcurrency || 8}
               />
-              
+
               <Select
                 label="Library"
                 description="Linear algebra backend"
@@ -106,86 +149,28 @@ export const WfesOptionsDrawer: React.FC<WfesOptionsDrawerProps> = ({
                       ]
                 }
               />
-              
+
             </Stack>
           </Paper>
         )}
 
         {/* Output Options - if provided */}
-        {outputOptions && onOutputOptionsChange && (
+        {outputOptions && onOutputOptionsChange && outputFlags.length > 0 && (
           <Paper p="md" withBorder>
             <Title order={6} mb="sm">Output Options</Title>
             <Stack gap="sm">
-              <div>
-                <Checkbox 
-                  label="Write Q" 
-                  checked={outputOptions.writeQ || false} 
-                  onChange={(e) => handleOutputOptionChange('writeQ', e.currentTarget.checked)} 
-                />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Transient-to-transient transition probability sub-matrix
-                </Text>
-              </div>
-              <div>
-                <Checkbox 
-                  label="Write R" 
-                  checked={outputOptions.writeR || false} 
-                  onChange={(e) => handleOutputOptionChange('writeR', e.currentTarget.checked)} 
-                />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Transient-to-absorbing transition probability sub-matrix
-                </Text>
-              </div>
-              <div>
-                <Checkbox 
-                  label="Write B" 
-                  checked={outputOptions.writeB || false} 
-                  onChange={(e) => handleOutputOptionChange('writeB', e.currentTarget.checked)} 
-                />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Absorption probability matrix: B = NR
-                </Text>
-              </div>
-              <div>
-                <Checkbox 
-                  label="Write N" 
-                  checked={outputOptions.writeN || false} 
-                  onChange={(e) => handleOutputOptionChange('writeN', e.currentTarget.checked)} 
-                />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Fundamental matrix: N = (I-Q)^(-1)
-                </Text>
-              </div>
-              <div>
-                <Checkbox 
-                  label="Write N_Ext" 
-                  checked={outputOptions.writeNExt || false} 
-                  onChange={(e) => handleOutputOptionChange('writeNExt', e.currentTarget.checked)} 
-                />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Fundamental matrix, conditioned on extinction
-                </Text>
-              </div>
-              <div>
-                <Checkbox 
-                  label="Write N_Fix" 
-                  checked={outputOptions.writeNFix || false} 
-                  onChange={(e) => handleOutputOptionChange('writeNFix', e.currentTarget.checked)} 
-                />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Fundamental matrix, conditioned on fixation
-                </Text>
-              </div>
-              <div>
-                <Checkbox 
-                  label="Write Res" 
-                  checked={outputOptions.writeRes || false} 
-                  onChange={(e) => handleOutputOptionChange('writeRes', e.currentTarget.checked)} 
-                />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Full results summary file
-                </Text>
-              </div>
+              {outputFlags.map((flag) => (
+                <div key={String(flag.key)}>
+                  <Checkbox
+                    label={flag.label}
+                    checked={outputOptions[flag.key] === true}
+                    onChange={(e) => handleOutputOptionChange(flag.key, e.currentTarget.checked)}
+                  />
+                  <Text size="xs" c="dimmed" ml={22}>
+                    {flag.description}
+                  </Text>
+                </div>
+              ))}
               <Divider my="xs" />
 
               {/* Destination for the files the checkboxes above request.
