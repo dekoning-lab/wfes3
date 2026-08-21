@@ -151,8 +151,8 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
       const rawV1 = parseFloat(comp1BackwardMutation) || 0
       const rawS1 = parseFloat(comp1SelectionCoeff) || 0
       
-      setComp1ForwardMutation((rawU1 * 4 * N).toExponential(3))
-      setComp1BackwardMutation((rawV1 * 4 * N).toExponential(3))
+      setComp1ForwardMutation((rawU1 * 4 * N).toString())
+      setComp1BackwardMutation((rawV1 * 4 * N).toString())
       setComp1SelectionCoeff(rawS1 === 0 ? '0' : (rawS1 * 2 * N).toString())
       
       // Component 2
@@ -160,8 +160,8 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
       const rawV2 = parseFloat(comp2BackwardMutation) || 0
       const rawS2 = parseFloat(comp2SelectionCoeff) || 0
       
-      setComp2ForwardMutation((rawU2 * 4 * N).toExponential(3))
-      setComp2BackwardMutation((rawV2 * 4 * N).toExponential(3))
+      setComp2ForwardMutation((rawU2 * 4 * N).toString())
+      setComp2BackwardMutation((rawV2 * 4 * N).toString())
       setComp2SelectionCoeff(rawS2 === 0 ? '0' : (rawS2 * 2 * N).toString())
     } else if (!newValue && populationScaled) {
       // Converting from scaled to raw values
@@ -171,18 +171,18 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
       const scaledV1 = parseFloat(comp1BackwardMutation) || 0
       const scaledS1 = parseFloat(comp1SelectionCoeff) || 0
       
-      setComp1ForwardMutation((scaledU1 / (4 * N)).toExponential(3))
-      setComp1BackwardMutation((scaledV1 / (4 * N)).toExponential(3))
-      setComp1SelectionCoeff(scaledS1 === 0 ? '0' : (scaledS1 / (2 * N)).toExponential(3))
+      setComp1ForwardMutation((scaledU1 / (4 * N)).toString())
+      setComp1BackwardMutation((scaledV1 / (4 * N)).toString())
+      setComp1SelectionCoeff(scaledS1 === 0 ? '0' : (scaledS1 / (2 * N)).toString())
       
       // Component 2
       const scaledU2 = parseFloat(comp2ForwardMutation) || 0
       const scaledV2 = parseFloat(comp2BackwardMutation) || 0
       const scaledS2 = parseFloat(comp2SelectionCoeff) || 0
       
-      setComp2ForwardMutation((scaledU2 / (4 * N)).toExponential(3))
-      setComp2BackwardMutation((scaledV2 / (4 * N)).toExponential(3))
-      setComp2SelectionCoeff(scaledS2 === 0 ? '0' : (scaledS2 / (2 * N)).toExponential(3))
+      setComp2ForwardMutation((scaledU2 / (4 * N)).toString())
+      setComp2BackwardMutation((scaledV2 / (4 * N)).toString())
+      setComp2SelectionCoeff(scaledS2 === 0 ? '0' : (scaledS2 / (2 * N)).toString())
     }
     
     setPopulationScaled(newValue)
@@ -488,7 +488,7 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
                     <Group grow>
                       <WfesParameterInput
                         type="scientific"
-                        label={populationScaled ? "4Nu" : "u"}
+                        label={populationScaled ? "4Nv" : "v"}
                         description="Forward mutation rate"
                         value={comp1ForwardMutation}
                         onChange={setComp1ForwardMutation}
@@ -496,7 +496,7 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
                       />
                       <WfesParameterInput
                         type="scientific"
-                        label={populationScaled ? "4Nv" : "v"}
+                        label={populationScaled ? "4Nu" : "u"}
                         description="Backward mutation rate"
                         value={comp1BackwardMutation}
                         onChange={setComp1BackwardMutation}
@@ -536,7 +536,7 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
                     <Group grow>
                       <WfesParameterInput
                         type="scientific"
-                        label={populationScaled ? "4Nu" : "u"}
+                        label={populationScaled ? "4Nv" : "v"}
                         description="Forward mutation rate"
                         value={comp2ForwardMutation}
                         onChange={setComp2ForwardMutation}
@@ -544,7 +544,7 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
                       />
                       <WfesParameterInput
                         type="scientific"
-                        label={populationScaled ? "4Nv" : "v"}
+                        label={populationScaled ? "4Nu" : "u"}
                         description="Backward mutation rate"
                         value={comp2BackwardMutation}
                         onChange={setComp2BackwardMutation}
