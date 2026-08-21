@@ -1,8 +1,10 @@
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>  // for setenv
 #include <limits>
 #include "backend_config.h"
@@ -120,6 +122,25 @@ int main(int argc, char const *argv[]) {
         require_two(u, "-u", "Backward mutation rates");
         require_two(v, "-v", "Forward mutation rates");
 
+        // -r/--no-recurrent-mu is declared by the parser for every tool that
+        // builds a Wright-Fisher matrix, but the SGV model is assembled by
+        // WF::NonAbsorbingToFixationOnly, whose signature has no
+        // recurrent-mutation argument. The flag therefore never reached the
+        // model: output was byte-identical with and without it, while
+        // --verbose cheerfully echoed "recurrent_mutation = false". Accepting a
+        // parameter and ignoring it is the worst of the three options; wiring
+        // it is a model change. Refuse.
+        //
+        // options.recurrent_mutation defaults to true and is set false only by
+        // this flag, so this test is exactly "was -r supplied".
+        if (!options.recurrent_mutation) {
+            throw std::runtime_error(
+                "-r/--no-recurrent-mu is not supported for time_dist_sgv: the SGV "
+                "model (NonAbsorbingToFixationOnly) takes no recurrent-mutation "
+                "argument, so the flag would be accepted and silently ignored. It "
+                "is supported by time_dist and time_dist_dual.");
+        }
+
         // Population size is a scalar here and shared by both phases.
         for (llong k = 0; k < 2; k++) {
             CLI::Args_Parser::validate_model_domain(
@@ -137,8 +158,16 @@ int main(int argc, char const *argv[]) {
             std::cout << "v = [" << v.transpose() << "]" << std::endl;
             std::cout << "a = " << options.alpha << std::endl;
             std::cout << "max_t = " << options.max_t << std::endl;
-            std::cout << "integration_cutoff = " << options.integration_cutoff << std::endl;
-            std::cout << "recurrent_mutation = " << (options.recurrent_mutation ? "true" : "false") << std::endl;
+            // No integration_cutoff echo: this tool's parser hardcodes
+            // options.integration_cutoff to 1e-10 and routes the user's -c to
+            // distribution_cutoff, so echoing it printed a constant that the
+            // computation never reads and that ignored what the user typed. The
+            // value that actually governs the run is reported instead.
+            //
+            // No recurrent_mutation echo either -- see the refusal above: the
+            // SGV model has no such parameter, so there is nothing honest to
+            // report here.
+            std::cout << "distribution_cutoff = " << options.distribution_cutoff << std::endl;
         }
         
         // Library to use
@@ -201,25 +230,39 @@ int main(int argc, char const *argv[]) {
         
         // Resize to actual number of computed time steps
         PH.conservativeResize(i, 3);
-        
-        // Normalize CDF to get conditional distribution
-        // The CDF should represent P(T <= t | absorption occurs)
-        if (cdf > 0) {
-            for (llong j = 0; j < i; j++) {
-                PH(j, 2) = PH(j, 2) / cdf;  // Normalize CDF
-            }
+
+        // A stopping rule that is already satisfied before the first generation
+        // ends the loop with zero rows. `-d -1` did exactly that: exit 0, a
+        // header-only CSV, and completely empty stderr -- a header-only
+        // "success" is indistinguishable, to anything downstream, from a model
+        // in which fixation never happens. There is no distribution here to
+        // report, so refuse.
+        //
+        // (This tool's parser range-checks options.integration_cutoff, which is
+        // a hardcoded constant, instead of the distribution_cutoff the user
+        // actually set, which is why a negative -d reaches this far at all.
+        // Fixing that check belongs to the parser; refusing to publish an empty
+        // table belongs here regardless.)
+        if (i == 0) {
+            std::ostringstream msg;
+            msg << "No time steps were computed: --distribution-cutoff ("
+                << options.distribution_cutoff << ") was already satisfied before"
+                   " the first generation, so there is no time distribution to"
+                   " report. Use a cutoff greater than 0 (and at most 1).";
+            throw std::runtime_error(msg.str());
         }
-        
-        // Output phase-type distribution if requested
-        if (!options.output_P_path.empty()) {
-            CLI::OutputFormatter::write_matrix_to_file(PH, options.output_P_path);
+        if (!std::isfinite(cdf)) {
+            throw std::runtime_error(
+                "The accumulated fixation mass is not finite; the iteration has"
+                " broken down and no distribution can be reported.");
         }
-        
 
         // Did the run finish, or just run out of generations? The loop stops on
         // EITHER the cutoff or --max-t and said nothing about which. Hitting
         // max_t truncates the distribution, and every moment computed from it
         // is then a lower bound.
+        //
+        // Computed before the normalisation below, which depends on it.
         const bool reached_cutoff = cdf >= options.distribution_cutoff;
         if (!reached_cutoff) {
             std::cerr << "Warning: stopped at --max-t (" << options.max_t
@@ -227,6 +270,28 @@ int main(int argc, char const *argv[]) {
                       << " the cutoff " << options.distribution_cutoff
                       << " was not reached. Moments computed from this window are"
                       << " underestimates -- raise --max-t.\n";
+        }
+
+        // Normalize CDF to get conditional distribution
+        // The CDF should represent P(T <= t | absorption occurs)
+        //
+        // ONLY when the run actually converged. Dividing a truncated CDF by the
+        // mass it happened to capture makes it end at exactly 1.0, which is the
+        // signature of a complete distribution -- so `-m 40` captured 8.7e-09
+        // of the mass and still printed a CDF ending in 1, which in the CSV and
+        // plain-text paths (neither of which carries reached_cutoff) was
+        // indistinguishable from a converged run. Left raw, the partial CDF
+        // discloses its own truncation in every output format and stays
+        // consistent with final_cdf.
+        if (reached_cutoff && cdf > 0) {
+            for (llong j = 0; j < i; j++) {
+                PH(j, 2) = PH(j, 2) / cdf;  // Normalize CDF
+            }
+        }
+
+        // Output phase-type distribution if requested
+        if (!options.output_P_path.empty()) {
+            CLI::OutputFormatter::write_matrix_to_file(PH, options.output_P_path);
         }
 
         // Print summary statistics
@@ -238,8 +303,16 @@ int main(int argc, char const *argv[]) {
             }
         }
         
-        // Output results based on format
-        if (options.output_P_path.empty()) {
+        // Output results based on format.
+        //
+        // --output-P used to gate this whole block, so `--output-P f --json`
+        // exited 0 having written 0 bytes to stdout (1783 without the flag) --
+        // a caller that asked for machine-readable output got silence and no
+        // indication why. Writing a file and emitting a stream are independent
+        // requests; only the human-readable table below is still suppressed
+        // when a file was asked for, since that would merely echo the file's
+        // contents to the terminal (this is what time_dist_dual does too).
+        {
             if (options.json_output) {
                 // JSON output
                 std::cout << "{" << std::endl;
@@ -286,7 +359,7 @@ int main(int argc, char const *argv[]) {
                              << std::setprecision(std::numeric_limits<double>::max_digits10) 
                              << PH(j, 1) << "," << PH(j, 2) << std::endl;
                 }
-            } else if (!options.verbose) {
+            } else if (!options.verbose && options.output_P_path.empty()) {
                 // Default output: show first few and last few rows of the distribution
                 std::cout << "Standing genetic variation time distribution of fixation (first 10 and last 5 time points):" << std::endl;
                 std::cout << "Time\tP_abs\tCDF" << std::endl;

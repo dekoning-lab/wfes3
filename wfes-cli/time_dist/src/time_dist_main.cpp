@@ -1,5 +1,6 @@
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <chrono>
@@ -80,7 +81,13 @@ int main(int argc, char const *argv[]) {
             std::cout << "v = " << options.forward_mutation << std::endl;
             std::cout << "a = " << options.alpha << std::endl;
             std::cout << "max_t = " << options.max_t << std::endl;
-            std::cout << "integration_cutoff = " << options.integration_cutoff << std::endl;
+            // No integration_cutoff echo: this tool's parser hardcodes
+            // options.integration_cutoff to 1e-10 and routes the user's -c to
+            // distribution_cutoff, so echoing it printed a constant that the
+            // computation never reads and that ignored what the user typed. The
+            // value that actually governs the run is reported as
+            // distribution_cutoff (below, and in the JSON statistics block).
+            std::cout << "distribution_cutoff = " << options.distribution_cutoff << std::endl;
             std::cout << "recurrent_mutation = " << (options.recurrent_mutation ? "true" : "false") << std::endl;
         }
         
@@ -234,6 +241,26 @@ int main(int argc, char const *argv[]) {
             c = wf.Q->multiply(c, true);
         }
         
+        // A stopping rule that is already satisfied before the first generation
+        // (--distribution-cutoff 0 makes both targets zero) ends the loop with
+        // zero rows. That used to be an exit-0 "success" whose entire output
+        // was a CSV header -- indistinguishable, to anything downstream, from a
+        // model in which absorption never happens. There is no distribution
+        // here to report, so refuse.
+        if (i == 0) {
+            std::ostringstream msg;
+            msg << "No time steps were computed: --distribution-cutoff ("
+                << options.distribution_cutoff << ") was already satisfied before"
+                   " the first generation, so there is no time distribution to"
+                   " report. Use a cutoff greater than 0 (and at most 1).";
+            throw std::runtime_error(msg.str());
+        }
+        if (!std::isfinite(cdf_ext) || !std::isfinite(cdf_fix)) {
+            throw std::runtime_error(
+                "The accumulated absorption mass is not finite; the iteration has"
+                " broken down and no distribution can be reported.");
+        }
+
         // Did both branches finish, or did the run just hit --max-t? Same
         // disclosure as the other distribution tools: a truncated window makes
         // every moment computed from it a lower bound, and the loop said
@@ -250,7 +277,16 @@ int main(int argc, char const *argv[]) {
 
         // Normalize CDFs to get conditional distributions
         // The CDFs stored in PH should represent P(T <= t | event occurs)
-        if (cdf_ext > 0 || cdf_fix > 0) {
+        //
+        // ONLY when the run actually converged. Dividing a truncated CDF by the
+        // mass it happened to capture makes it end at exactly 1.0, which is the
+        // signature of a complete distribution -- so a run that captured
+        // 8.7e-09 of its mass printed a CDF ending in 1 and was, in the CSV and
+        // plain-text paths (neither of which carries reached_cutoff),
+        // indistinguishable from a converged one. Left raw, the partial CDF
+        // discloses its own truncation in every output format and stays
+        // consistent with the totals reported in the statistics block.
+        if (reached_cutoff && (cdf_ext > 0 || cdf_fix > 0)) {
             for (llong j = 0; j < i; j++) {
                 if (cdf_ext > 0) {
                     PH(j, 4) = PH(j, 4) / cdf_ext;  // Normalize extinction CDF
@@ -299,7 +335,11 @@ int main(int argc, char const *argv[]) {
             std::cout << "    \"backward_mutation\": " << options.backward_mutation << "," << std::endl;
             std::cout << "    \"forward_mutation\": " << options.forward_mutation << "," << std::endl;
             std::cout << "    \"alpha\": " << options.alpha << "," << std::endl;
-            std::cout << "    \"integration_cutoff\": " << options.integration_cutoff << "," << std::endl;
+            // "integration_cutoff" is deliberately absent: it was a constant
+            // 1e-10 hardcoded by the parser, never read by this computation,
+            // and unchanged by the user's -c. A provenance block must carry
+            // only values the run actually used -- the governing cutoff is
+            // reported as "distribution_cutoff" in the statistics block below.
             std::cout << "    \"max_t\": " << options.max_t << std::endl;
             std::cout << "  }," << std::endl;
             std::cout << "  \"statistics\": {" << std::endl;

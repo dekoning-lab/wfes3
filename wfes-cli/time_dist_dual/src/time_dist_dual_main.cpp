@@ -1,8 +1,10 @@
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <chrono>
+#include <cmath>
 #include "backend_config.h"
 #ifdef WFES_USE_MKL
 #include <mkl.h>
@@ -74,7 +76,12 @@ int main(int argc, char const *argv[]) {
             std::cout << "v = " << options.forward_mutation << std::endl;
             std::cout << "a = " << options.alpha << std::endl;
             std::cout << "max_t = " << options.max_t << std::endl;
-            std::cout << "integration_cutoff = " << options.integration_cutoff << std::endl;
+            // No integration_cutoff echo: this tool's parser hardcodes
+            // options.integration_cutoff to 1e-10 and routes the user's -c to
+            // distribution_cutoff, so echoing it printed a constant that the
+            // computation never reads and that ignored what the user typed. The
+            // value that actually governs the run is reported instead.
+            std::cout << "distribution_cutoff = " << options.distribution_cutoff << std::endl;
             std::cout << "recurrent_mutation = " << (options.recurrent_mutation ? "true" : "false") << std::endl;
         }
         
@@ -135,25 +142,32 @@ int main(int argc, char const *argv[]) {
         
         // Resize to actual number of computed time steps
         PH.conservativeResize(i, 5);
-        
-        // Normalize CDF to get conditional distribution
-        // The CDF should represent P(T <= t | absorption occurs)
-        if (cdf > 0) {
-            for (llong j = 0; j < i; j++) {
-                PH(j, 4) = PH(j, 4) / cdf;  // Normalize CDF
-            }
+
+        // A stopping rule that is already satisfied before the first generation
+        // (--distribution-cutoff 0) ends the loop with zero rows. That used to
+        // be an exit-0 "success" whose entire output was a CSV header --
+        // indistinguishable, to anything downstream, from a model in which
+        // absorption never happens. There is no distribution here to report.
+        if (i == 0) {
+            std::ostringstream msg;
+            msg << "No time steps were computed: --distribution-cutoff ("
+                << options.distribution_cutoff << ") was already satisfied before"
+                   " the first generation, so there is no time distribution to"
+                   " report. Use a cutoff greater than 0 (and at most 1).";
+            throw std::runtime_error(msg.str());
         }
-        
-        // Output phase-type distribution if requested
-        if (!options.output_P_path.empty()) {
-            CLI::OutputFormatter::write_matrix_to_file(PH, options.output_P_path);
+        if (!std::isfinite(cdf)) {
+            throw std::runtime_error(
+                "The accumulated absorption mass is not finite; the iteration has"
+                " broken down and no distribution can be reported.");
         }
-        
 
         // Did the run finish, or just run out of generations? The loop stops on
         // EITHER the cutoff or --max-t and said nothing about which. Hitting
         // max_t truncates the distribution, and every moment computed from it
         // is then a lower bound.
+        //
+        // Computed before the normalisation below, which depends on it.
         const bool reached_cutoff = cdf >= options.distribution_cutoff;
         if (!reached_cutoff) {
             std::cerr << "Warning: stopped at --max-t (" << options.max_t
@@ -161,6 +175,28 @@ int main(int argc, char const *argv[]) {
                       << " the cutoff " << options.distribution_cutoff
                       << " was not reached. Moments computed from this window are"
                       << " underestimates -- raise --max-t.\n";
+        }
+
+        // Normalize CDF to get conditional distribution
+        // The CDF should represent P(T <= t | absorption occurs)
+        //
+        // ONLY when the run actually converged. Dividing a truncated CDF by the
+        // mass it happened to capture makes it end at exactly 1.0, which is the
+        // signature of a complete distribution -- so a run that captured
+        // 3.4e-06 of its mass printed a CDF ending in 1 and was, in the CSV and
+        // plain-text paths (neither of which carries reached_cutoff),
+        // indistinguishable from a converged one. Left raw, the partial CDF
+        // discloses its own truncation in every output format and stays
+        // consistent with final_cdf.
+        if (reached_cutoff && cdf > 0) {
+            for (llong j = 0; j < i; j++) {
+                PH(j, 4) = PH(j, 4) / cdf;  // Normalize CDF
+            }
+        }
+
+        // Output phase-type distribution if requested
+        if (!options.output_P_path.empty()) {
+            CLI::OutputFormatter::write_matrix_to_file(PH, options.output_P_path);
         }
 
         // Print summary statistics

@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <chrono>
@@ -119,20 +121,30 @@ int main(int argc, char const *argv[]) {
         
         // Get number of moments to calculate (default to 20)
         llong k = options.n_moments > 0 ? options.n_moments : 20;
-        
+
+        // The tool always reports a standard deviation, which needs the second
+        // raw moment -- so with `-k 1` the m.col(2) read below indexed one past
+        // the end of the moment matrix. In a debug build that is an Eigen
+        // assertion (SIGABRT, exit 134, nothing on stdout); under NDEBUG the
+        // assertion compiles out and the same read returns whatever is in
+        // memory, which would be printed as the standard deviation. Compute one
+        // extra moment internally instead; only the k the user asked for are
+        // reported.
+        const llong k_internal = std::max(k, 2LL);
+
         // Initialize z vector for moment calculation algorithm
-        dvec z = dvec::Zero(k + 1);
-        z(0) = 1; 
+        dvec z = dvec::Zero(k_internal + 1);
+        z(0) = 1;
         z(1) = -1;
-        
+
         // Initialize right-hand side and moment matrix
         dvec rhs = dvec::Ones(size);
-        dmat m = dmat::Zero(size, k + 1);
+        dmat m = dmat::Zero(size, k_internal + 1);
         m.col(0) = rhs;
         m.col(1) = solver->solve(rhs, false);
-        
+
         // Calculate moments using the recursive formula
-        for (llong i = 1; i < k; i++) {
+        for (llong i = 1; i < k_internal; i++) {
             z(i + 1) = -1;
             for (llong j = i; j > 0; j--) {
                 z(j) = z(j - 1) - z(j);
@@ -167,7 +179,44 @@ int main(int argc, char const *argv[]) {
         double m2 = moment(2);
         double mean = m1;
         double std_dev = std::sqrt(m2 - (m1 * m1));
-        
+
+        // Raw absorption-time moments grow roughly like k! * E[T]^k, so for any
+        // realistic E[T] they run out of double precision after a few tens of
+        // orders. Past that point the recursion produces inf, then inf - inf =
+        // nan, and every later moment is nan. This used to be printed verbatim:
+        // `-N 10 -k 50 --csv` exited 0 with moments 31-50 all "nan" and not a
+        // word on stderr, and the JSON path emitted bare `nan` tokens, which is
+        // not JSON at all -- any strict parser fails on the whole document
+        // rather than on the affected field.
+        //
+        // A moment that overflowed is not a small number and not a large one;
+        // it is a number this arithmetic cannot represent. Refuse, and say how
+        // far the computation did get.
+        llong last_finite = 0;
+        for (llong idx = 1; idx <= k; idx++) {
+            if (!std::isfinite(moment(idx))) break;
+            last_finite = idx;
+        }
+        if (last_finite < k) {
+            std::ostringstream msg;
+            msg << "Raw moment " << (last_finite + 1) << " of " << k
+                << " is not finite: the moments of this model overflow double "
+                   "precision beyond order " << last_finite;
+            if (last_finite >= 1) {
+                msg << " (moment " << last_finite << " = " << moment(last_finite) << ")";
+            }
+            msg << ". Rerun with -k " << last_finite << " or smaller.";
+            throw std::runtime_error(msg.str());
+        }
+        if (!std::isfinite(mean) || !std::isfinite(std_dev)) {
+            std::ostringstream msg;
+            msg << "The reported summary statistics are not finite (mean = " << mean
+                << ", std_dev = " << std_dev << "): the variance m2 - m1^2 = "
+                << (m2 - m1 * m1) << " could not be evaluated in double precision"
+                   " for these parameters. No results are reported.";
+            throw std::runtime_error(msg.str());
+        }
+
         // Print results
         if (options.json_output) {
             // JSON format
