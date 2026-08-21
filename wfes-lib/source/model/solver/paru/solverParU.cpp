@@ -435,23 +435,48 @@ dvec ParUSolver::solve(dvec& b, bool transpose) {
 }
 
 dmat ParUSolver::solve_multiple(dmat& b, bool transpose) {
-    // Ensure the matrix is factorized
-    ensureFactorized();
-    
-    if (b.rows() != n_rows) {
-        throw std::runtime_error("ParUSolver: RHS matrix row size mismatch");
+    // Contract, documented and enforced in PardisoSolver::solve_multiple and
+    // matched by SuiteSparseSolver::solve_multiple: the ROWS of b are the
+    // right-hand sides, each of length equal to the system order, and the
+    // result is (order x n_rhs) so that column i is the solution for RHS i.
+    // transpose == true solves A^T x = b_i for every row b_i, with the same
+    // semantics as the single-RHS entry point.
+    //
+    // This previously enforced the opposite (columns-are-RHS) convention: it
+    // required b.rows() == order and iterated over b.col(i), so the only
+    // production caller -- wfafs_stochastic, which passes the rectangular
+    // Identity(n_rhs, order) with transpose == true -- died here with
+    // "RHS matrix row size mismatch". The "transpose solve not yet
+    // implemented" stub that used to sit below that check was unreachable
+    // from that caller; the orientation guard threw first.
+    if (b.cols() != n_rows) {
+        throw std::runtime_error(
+            "ParUSolver::solve_multiple: right-hand sides have length " +
+            std::to_string(b.cols()) + " but the factorized system has order " +
+            std::to_string(n_rows) +
+            ". Rows of the input are the right-hand sides");
     }
-    
-    int64_t nrhs = b.cols();
-    dmat x(n_rows, nrhs);
-    
+
+    // Factorize whichever matrix the per-row solves use. ParU_Solve (the whole
+    // solve API of ParU in SuiteSparse 7.x) has no transpose option -- it only
+    // solves Ax=b / AX=B for the factorized matrix -- so solve() realizes
+    // A^T x = b by factorizing an explicit transpose of the matrix
+    // (createTranspose()/factorizeTranspose()) and solving that system. Only
+    // the factorization actually needed is computed here: factorizing A too
+    // would double the memory and time for a transpose-only workload.
     if (transpose) {
-        throw std::runtime_error("ParUSolver: Transpose solve not yet implemented for multiple RHS");
+        factorizeTranspose();
+    } else {
+        ensureFactorized();
     }
-    
-    // Solve each RHS independently using single RHS interface
+
+    int64_t nrhs = b.rows();
+    dmat x(n_rows, nrhs);   // (order x n_rhs)
+
+    // Solve each RHS independently through the single-RHS entry point, which
+    // already implements both the plain and the transpose solve.
     for (int64_t i = 0; i < nrhs; i++) {
-        dvec bi = b.col(i);
+        dvec bi = b.row(i);
         dvec xi = solve(bi, transpose);
         x.col(i) = xi;
     }
