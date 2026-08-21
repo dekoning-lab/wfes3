@@ -164,17 +164,69 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   // Destination folder for the files above; Downloads when unset.
   const [outputDirectory, setOutputDirectory] = useState('')
 
-  // --output-E is written only inside the CLI's --equilibrium branch and
-  // --output-V only inside its --fundamental branch; in any other mode the
-  // flag parses and is then ignored. The checkboxes are disabled outside
-  // their mode, and everything downstream reads emitE/emitV rather than the
-  // raw state, so a box left ticked while the mode changes never asks for a
-  // file the run will not produce. --output-I has no such restriction: the
-  // CLI writes the starting distribution before it branches on model type.
+  // Every --output-* flag, and both starting-state parameters (-p /
+  // --starting-copies, --initial), are mode-scoped in the CLI: passing one
+  // outside its mode is now a hard error (nonzero exit, named diagnostic),
+  // not the old silent no-op -- see CX1b's per-mode matrix. Each boolean
+  // below mirrors one row of that matrix. Everything downstream -- the
+  // checkboxes' `disabled` props, the execute-time params, and the Command
+  // Line Preview -- reads these (or the emit*/canUse* values derived from
+  // them) instead of the raw state, so a box left ticked, or a starting-
+  // state choice left selected, while the mode changes can never ask the
+  // CLI for a flag it will refuse.
+  //
+  // --output-Q needs no gate: it is produced in all seven modes.
+  const canWriteR = modelType !== 'equilibrium' && modelType !== 'nonAbsorbing'
+  const canWriteN = modelType !== 'equilibrium' && modelType !== 'nonAbsorbing'
+  const canWriteB = modelType !== 'equilibrium' && modelType !== 'nonAbsorbing'
+  // Conditioned on extinction: the both-absorbing models where extinction is
+  // an absorbing state to condition on. Not --fixation (extinction, count 0,
+  // is transient there -- fixation is its only absorbing state) and not
+  // --establishment (its truncated model's two absorbing states are
+  // extinction/establishment, a pair this flag is not wired to).
+  const canWriteNExt = modelType === 'absorption' || modelType === 'fundamental' || modelType === 'alleleAge'
+  // Conditioned on fixation: every model where fixation is a real absorbing
+  // state except --establishment, whose absorbing states are
+  // extinction/establishment, not extinction/fixation.
+  const canWriteNFix = modelType === 'absorption' || modelType === 'fixation' ||
+    modelType === 'fundamental' || modelType === 'alleleAge'
+  // The starting distribution: refused where the model integrates over no
+  // starting state at all (equilibrium, non-absorbing), and in --fundamental
+  // unless a single starting count is chosen -- with no -p it computes the
+  // whole fundamental matrix and uses no starting distribution.
+  const canWriteI = modelType !== 'equilibrium' && modelType !== 'nonAbsorbing' &&
+    (modelType !== 'fundamental' || sojournScope === 'single')
+  // --output-E is written only inside the CLI's --equilibrium branch,
+  // --output-V only inside its --fundamental branch.
   const canWriteE = modelType === 'equilibrium'
   const canWriteV = modelType === 'fundamental'
+  const emitR = writeR && canWriteR
+  const emitN = writeN && canWriteN
+  const emitB = writeB && canWriteB
+  const emitNExt = writeNExt && canWriteNExt
+  const emitNFix = writeNFix && canWriteNFix
+  const emitI = writeI && canWriteI
   const emitE = writeE && canWriteE
   const emitV = writeV && canWriteV
+
+  // -p/--starting-copies (the "fixed" and "integrate" starting-state modes):
+  // refused only in --equilibrium, whose stationary distribution does not
+  // depend on a starting state. --fundamental takes its own single count
+  // through the Sojourn Times scope control above, not through this one, so
+  // it is excluded here too. --non-absorbing is excluded as well -- it never
+  // reads a starting state -- though the CLI does not yet refuse it there;
+  // that flag is just silently unused (an existing gap CX1b left open).
+  const modeHasStartingState = (m: ModelType) =>
+    m === 'absorption' || m === 'fixation' || m === 'establishment' || m === 'alleleAge'
+  // --initial's "file" alternative, further restricted: --establishment
+  // refuses --initial outright (a supplied distribution spans all transient
+  // states, but the model integrates only over states below the
+  // establishment count, so the two can never match -- see CX1b), even
+  // though -p/-c work fine there.
+  const modeAllowsInitialFile = (m: ModelType) =>
+    m === 'absorption' || m === 'fixation' || m === 'alleleAge'
+  const canUseStartingState = modeHasStartingState(modelType)
+  const canUseInitialFile = modeAllowsInitialFile(modelType)
 
   // Execution options. No solver state: no WFES binary declares --solver,
   // and the Select that once chose one is long gone.
@@ -269,7 +321,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
         alpha: numOrUndefined(alpha),
         startingCopies: modelType === 'fundamental'
           ? (sojournScope === 'single' ? intOrUndefined(startingCopies) : undefined)
-          : (initialMode === 'fixed' ? intOrUndefined(startingCopies) : undefined),
+          : (canUseStartingState && initialMode === 'fixed' ? intOrUndefined(startingCopies) : undefined),
         integrationCutoff: numOrUndefined(integrationCutoff),
         observedCopies: modelType === 'alleleAge' ? intOrUndefined(observedCopies) : undefined,
         numMoments: modelType === 'alleleAge' ? (parseInt(ageMoments) || 2) : undefined,
@@ -280,8 +332,13 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
         selectionCoeff: finiteOrUndefined(rawSelectionCoeff),
         dominanceCoeff: numOrUndefined(dominanceCoefficient),
         outputOptions: {
-          writeQ, writeR, writeB, writeN, writeNExt, writeNFix,
-          writeI, writeE: emitE, writeV: emitV,
+          // writeQ is unguarded: --output-Q has no mode restriction. Every
+          // other flag is sent through its emit* (canWrite*-gated) value so a
+          // box left ticked while the mode changes can never reach argv in a
+          // mode that refuses it.
+          writeQ, writeR: emitR, writeB: emitB, writeN: emitN,
+          writeNExt: emitNExt, writeNFix: emitNFix,
+          writeI: emitI, writeE: emitE, writeV: emitV,
           // Where the requested files are written (outputPath in the main
           // process reads this; Downloads when empty).
           outputDirectory: outputDirectory || undefined
@@ -290,9 +347,11 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
           force,
           threads: parseInt(threads),
           library,
-          // --fundamental refuses --initial: sojourn times are conditioned on a
-          // starting state, not averaged over a distribution of them.
-          initialDistFile: modelType !== 'fundamental' && initialMode === 'file'
+          // --equilibrium refuses --initial outright, --fundamental takes its
+          // starting state through the Sojourn Times scope control instead,
+          // and --establishment's truncated state space can never match a
+          // supplied distribution -- canUseInitialFile excludes all three.
+          initialDistFile: canUseInitialFile && initialMode === 'file'
             ? (initialDistribution || undefined) : undefined
         }
       }
@@ -382,7 +441,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     // preview must follow the same rule or it advertises a flag the run omits.
     const wantsStartingCopies = modelType === 'fundamental'
       ? sojournScope === 'single'
-      : initialMode === 'fixed'
+      : (canUseStartingState && initialMode === 'fixed')
     if (wantsStartingCopies && startingCopies !== '') parts.push(`--starting-copies ${parseInt(startingCopies)}`)
     if (modelType === 'alleleAge' && observedCopies !== '') parts.push(`--observed-copies ${parseInt(observedCopies)}`)
     if (modelType === 'alleleAge') parts.push(`--num-moments ${parseInt(ageMoments) || 2}`)
@@ -396,16 +455,16 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     if (alphaVal !== 1e-20) parts.push(`--alpha ${alphaVal}`)
     parts.push(`--num-threads ${threads}`)
     parts.push(`--library ${library}`)
-    if (initialMode === 'file' && initialDistribution) parts.push(`--initial ${initialDistribution}`)
+    if (canUseInitialFile && initialMode === 'file' && initialDistribution) parts.push(`--initial ${initialDistribution}`)
     if (force) parts.push('--force')
     const dir = outputDirectory || '~/Downloads'
     if (writeQ) parts.push(`--output-Q ${dir}/wfes_single_Q.mtx`)
-    if (writeR) parts.push(`--output-R ${dir}/wfes_single_R.csv`)
-    if (writeB) parts.push(`--output-B ${dir}/wfes_single_B.csv`)
-    if (writeN) parts.push(`--output-N ${dir}/wfes_single_N.csv`)
-    if (writeNExt) parts.push(`--output-N-ext ${dir}/wfes_single_N_ext.csv`)
-    if (writeNFix) parts.push(`--output-N-fix ${dir}/wfes_single_N_fix.csv`)
-    if (writeI) parts.push(`--output-I ${dir}/wfes_single_I.csv`)
+    if (emitR) parts.push(`--output-R ${dir}/wfes_single_R.csv`)
+    if (emitB) parts.push(`--output-B ${dir}/wfes_single_B.csv`)
+    if (emitN) parts.push(`--output-N ${dir}/wfes_single_N.csv`)
+    if (emitNExt) parts.push(`--output-N-ext ${dir}/wfes_single_N_ext.csv`)
+    if (emitNFix) parts.push(`--output-N-fix ${dir}/wfes_single_N_fix.csv`)
+    if (emitI) parts.push(`--output-I ${dir}/wfes_single_I.csv`)
     if (emitE) parts.push(`--output-E ${dir}/wfes_single_E.csv`)
     if (emitV) parts.push(`--output-V ${dir}/wfes_single_V.csv`)
     parts.push('--json')
@@ -432,8 +491,10 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     navigator.clipboard.writeText(formatResultsCopy('WFES single results', rows))
   }
 
-  // Count active output options
-  const activeOutputOptions = [writeQ, writeR, writeB, writeN, writeNExt, writeNFix, writeI, emitE, emitV].filter(Boolean).length
+  // Count active output options. Every gated control counts its emit* value
+  // (what will actually be sent), matching the badge to the argv the run
+  // will build rather than to checkboxes left ticked from a previous mode.
+  const activeOutputOptions = [writeQ, emitR, emitB, emitN, emitNExt, emitNFix, emitI, emitE, emitV].filter(Boolean).length
 
   /**
    * The quantities this mode reports, in display order.
@@ -621,6 +682,18 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                     const defaultFor = (m: ModelType) => (m === 'fixation' ? '0' : '1')
                     if (startingCopies === defaultFor(modelType)) {
                       setStartingCopies(defaultFor(next))
+                    }
+                    // 'file' is not offered by every mode's initial-state
+                    // control (--establishment allows only fixed/integrate;
+                    // --equilibrium, --non-absorbing and --fundamental offer
+                    // none of the three). Falling back to 'fixed' when the new
+                    // mode does not allow the current choice keeps the file
+                    // picker from staying visibly selected -- and reachable by
+                    // typing into its text field -- in a mode whose control no
+                    // longer offers it.
+                    if (initialMode === 'file' && !modeAllowsInitialFile(next)) {
+                      setInitialMode('fixed')
+                      setInitialDistribution('')
                     }
                     setModelType(next)
                     clearResults()
@@ -891,7 +964,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                       // Editable only in the mode that reads it ('fixed'): in
                       // file mode too the run sends no --starting-copies, so an
                       // enabled field there would edit a number the run ignores.
-                      disabled={initialMode !== 'fixed' || !(modelType === 'absorption' || modelType === 'fixation' || modelType === 'establishment' || modelType === 'alleleAge')}
+                      disabled={initialMode !== 'fixed' || !canUseStartingState}
                       min={modelType === 'fixation' ? 0 : 1}
                       max={populationSize ? parseInt(populationSize) * 2 - 1 : undefined}
                       error={startingCopies !== '' && !validateStartingCopies()}
@@ -904,7 +977,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                       value={integrationCutoff}
                       onChange={(event) => setIntegrationCutoff(event.currentTarget.value)}
                       placeholder="1e-10"
-                      disabled={initialMode !== 'integrate' || !(modelType === 'absorption' || modelType === 'fixation' || modelType === 'establishment' || modelType === 'alleleAge')}
+                      disabled={initialMode !== 'integrate' || !canUseStartingState}
                     />
                     <Text size="xs" c="dimmed" mt={4}>
                       Starting copy numbers rarer than this are left out of the integration over p
@@ -941,9 +1014,12 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                   </Stack>
                 )}
                 {/* Same control as every other view; the single view is the one tool
-                    that offers all three alternatives. */}
+                    that offers all three alternatives -- except --establishment,
+                    which refuses --initial outright (its truncated state space can
+                    never match a supplied distribution), so it is offered only
+                    fixed/integrate here. */}
                 <InitialStateSelector
-                  modes={['fixed', 'integrate', 'file']}
+                  modes={canUseInitialFile ? ['fixed', 'integrate', 'file'] : ['fixed', 'integrate']}
                   value={initialMode}
                   onChange={(m) => {
                     setInitialMode(m)
@@ -953,7 +1029,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                   onFileChange={setInitialDistribution}
                   expectedLength={(parseInt(populationSize) || 0) > 0 ? 2 * parseInt(populationSize) - 1 : null}
                   stateSpace="allele counts 1..2N-1"
-                  disabled={!(modelType === 'absorption' || modelType === 'fixation' || modelType === 'establishment' || modelType === 'alleleAge')}
+                  disabled={!canUseStartingState}
                 />
               </Paper>
 
@@ -1118,63 +1194,77 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                 </Text>
               </div>
               <div>
-                <Checkbox 
-                  label="Write R" 
-                  checked={writeR} 
-                  onChange={(e) => setWriteR(e.currentTarget.checked)} 
+                <Checkbox
+                  label="Write R"
+                  checked={writeR}
+                  disabled={!canWriteR}
+                  onChange={(e) => setWriteR(e.currentTarget.checked)}
                 />
                 <Text size="xs" c="dimmed" ml={22}>
                   Transient-to-absorbing transition probability sub-matrix
+                  {!canWriteR && ' — requires a model with an absorbing state'}
                 </Text>
               </div>
               <div>
-                <Checkbox 
-                  label="Write B" 
-                  checked={writeB} 
-                  onChange={(e) => setWriteB(e.currentTarget.checked)} 
+                <Checkbox
+                  label="Write B"
+                  checked={writeB}
+                  disabled={!canWriteB}
+                  onChange={(e) => setWriteB(e.currentTarget.checked)}
                 />
                 <Text size="xs" c="dimmed" ml={22}>
                   Absorption probability matrix: B = NR
+                  {!canWriteB && ' — requires a model with an absorbing state'}
                 </Text>
               </div>
               <div>
-                <Checkbox 
-                  label="Write N" 
-                  checked={writeN} 
-                  onChange={(e) => setWriteN(e.currentTarget.checked)} 
+                <Checkbox
+                  label="Write N"
+                  checked={writeN}
+                  disabled={!canWriteN}
+                  onChange={(e) => setWriteN(e.currentTarget.checked)}
                 />
                 <Text size="xs" c="dimmed" ml={22}>
                   Fundamental matrix: N = (I-Q)^(-1)
+                  {!canWriteN && ' — requires a model with an absorbing state'}
                 </Text>
               </div>
               <div>
-                <Checkbox 
-                  label="Write N_Ext" 
-                  checked={writeNExt} 
-                  onChange={(e) => setWriteNExt(e.currentTarget.checked)} 
+                <Checkbox
+                  label="Write N_Ext"
+                  checked={writeNExt}
+                  disabled={!canWriteNExt}
+                  onChange={(e) => setWriteNExt(e.currentTarget.checked)}
                 />
                 <Text size="xs" c="dimmed" ml={22}>
                   Fundamental matrix, conditioned on extinction
+                  {!canWriteNExt && ' — requires Standard Wright-Fisher, Sojourn Times, or Allele Age'}
                 </Text>
               </div>
               <div>
-                <Checkbox 
-                  label="Write N_Fix" 
-                  checked={writeNFix} 
-                  onChange={(e) => setWriteNFix(e.currentTarget.checked)} 
+                <Checkbox
+                  label="Write N_Fix"
+                  checked={writeNFix}
+                  disabled={!canWriteNFix}
+                  onChange={(e) => setWriteNFix(e.currentTarget.checked)}
                 />
                 <Text size="xs" c="dimmed" ml={22}>
                   Fundamental matrix, conditioned on fixation
+                  {!canWriteNFix && ' — requires Standard Wright-Fisher, Substitution Model, Sojourn Times, or Allele Age'}
                 </Text>
               </div>
               <div>
-                <Checkbox 
-                  label="Write I" 
-                  checked={writeI} 
-                  onChange={(e) => setWriteI(e.currentTarget.checked)} 
+                <Checkbox
+                  label="Write I"
+                  checked={writeI}
+                  disabled={!canWriteI}
+                  onChange={(e) => setWriteI(e.currentTarget.checked)}
                 />
                 <Text size="xs" c="dimmed" ml={22}>
                   Initial probability distribution over starting states
+                  {!canWriteI && (modelType === 'fundamental'
+                    ? ' — requires a single starting count (the "One starting count" option in Population)'
+                    : ' — requires a model with a starting distribution')}
                 </Text>
               </div>
               <div>

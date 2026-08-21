@@ -135,7 +135,31 @@ function declaredFlags(bin) {
  */
 const RUNTIME_REFUSALS = [
   { bin: 'wfafs_stochastic', flags: ['--output-R', '--output-N-ext', '--output-N-fix', '--output-N-tmo'], note: 'non-absorbing model; the tool errors at runtime' },
-  { bin: 'wfes_switching', flags: ['--integration-cutoff', '-c'], when: (args) => args.includes('--fixation'), note: 'refused under --fixation (non-default -c exits 1)' }
+  { bin: 'wfes_switching', flags: ['--integration-cutoff', '-c'], when: (args) => args.includes('--fixation'), note: 'refused under --fixation (non-default -c exits 1)' },
+  // wfes_single (T5b/CX1b): every --output-* flag and both starting-state
+  // parameters are now mode-scoped -- passing one outside its mode is a hard
+  // error (nonzero exit, named diagnostic), not the old silent no-op. Each
+  // rule below is one row of CX1b's per-mode matrix; WfesSingleViewMantine2's
+  // canWrite*/canUseStartingState/canUseInitialFile gates exist to keep the
+  // GUI from ever emitting these, so a rule firing here means that gating
+  // regressed.
+  { bin: 'wfes_single',
+    flags: ['--output-R', '--output-N', '--output-N-ext', '--output-N-fix', '--output-B', '--output-I', '--starting-copies', '--initial'],
+    when: (args) => args.includes('--equilibrium'),
+    note: 'the stationary distribution has no absorbing state and does not depend on a starting state' },
+  { bin: 'wfes_single',
+    flags: ['--output-R', '--output-N', '--output-N-ext', '--output-N-fix', '--output-B', '--output-I'],
+    when: (args) => args.includes('--non-absorbing'),
+    note: 'the full transition matrix has no absorbing state' },
+  { bin: 'wfes_single', flags: ['--output-N-ext'],
+    when: (args) => args.includes('--fixation'),
+    note: 'extinction is transient under --fixation, whose only absorbing state is fixation' },
+  { bin: 'wfes_single', flags: ['--output-N-ext', '--output-N-fix', '--initial'],
+    when: (args) => args.includes('--establishment'),
+    note: "establishment's truncated absorbing states are extinction/establishment (not extinction/fixation), and a supplied --initial distribution can never match its truncated state space" },
+  { bin: 'wfes_single', flags: ['--output-I'],
+    when: (args) => args.includes('--fundamental') && !args.includes('--starting-copies'),
+    note: 'with no -p, --fundamental computes the whole matrix and uses no starting distribution' }
 ]
 
 function checkFlags(label, bin, cmdTokens) {
@@ -417,6 +441,23 @@ async function fixtureMode() {
         { name: 'establishment', overrides: [{ str: 'absorption', to: 'establishment' }] },
         { name: 'allele age', overrides: [{ str: 'absorption', to: 'alleleAge' }] },
         { name: 'non-absorbing', overrides: [{ str: 'absorption', to: 'nonAbsorbing' }] },
+        // T5b: 'file' carried over from a previous mode (the harness injects
+        // it the same way a stale prior selection would survive a mode
+        // switch) must render and build argv without error in a mode whose
+        // control no longer offers it -- proving canUseInitialFile's `modes`
+        // restriction (InitialStateSelector's SegmentedControl loses the
+        // 'file' option) does not desync from the CLI it is modelling.
+        // Like every other view's "file mode (no file chosen)" state, no
+        // path is ever picked here, so --initial itself never reaches argv
+        // in this state regardless of the mode gate -- this does not, on its
+        // own, prove --initial gets suppressed once a path IS chosen. That
+        // half is covered by code review against CX1b's matrix instead: see
+        // canUseInitialFile's definition, used identically by both the argv
+        // builder and the preview.
+        { name: 'equilibrium (initialMode stuck on file)',
+          overrides: [{ str: 'absorption', to: 'equilibrium' }, { str: 'fixed', to: 'file' }] },
+        { name: 'establishment (initialMode stuck on file)',
+          overrides: [{ str: 'absorption', to: 'establishment' }, { str: 'fixed', to: 'file' }] },
         { name: 'library ParU', overrides: [{ str: 'Accelerate', to: 'ParU' }],
           base: 'absorption/fixed (default)', adds: ['ParU'] }
       ],
@@ -432,6 +473,27 @@ async function fixtureMode() {
         { control: 'Write V (fundamental)', state: 'fundamental', path: 'outputOptions.writeV', value: true, adds: ['--output-V'] },
         { control: 'Force', path: 'executionOptions.force', value: true, adds: ['--force'] },
         { control: 'Disable recurrent mutation', path: 'noRecurrentMutation', value: true, adds: ['--no-recurrent-mu'] }
+      ],
+      // T5b: every checkbox the CX1b mode x flag matrix newly restricts must
+      // render disabled with a stated reason in a mode that refuses it. The
+      // single view puts the reason in a sibling <Text>, not a `description`
+      // prop Checkbox forwards to the harness's control recorder, so this
+      // checks the rendered HTML directly -- the same technique the
+      // wfes_switching spec above uses for its one gated field. Each
+      // substring is quote-free so it survives react-dom/server's text
+      // escaping unmodified (see decode() above, needed only for the
+      // preview text, not this check).
+      htmlExpect: [
+        { state: 'equilibrium', contains: 'requires a model with an absorbing state',
+          why: 'Write R/B/N must say why they are disabled in Equilibrium Distribution' },
+        { state: 'equilibrium', contains: 'requires a model with a starting distribution',
+          why: 'Write I must say why it is disabled in Equilibrium Distribution' },
+        { state: 'fixation', contains: 'requires Standard Wright-Fisher, Sojourn Times, or Allele Age',
+          why: 'Write N_Ext must say why it is disabled in the Substitution Model' },
+        { state: 'establishment', contains: 'requires Standard Wright-Fisher, Substitution Model, Sojourn Times, or Allele Age',
+          why: 'Write N_Fix must say why it is disabled in Establishment Properties' },
+        { state: 'fundamental', contains: 'requires a single starting count',
+          why: 'Write I must say why it is disabled in Sojourn Times without a single starting count' }
       ]
     },
     {
