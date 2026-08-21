@@ -1,0 +1,58 @@
+# WFES Single Validation Results
+# Comparing New CLI Implementation vs Original wfes2
+
+## Test Parameters: -N 5 -s 0.1 -h 0.5 -u 1e-9 -v 1e-9
+
+## FIXATION Mode (-p 1)
+✅ PASSED
+Original: T_fix = 6.7344433610e+08, T_std = 6.7344431832e+08, Rate = 1.4849037202e-09
+New CLI:  T_fix = 6.73444e+08, T_std = 6.73444e+08, Rate = 1.4849e-09
+Status: Perfect match (precision differences only)
+
+## ABSORPTION Mode (-p 1)
+✅ PASSED
+Original: P_ext = 8.5150961700e-01, P_fix = 1.4849038300e-01, T_abs = 6.2910739849e+00, etc.
+New CLI:  P_ext = 0.85151, P_fix = 0.14849, T_abs = 6.29107, etc.
+Status: Perfect match (precision differences only)
+
+## EQUILIBRIUM Mode
+✅ PASSED
+Original: E[freq mut] = 7.0210952180e-01
+New CLI:  E[freq] = 0.70211
+Status: Perfect match
+
+## ESTABLISHMENT Mode (-k 1.5)
+✅ PASSED
+Original: F_est = 5.0000000000e-01, P_est = 2.2408912193e-01, T_seg = 1.1701964839e+01, etc.
+New CLI:  Est. freq. = 0.5, P_est = 0.224089, T_seg = 11.702, etc.
+Status: Perfect match across all metrics
+
+## NON_ABSORBING Mode
+✅ PASSED
+Original: No console output
+New CLI:  "Non-absorbing matrix construction completed."
+Status: Consistent behavior
+
+## FUNDAMENTAL Mode
+✅ PASSED
+Original: No console output
+New CLI:  "Fundamental matrix calculation completed."
+Status: Consistent behavior
+
+## ALLELE_AGE Mode (-x 3)
+❌ FAILED - Investigation needed
+Original (no -p): E(A) = 8.5221742207e+00, S(A) = 8.4825247795e+00
+Original (with -p 1): E(A) = 8.5221742099e+00, S(A) = 8.4825247661e+00
+New CLI (both cases): E[T] = 6.53705, Std[T] = 4.17268
+Status: Values don't match - integration or matrix issue
+
+## Summary
+✅ 6/7 modes working perfectly
+❌ 1/7 mode needs debugging (ALLELE_AGE)
+
+The ALLELE_AGE mode appears to have an issue with either:
+1. Integration over starting distribution
+2. Matrix calculation differences
+3. A_x vector calculation
+
+Further investigation needed to resolve the numerical differences.

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened runtime entitlements for WFES3.
+
+  Hardened runtime is required for notarisation, and it switches on restrictions
+  that a plain Electron app would otherwise violate. Each key below is present
+  for a specific reason; none is a blanket loosening.
+
+  Note on com.apple.security.cs.disable-library-validation: it is deliberately
+  absent. The app spawns the WFES command line tools, which load 15 vendored
+  dylibs (SuiteSparse, libomp, libc++, the GCC runtime). Library validation
+  refuses libraries signed by a different team, which is why
+  scripts/bundle-dylibs.py signs every vendored dylib with the SAME Developer ID
+  as the app. Because the team matches, validation passes on its own merits and
+  the escape hatch is unnecessary. If this entitlement ever seems necessary, the
+  real cause is an unsigned or wrongly signed dylib, so fix the signing instead
+  of disabling the check.
+
+  Careful when editing: AMFI parses this file strictly, and an XML comment may
+  not contain a double hyphen. A stray one fails the build with
+  "AMFIUnserializeXML: syntax error".
+-->
+<plist version="1.0">
+<dict>
+  <!-- V8 compiles JavaScript to native code at runtime. Without this the
+       renderer process crashes immediately under hardened runtime. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- Electron's V8 also writes to executable memory outside the scope of the
+       JIT entitlement; required for Chromium to start. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- The backend service spawns the CLI binaries as child processes, and the
+       verification harness sets DYLD_PRINT_LIBRARIES to audit which libraries
+       load. Hardened runtime strips DYLD_* variables without this. -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+
+  <!-- The fundamental matrix mode writes matrices to a temporary directory and
+       reads them back, and users export results to files they choose. -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+</dict>
+</plist>

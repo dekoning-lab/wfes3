@@ -1,0 +1,122 @@
+# electron-builder configuration.
+#
+# This is the ONLY build configuration for the app. A duplicate `build` block
+# used to live in package.json; electron-builder prefers this dedicated file and
+# silently ignores that block, so the two disagreed (package.json said
+# productName "WFES3", this file said "WFES2", and "WFES2" won). The
+# package.json block has been removed to keep a single source of truth.
+appId: com.wfes.wfes3
+productName: WFES3
+directories:
+  # NOT "dist" inside the project, deliberately.
+  #
+  # This repository lives under ~/Desktop, which has iCloud "Desktop &
+  # Documents" syncing enabled (~/Desktop carries com.apple.icloud.desktop and
+  # the iCloud file provider is running). iCloud's file provider continuously
+  # stamps com.apple.FinderInfo onto directories it manages, and codesign
+  # refuses to sign any bundle carrying it:
+  #
+  #   "resource fork, Finder information, or similar detritus not allowed"
+  #
+  # Stripping the attribute does not help: it is re-applied faster than the
+  # build can consume it (measured: every one of 9 bundle directories was
+  # re-stamped immediately after removal, on three consecutive passes). The only
+  # reliable fix is to produce the app outside the synced tree. The source tree
+  # can stay where it is, since source files are never signed.
+  output: ${env.HOME}/Builds/WFES3
+
+files:
+  - out/**/*
+
+# The app is a front end for the WFES command-line binaries: it spawns them as
+# child processes and parses their JSON output. Without these two entries a
+# packaged build cannot compute anything and cannot display any documentation,
+# because:
+#   - src/main/wfesBackendService.ts resolves executables to
+#     <app>/Contents/Resources/bin when app.isPackaged
+#   - src/main/aboutContentService.ts reads model docs from
+#     path.join(process.resourcesPath, 'about')
+#
+# resources/bin is produced by `npm run bundle:bin`
+# (scripts/bundle-dylibs.py), which copies the compiled tools together with the
+# transitive closure of their non-system dylibs and rewrites install names so
+# nothing points at /opt/homebrew. Do not point this at wfes-cli/build/bin
+# directly: those binaries hard-link Homebrew paths and would fail with dyld
+# errors on any machine without an identical Homebrew installation.
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter:
+      - '**/*'
+  - from: ../../about
+    to: about
+    filter:
+      - '**/*.md'
+
+mac:
+  icon: build/icon.icns
+  category: public.app-category.education
+
+  # Signed with the team's Developer ID Application certificate. electron-builder
+  # picks it from the keychain; set CSC_IDENTITY_AUTO_DISCOVERY=false to build
+  # unsigned (e.g. on a machine without the certificate).
+  # Name only, WITHOUT the "Developer ID Application:" prefix -- electron-builder
+  # rejects the prefixed form and selects the certificate type itself. The full
+  # keychain identity is "Developer ID Application: Jason de Koning
+  # (K58VA3MHPK)"; scripts/bundle-dylibs.py uses that prefixed form because it
+  # calls codesign directly.
+  identity: Jason de Koning (K58VA3MHPK)
+
+  # Required for notarisation. This also enables library validation, which is
+  # why scripts/bundle-dylibs.py must sign the vendored dylibs and CLI tools with
+  # the SAME identity -- run it via `npm run bundle:bin` (dist:mac does).
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+  # Gatekeeper assessment is only meaningful once the app is notarised and
+  # stapled; electron-builder's own check runs before that and always fails.
+  gatekeeperAssess: false
+
+  extendInfo:
+    CFBundleDisplayName: WFES3
+    CFBundleName: WFES3
+
+# Notarisation is intentionally NOT configured with inline credentials. Create a
+# keychain profile once, which prompts for an app-specific password from
+# appleid.apple.com and stores it in your keychain:
+#
+#   xcrun notarytool store-credentials wfes3-notary \
+#     --apple-id <your-apple-id> --team-id K58VA3MHPK
+#
+# then submit and staple the built artifacts:
+#
+#   npm run notarize
+#
+# See scripts/notarize.sh. Credentials stay in the keychain and never appear in
+# this repository or in environment variables.
+
+# Strips com.apple.FinderInfo from the packaged bundle directories before
+# signing. Without it codesign fails with "resource fork, Finder information, or
+# similar detritus not allowed". Must be afterPack, not afterSign.
+afterPack: scripts/afterPack.cjs
+
+# Notarises and staples the .app after signing but BEFORE the dmg/zip are built,
+# so the copy inside the DMG carries a ticket. Notarising only after the fact
+# leaves the app inside the DMG unstapled, which forces Gatekeeper into an
+# online check and blocks a user who is offline on first launch. Opt-in via
+# WFES3_NOTARIZE=1 (npm run dist:mac:release).
+afterSign: scripts/afterSign.cjs
+
+dmg:
+  # Sign the disk image itself. Without this the DMG has no code signature at
+  # all ("spctl --assess --type open" reports "no usable signature"), even when
+  # it has been notarised and stapled.
+  sign: true
+
+win:
+  icon: build/icon.ico
+
+linux:
+  icon: build/icon.png
+  category: Education

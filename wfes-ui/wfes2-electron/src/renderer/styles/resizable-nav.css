@@ -1,0 +1,32 @@
+/* Resizable navigation styles */
+
+/* Resize handle hover effect */
+.resize-handle:hover {
+  background-color: #3b82f6 !important;
+}
+
+/* Ensure navbar content doesn't show when collapsed */
+.navbar-container.overflow-hidden > *:not(:first-child) {
+  display: none;
+}
+
+/* Smooth width transition */
+.navbar-container {
+  transition: width 0.3s ease;
+}
+
+/* Prevent text selection while resizing */
+body.resizing {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+/* Hide dividers when collapsed */
+.navbar-container[style*="width: 0"] .mantine-Divider-root {
+  display: none;
+}
+
+/* Ensure toggle button is always accessible */
+.mantine-ActionIcon-root {
+  flex-shrink: 0;
+}

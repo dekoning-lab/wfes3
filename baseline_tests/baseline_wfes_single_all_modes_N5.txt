@@ -1,0 +1,51 @@
+# WFES Single Baseline Test Results
+# Population Size: N=5
+# Parameters: s=0.1, h=0.5, u=1e-9, v=1e-9, a=1e-20
+# Generated using original wfes2 implementation
+
+## Test Parameters
+-N 5 -s 0.1 -h 0.5 -u 1e-9 -v 1e-9
+
+## FIXATION Mode (-p 1 under the original wfes2 convention; reproduced by -p 0
+## since the 2026-08-17 mode-aware -p fix -- the values below are the count-0
+## quantity either way, values unchanged)
+T_fix = 6.7344433610e+08
+T_std = 6.7344431832e+08
+Rate = 1.4849037202e-09
+
+## ABSORPTION Mode (-p 1)
+P_ext = 8.5150961700e-01
+P_fix = 1.4849038300e-01
+T_abs = 6.2910739849e+00
+T_abs_std = 8.2254695049e+00
+T_ext = 4.3736841537e+00
+T_ext_std = 6.1161863379e+00
+N_ext = 9.7201774696e-08
+T_fix = 1.7286236418e+01
+T_fix_std = 9.9575675890e+00
+
+## EQUILIBRIUM Mode
+E[freq mut] = 7.0210952180e-01
+E[freq  wt] = 2.9789047820e-01
+
+## ALLELE_AGE Mode (-x 3 -p 1)
+E(A) = 8.5221742099e+00
+S(A) = 8.4825247661e+00
+
+## ESTABLISHMENT Mode (-k 1.5)
+F_est = 5.0000000000e-01
+P_est = 2.2408912193e-01
+T_seg = 1.1701964839e+01
+T_seg_std = 9.3571022200e+00
+T_seg_ext = 1.3789854846e+01
+T_seg_ext_std = 9.6783118254e+00
+T_seg_fix = 1.0843481736e+01
+T_seg_fix_std = 9.0836057920e+00
+T_est = 5.8388973720e+00
+T_est_std = 3.6052313251e+00
+
+## NON_ABSORBING Mode
+# No console output - only matrix construction
+
+## FUNDAMENTAL Mode 
+# No console output - only matrix files
