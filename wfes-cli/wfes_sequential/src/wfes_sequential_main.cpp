@@ -140,10 +140,10 @@ static std::string json_escape(const std::string &raw) {
 }
 
 /**
- * Validate the epoch starting-probability vector (-p) and normalise it to sum 1.
+ * Validate the epoch starting-probability vector (-P) and normalise it to sum 1.
  *
- * -p was used raw as the weight on each epoch's starting states, so it never
- * had to be a probability vector for the run to report a result: `-p 1,1`
+ * -P was used raw as the weight on each epoch's starting states, so it never
+ * had to be a probability vector for the run to report a result: `-P 1,1`
  * gave P_ext = 1.8261973686, and a negative entry gave negative
  * "probabilities" -- with exit status 0, and with numbers a reader would take
  * for probabilities.
@@ -157,17 +157,17 @@ static std::string json_escape(const std::string &raw) {
 static void normalise_starting_probabilities(dvec &p, const char *name) {
     if ((p.array() < 0).any()) {
         throw std::runtime_error(
-            std::string(name) + " (-p) contain a negative entry; "
+            std::string(name) + " (-P) contain a negative entry; "
             "every entry must be a probability.");
     }
     const double total = p.sum();
     if (!std::isfinite(total) || total <= 0) {
         throw std::runtime_error(
-            std::string(name) + " (-p) sum to " + num_str(total) +
+            std::string(name) + " (-P) sum to " + num_str(total) +
             "; they must contain positive probability.");
     }
     if (std::abs(total - 1.0) > 1e-9) {
-        std::cerr << "Warning: starting probabilities (-p) sum to " << num_str(total)
+        std::cerr << "Warning: starting probabilities (-P) sum to " << num_str(total)
                   << ", not 1; renormalising.\n";
         p /= total;
     }
@@ -316,7 +316,7 @@ int main(int argc, char const *argv[]) {
         require_len(h, "-h", "Dominance coefficients");
         require_len(u, "-u", "Backward mutation rates");
         require_len(v, "-v", "Forward mutation rates");
-        require_len(p, "-p", "Epoch starting probabilities");
+        require_len(p, "-P", "Epoch starting probabilities");
 
         // Per-model domain checks. The shared parser only sees the raw
         // comma-separated strings for this tool, so the numeric validation the
@@ -324,11 +324,11 @@ int main(int argc, char const *argv[]) {
         CLI::Args_Parser::validate_model_domain_vectors(
             population_sizes, s, h, u, v, options.alpha);
 
-        // -p is a probability distribution over the epochs, not a free weight
+        // -P is a probability distribution over the epochs, not a free weight
         // -- but only when the run actually starts from it. --initial and
         // --starting-copies each replace it entirely (see the three-way
         // branch below that picks start_weights), so whenever either is set
-        // -p is dead input: validating or renormalising it would refuse, or
+        // -P is dead input: validating or renormalising it would refuse, or
         // warn about renormalising, a vector the run never reads.
         //
         // Done before the echo below and before any use, so what is printed
@@ -429,7 +429,7 @@ int main(int argc, char const *argv[]) {
         // The starting states to integrate over, with their weights. By default
         // the weight is the probability a new mutation starts at that copy
         // number within its epoch (p0) times the probability of starting in
-        // that epoch (-p); --initial replaces both with a distribution supplied
+        // that epoch (-P); --initial replaces both with a distribution supplied
         // over the whole concatenated state space.
         std::vector<std::pair<llong, double>> start_weights;
         if (!options.initial_distribution_path.empty()) {

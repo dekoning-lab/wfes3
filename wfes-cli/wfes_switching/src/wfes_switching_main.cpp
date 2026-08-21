@@ -194,12 +194,12 @@ static std::string json_escape(const std::string &raw) {
 }
 
 /**
- * Validate the starting-probability vector (-p) and normalise it to sum 1.
+ * Validate the starting-probability vector (-P) and normalise it to sum 1.
  *
- * -p was used raw as the weight on each model's starting states, so it never
+ * -P was used raw as the weight on each model's starting states, so it never
  * had to be a probability vector for the run to report a result:
- * `-p 1,1` gave P_ext = 1.8749999928, `-p 5,5` gave P_ext = 9.375, `-p -2,1`
- * gave P_ext = -0.9375 and `-p 0,0` gave zeros -- every one of them with exit
+ * `-P 1,1` gave P_ext = 1.8749999928, `-P 5,5` gave P_ext = 9.375, `-P -2,1`
+ * gave P_ext = -0.9375 and `-P 0,0` gave zeros -- every one of them with exit
  * status 0, and every one of them a number a reader would take for a
  * probability.
  *
@@ -212,17 +212,17 @@ static std::string json_escape(const std::string &raw) {
 static void normalise_starting_probabilities(dvec &p, const char *name) {
     if ((p.array() < 0).any()) {
         throw std::runtime_error(
-            std::string(name) + " (-p) contain a negative entry; "
+            std::string(name) + " (-P) contain a negative entry; "
             "every entry must be a probability.");
     }
     const double total = p.sum();
     if (!std::isfinite(total) || total <= 0) {
         throw std::runtime_error(
-            std::string(name) + " (-p) sum to " + num_str(total) +
+            std::string(name) + " (-P) sum to " + num_str(total) +
             "; they must contain positive probability.");
     }
     if (std::abs(total - 1.0) > 1e-9) {
-        std::cerr << "Warning: starting probabilities (-p) sum to " << num_str(total)
+        std::cerr << "Warning: starting probabilities (-P) sum to " << num_str(total)
                   << ", not 1; renormalising.\n";
         p /= total;
     }
@@ -347,8 +347,8 @@ int main(int argc, char const *argv[]) {
         // computation, with no indication of which argument was wrong. Both
         // failure modes were reachable from plausible command lines -- the
         // switching matrix uses ';' between rows and ',' within them, so the
-        // natural-looking "-r 0.9,0.1,0.1,0.9" silently parses as a 1x4 matrix,
-        // and "-p 1" supplies one starting probability for a two-model run.
+        // natural-looking "-R 0.9,0.1,0.1,0.9" silently parses as a 1x4 matrix,
+        // and "-P 1" supplies one starting probability for a two-model run.
         // (Note these asserts compile out under NDEBUG, in which case the same
         // inputs would read and write out of bounds instead of aborting.)
         auto require_len = [&](const dvec &vecval, const char *flag, const char *name) {
@@ -365,7 +365,7 @@ int main(int argc, char const *argv[]) {
         require_len(h, "-h", "Dominance coefficients");
         require_len(u, "-u", "Backward mutation rates");
         require_len(v, "-v", "Forward mutation rates");
-        require_len(p, "-p", "Starting probabilities");
+        require_len(p, "-P", "Starting probabilities");
 
         // Per-model domain checks. The shared parser only sees the raw comma
         // separated strings for this tool, so the numeric validation the
@@ -374,11 +374,11 @@ int main(int argc, char const *argv[]) {
         CLI::Args_Parser::validate_model_domain_vectors(
             population_sizes, s, h, u, v, options.alpha);
 
-        // -p is a probability distribution over the models, not a free weight
+        // -P is a probability distribution over the models, not a free weight
         // -- but only when the run actually starts from it. --initial
-        // replaces the per-model starting states (and their -p weights)
+        // replaces the per-model starting states (and their -P weights)
         // with one supplied distribution in both FIXATION and ABSORPTION
-        // mode (see the two dispatch branches below), so -p is dead input
+        // mode (see the two dispatch branches below), so -P is dead input
         // whenever it is set: validating or renormalising it would refuse,
         // or warn about renormalising, a vector the run never reads.
         //
@@ -392,7 +392,7 @@ int main(int argc, char const *argv[]) {
         // probability under the mutation-injection distribution p0 falls below
         // it. --fixation has no such integration: FIXATION_ONLY keeps allele
         // count 0 transient and each model contributes exactly that one
-        // starting state, weighted by -p. The flag was consequently read only
+        // starting state, weighted by -P. The flag was consequently read only
         // in the absorption branch, and --fixation accepted every value of -c
         // and produced byte-identical output for -c 1e-10, -c 0.9 and -c 1.
         //
@@ -414,7 +414,7 @@ int main(int argc, char const *argv[]) {
                 "that model has no distribution over starting copy numbers to "
                 "integrate over or to truncate. Each of the " +
                 std::to_string(n_models) + " models contributes a single "
-                "starting state (allele count 0) weighted by -p, and --initial "
+                "starting state (allele count 0) weighted by -P, and --initial "
                 "supplies one distribution that is used whole. The value given "
                 "(" + num_str(options.integration_cutoff) + ") would have had "
                 "no effect on the result. Use --absorption to integrate over "
@@ -434,16 +434,16 @@ int main(int argc, char const *argv[]) {
 
         if (switching.rows() != n_models || switching.cols() != n_models) {
             throw std::runtime_error(
-                "Switching matrix (-r) is " + std::to_string(switching.rows()) +
+                "Switching matrix (-R) is " + std::to_string(switching.rows()) +
                 "x" + std::to_string(switching.cols()) + " but must be " +
                 std::to_string(n_models) + "x" + std::to_string(n_models) +
                 ". Rows are separated by ';' and entries within a row by ',', "
-                "e.g. -r \"0.9,0.1;0.1,0.9\" for two models");
+                "e.g. -R \"0.9,0.1;0.1,0.9\" for two models");
         }
         for (llong i = 0; i < n_models; i++) {
             if (switching.row(i).sum() <= 0.0) {
                 throw std::runtime_error(
-                    "Switching matrix (-r) row " + std::to_string(i) +
+                    "Switching matrix (-R) row " + std::to_string(i) +
                     " sums to zero; rows are normalised to probabilities and "
                     "must have a positive sum");
             }
@@ -539,7 +539,7 @@ int main(int argc, char const *argv[]) {
             
             // Calculate fixation time and rate.
             //
-            // The reciprocal was taken unguarded, so a zeroed N (which -p 0,0
+            // The reciprocal was taken unguarded, so a zeroed N (which -P 0,0
             // used to produce) gave T_fix = 0 and printed "rate": inf into a
             // JSON document -- unparseable, and no more meaningful in the CSV
             // and text branches. A non-positive or non-finite expected time is
@@ -549,8 +549,8 @@ int main(int argc, char const *argv[]) {
                 throw std::runtime_error(
                     "Expected time to fixation came out as " + num_str(T_fix) +
                     ", so the fixation rate 1/T_fix is not defined. This "
-                    "computation did not produce a usable result; check -N, -p "
-                    "and -r");
+                    "computation did not produce a usable result; check -N, -P "
+                    "and -R");
             }
             double rate = 1.0 / T_fix;
 
@@ -564,7 +564,7 @@ int main(int argc, char const *argv[]) {
                     "Fixation rate 1/T_fix came out as " + num_str(rate) +
                     " (from T_fix = " + num_str(T_fix) + "). This "
                     "computation did not produce a usable result; check -N, "
-                    "-p and -r");
+                    "-P and -R");
             }
 
             // Calculate B matrix if needed
@@ -591,8 +591,8 @@ int main(int argc, char const *argv[]) {
             if (options.json_output) {
                 // The parameters block records what the run used, so that a
                 // JSON result is self-describing. It used to carry only N, s, h
-                // and alpha -- while -p scales T_fix directly (T_fix doubles
-                // between no -p and -p 1,1) and u and v set the mutation
+                // and alpha -- while -P scales T_fix directly (T_fix doubles
+                // between no -P and -P 1,1) and u and v set the mutation
                 // pressure the whole fixation-only model runs on. Two runs that
                 // differed in any of those were indistinguishable from their
                 // recorded parameters. p is the NORMALISED vector, i.e. the one
@@ -614,7 +614,7 @@ int main(int argc, char const *argv[]) {
                 json_vec("dominance_coefficients", h);
                 json_vec("backward_mutation_rates", u);
                 json_vec("forward_mutation_rates", v);
-                // --initial replaces the per-model starting states and their -p
+                // --initial replaces the per-model starting states and their -P
                 // weights with one supplied distribution, so exactly one of the
                 // two is what the run started from.
                 if (options.initial_distribution_path.empty()) {
@@ -720,7 +720,7 @@ int main(int argc, char const *argv[]) {
             //
             // By default the weight of a state is the probability that a new
             // mutation starts there (p0 within its model) times the probability
-            // of starting in that model (-p), and only states above the
+            // of starting in that model (-P), and only states above the
             // integration cutoff are visited. --initial replaces both factors
             // with a distribution the user supplies over the whole concatenated
             // state space, so one list serves both cases and everything
@@ -855,7 +855,7 @@ int main(int argc, char const *argv[]) {
                         "Computed " + name + " = " + num_str(value) + ", which "
                         "is not a number this tool can report. The computation "
                         "did not produce a usable result -- " + cause +
-                        ". Check -N, -r and -p");
+                        ". Check -N, -R and -P");
                 }
             };
             auto require_finite_vec = [&](const dvec &vals, const char *name) {
@@ -922,7 +922,7 @@ int main(int argc, char const *argv[]) {
 
             // Print results using OutputFormatter.
             //
-            // --initial replaces the per-model starting states (and their -p
+            // --initial replaces the per-model starting states (and their -P
             // weights) with one supplied distribution here exactly as it
             // does in the FIXATION branch above, so p is dead input under
             // the same condition: options.initial_distribution_path.empty().
@@ -932,7 +932,7 @@ int main(int argc, char const *argv[]) {
             // key on. Passed through explicitly here because, unlike
             // FIXATION, this branch delegates its entire JSON/CSV/text
             // output to this one shared formatter, which cannot otherwise
-            // tell a live p from an unvalidated one -p left behind when
+            // tell a live p from an unvalidated one -P left behind when
             // --initial made it dead input.
             CLI::OutputFormatter::print_switching_absorption_results(
                 options, n_models, population_sizes.cast<double>(), s, h, u, v, p,

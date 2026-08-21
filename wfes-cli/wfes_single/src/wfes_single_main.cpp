@@ -2185,7 +2185,7 @@ int main(int argc, char const *argv[]) {
                     throw std::runtime_error(
                         "No establishment count reached the requested odds ratio: even "
                         "2N-1 copies do not achieve a fixation probability of " +
-                        std::to_string(est_threshold) + ". Lower -k or change the model");
+                        std::to_string(est_threshold) + ". Lower --odds-ratio or change the model");
                 }
                 // index j corresponds to copy count j+1, so index 0 is count 1
                 if (est_idx == 0) {
@@ -2224,7 +2224,7 @@ int main(int argc, char const *argv[]) {
                               "establishment, so there is nothing left to "
                               "integrate over. Raise -c to narrow the starting "
                               "distribution, give -p <count> below " << est_idx
-                           << ", or raise -k so establishment needs more copies.";
+                           << ", or raise --odds-ratio so establishment needs more copies.";
                     }
                     throw std::runtime_error(os.str());
                 }
