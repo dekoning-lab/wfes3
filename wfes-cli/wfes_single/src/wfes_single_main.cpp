@@ -4,6 +4,11 @@
 #include <vector>
 #include <chrono>
 #include <cstdlib>  // for setenv
+#include <cmath>
+#include <limits>
+#include <optional>
+#include <sstream>
+#include <utility>
 #include "backend_config.h"
 #ifdef WFES_USE_MKL
 #include <mkl.h>
@@ -52,6 +57,145 @@
 // Namespace aliases for shorter code
 namespace CLI = wfes::cli;
 using namespace wfes;
+
+// ---------------------------------------------------------------------------
+// Numerical-integrity policy (integrity audit, task CX1a).
+//
+// Governing principle: refuse, don't substitute. When a value cannot be
+// computed correctly in double precision, this tool exits nonzero (or omits
+// the field with a stderr diagnostic); it never prints a placeholder, a
+// clamped lie, or the result of an unguarded division. Users put these
+// numbers directly into published papers.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Boundary between floating-point roundoff and computation failure for an
+// absorption probability. The B vectors come out of one sparse LU solve of
+// (I - Q); the entrywise error of that solve is relative, of order
+// cond(I - Q) * eps. Observed overshoot on representative problems is
+// ~5e-11 (e.g. B_ext(0) = 1 + 3.4e-11 at N = 200). 1e-8 leaves more than
+// two orders of headroom over that while still refusing anything that
+// cannot plausibly be roundoff of a probability: a value outside [0,1] by
+// more than 1e-8 means the solve lost at least half its digits, and nothing
+// downstream of it could be trusted either.
+constexpr double PROB_RANGE_TOL = 1e-8;
+
+// Below this, a per-starting-state absorption probability can no longer
+// anchor a conditional expectation in double precision. Every
+// conditional-on-absorption moment divides by B(start): E[time at j | abs] =
+// B(j) * N(start, j) / B(start). The solve is subtraction-free for these
+// M-matrix systems, so B entries keep full RELATIVE accuracy down to the
+// smallest positive normal double (DBL_MIN ~ 2.2e-308); below that the
+// value degrades into the subnormal range (or underflows to 0) and the
+// division turns roundoff into the entire answer. 1e-300 is DBL_MIN with
+// ~8 orders of safety so that the solve's intermediate partial sums and the
+// downstream products B(j) * N1(j) of every term that contributes to the
+// conditional moments also stay in the normal range.
+constexpr double COND_PROB_MIN = 1e-300;
+
+// Smallest reportable probability: the smallest positive normal double.
+// A computed absorption probability below this has underflowed (the true
+// value is positive but unrepresentable at full precision); printing 0 or a
+// subnormal would present underflow as a result.
+const double PROB_UNDERFLOW = std::numeric_limits<double>::min();
+
+// Refuse non-finite values and values outside [0,1] by more than
+// PROB_RANGE_TOL; clamp roundoff-level excursions into [0,1] with a stderr
+// note (never silently).
+void enforce_probability_range(dvec& B, const char* name) {
+    if (!B.allFinite()) {
+        std::ostringstream os;
+        os << name << " contains non-finite entries: the linear solve for the "
+              "absorption probabilities failed for these parameters";
+        throw std::runtime_error(os.str());
+    }
+    const double lo = B.minCoeff();
+    const double hi = B.maxCoeff();
+    if (lo < -PROB_RANGE_TOL || hi > 1.0 + PROB_RANGE_TOL) {
+        std::ostringstream os;
+        os << std::setprecision(std::numeric_limits<double>::max_digits10)
+           << name << " is outside [0,1] by more than the roundoff tolerance "
+           << PROB_RANGE_TOL << " (min " << lo << ", max " << hi
+           << "): the absorption-probability solve failed for these parameters";
+        throw std::runtime_error(os.str());
+    }
+    if (lo < 0.0 || hi > 1.0) {
+        const double worst = std::max(hi - 1.0, -lo);
+        for (llong i = 0; i < B.size(); i++) {
+            if (B(i) < 0.0) B(i) = 0.0;
+            else if (B(i) > 1.0) B(i) = 1.0;
+        }
+        std::cerr << "Note: " << name << " entries exceeded [0,1] by up to "
+                  << worst << " (solver roundoff, within tolerance "
+                  << PROB_RANGE_TOL << "); clamped to the boundary."
+                  << std::endl;
+    }
+}
+
+// Gate for every computed scalar that is about to be printed: a non-finite
+// result is a computation failure, reported as such instead of being
+// formatted into the output.
+void require_finite_result(double value, const char* name) {
+    if (!std::isfinite(value)) {
+        std::ostringstream os;
+        os << "computed " << name << " is not finite (" << value
+           << "); refusing to print numerically meaningless output. The "
+              "requested quantity is not resolvable in double precision for "
+              "these parameters";
+        throw std::runtime_error(os.str());
+    }
+}
+
+// Absorption-mode output with optional fields. Mirrors
+// OutputFormatter::print_absorption_results exactly (same field order, same
+// layout, same stream so the same precision), minus the omitted fields.
+// The shared formatter keeps the all-fields path so healthy runs are
+// byte-identical; this local variant exists only because a field may now be
+// honestly absent, and the shared formatter (owned by another remediation
+// task) has a fixed all-fields signature.
+struct AbsorptionField {
+    const char* name;
+    std::optional<double> value;
+};
+
+void print_absorption_results_partial(const CLI::CommandLineOptions& options,
+                                      const std::vector<AbsorptionField>& fields) {
+    size_t n_present = 0;
+    for (const auto& f : fields) n_present += f.value.has_value();
+    if (options.json_output) {
+        std::cout << "{" << std::endl;
+        std::cout << "  \"model\": \"absorption\"," << std::endl;
+        std::cout << "  \"results\": {" << std::endl;
+        size_t remaining = n_present;
+        for (const auto& f : fields) {
+            if (!f.value) continue;
+            --remaining;
+            std::cout << "    \"" << f.name << "\": " << *f.value
+                      << (remaining ? "," : "") << std::endl;
+        }
+        std::cout << "  }" << std::endl;
+        std::cout << "}" << std::endl;
+    } else if (options.csv_output) {
+        size_t remaining = n_present;
+        for (const auto& f : fields) {
+            if (!f.value) continue;
+            std::cout << f.name << (--remaining ? "," : "");
+        }
+        std::cout << std::endl;
+        remaining = n_present;
+        for (const auto& f : fields) {
+            if (!f.value) continue;
+            std::cout << *f.value << (--remaining ? "," : "");
+        }
+        std::cout << std::endl;
+    } else {
+        for (const auto& f : fields) {
+            if (f.value) std::cout << f.name << " = " << *f.value << std::endl;
+        }
+    }
+}
+
+} // namespace
 
 /**
  * @brief Main entry point for the wfes_single command-line tool
@@ -156,7 +300,27 @@ int main(int argc, char const *argv[]) {
             starting_copies_p.setZero();
             starting_copies_p[0] = 1.0;
         }
-        
+
+        // Integrity audit fix (section 1.3): a cutoff so high that NO starting
+        // state survives the integration loop (e.g. -c 1) used to fall
+        // through with z == 0, integrate over nothing, and print all-zero
+        // results with exit 0 -- plus a zero-byte matrix for --output-N.
+        // Refuse before any model output is computed or written. Only the
+        // modes that integrate over starting states consume z; equilibrium,
+        // fundamental and non-absorbing do not and are unaffected.
+        if (z <= 0 && (options.model_type == CLI::ModelType::ABSORPTION ||
+                       options.model_type == CLI::ModelType::FIXATION ||
+                       options.model_type == CLI::ModelType::ALLELE_AGE ||
+                       options.model_type == CLI::ModelType::ESTABLISHMENT)) {
+            std::ostringstream os;
+            os << "No starting state above the integration cutoff (-c "
+               << options.integration_cutoff
+               << "): every entry of the mutational injection distribution is "
+                  "at or below the cutoff, so there is nothing to integrate "
+                  "over. Lower -c, or give -p / --initial.";
+            throw std::runtime_error(os.str());
+        }
+
         
         // Set message level for solvers
         llong msg_level = options.verbose ? MKL_PARDISO_MSG_VERBOSE : MKL_PARDISO_MSG_QUIET;
@@ -256,6 +420,9 @@ int main(int argc, char const *argv[]) {
                     }
                     
                     // Output results
+                    require_finite_result(T_fix, "T_fix");
+                    require_finite_result(T_std, "T_std");
+                    require_finite_result(rate, "rate");
                     CLI::OutputFormatter::print_fixation_results(
                         options, T_fix, T_std, rate
                     );
@@ -308,15 +475,18 @@ int main(int argc, char const *argv[]) {
                     }
                     
                     // Output results
+                    require_finite_result(T_fix, "T_fix");
+                    require_finite_result(T_std, "T_std");
+                    require_finite_result(rate, "rate");
                     CLI::OutputFormatter::print_fixation_results(
                         options, T_fix, T_std, rate
                     );
                 }
-                
+
                 delete solver;
                 break;
             }
-            
+
             case CLI::ModelType::ABSORPTION: {
                 // Create Wright-Fisher matrix with both absorbing states
                 WF::Matrix W = WF::Single(
@@ -349,13 +519,46 @@ int main(int argc, char const *argv[]) {
                 );
                 solver->preprocess();
                 
-                // Extract extinction and fixation columns from R
+                // Extract extinction and fixation columns from R and solve for
+                // BOTH absorption vectors against the same factorization.
+                //
+                // Integrity audit fix (section 1.1): B_fix used to be derived
+                // as 1 - B_ext. That subtraction caps the accuracy of B_fix at
+                // ~2.2e-16 ABSOLUTE, so whenever the true fixation probability
+                // is at or below that level (any strongly deleterious case) the
+                // derived entries were pure roundoff: negative probabilities,
+                // P_ext > 1, conditional times "conditioned" on impossible
+                // events, and nan standard deviations -- all printed with exit
+                // 0. Solving (I - Q) B_fix = R_fix directly is one extra
+                // back-substitution against the factorization that already
+                // exists, and -- because the substitution is subtraction-free
+                // for these M-matrix systems -- it preserves RELATIVE accuracy
+                // for arbitrarily small fixation probabilities, which is this
+                // tool's reason to exist.
                 dvec R_ext = W.R.col(0);
+                dvec R_fix = W.R.col(1);
                 dvec B_ext = solver->solve(R_ext, false);
-                dvec B_fix = dvec::Ones(size) - B_ext;
-                
+                dvec B_fix = solver->solve(R_fix, false);
+
+                // B_ext + B_fix = 1 is now a residual DIAGNOSTIC of the solve,
+                // not the definition of either vector.
+                {
+                    const double one_residual =
+                        (B_ext + B_fix - dvec::Ones(size)).cwiseAbs().maxCoeff();
+                    if (!(one_residual <= PROB_RANGE_TOL)) {
+                        std::cerr << "Warning: |B_ext + B_fix - 1| reaches "
+                                  << one_residual
+                                  << ": the absorption solve is losing precision "
+                                     "for these parameters; treat the results "
+                                     "with caution." << std::endl;
+                    }
+                }
+
+                enforce_probability_range(B_ext, "B_ext");
+                enforce_probability_range(B_fix, "B_fix");
+
                 dvec id(size);
-                
+
                 // Initialize result variables
                 double P_ext = 0;
                 double P_fix = 0;
@@ -366,104 +569,278 @@ int main(int argc, char const *argv[]) {
                 double T_ext_var = 0;
                 double T_fix_var = 0;
                 double N_ext = 0;
-                
+
                 // Matrices for results
                 dmat N_mat(z, size);
                 dmat E_ext_mat(z, size);
                 dmat E_fix_mat(z, size);
                 dmat N2_mat(z, size);
-                
-                // Integrate over starting number of copies or use specified starting copies
-                if (options.starting_copies < 0) {  // Changed from <= 0 to < 0
+
+                // The starting states this run integrates over: (transient
+                // index, weight) pairs. Row r of the result matrices belongs
+                // to starts[r]. A single -p start is the weight-1 special
+                // case, which keeps the two historical code paths (integration
+                // vs -p) arithmetically identical to what they were while the
+                // integrity guards below apply to both.
+                std::vector<std::pair<llong, double>> starts;
+                if (options.starting_copies < 0) {
+                    if (z > size) {
+                        std::ostringstream os;
+                        os << "integration range exceeds the transient state "
+                              "space (z = " << z << ", 2N-1 = " << size
+                           << "); raise -c";
+                        throw std::runtime_error(os.str());
+                    }
                     for (llong i = 0; i < z; i++) {
-                        double p_i = starting_copies_p(i);
-                        id.setZero();
-                        // For ABSORPTION case, use direct index (like original wfes2)
-                        id(i) = 1;
-                        
-                        // Solve for absorption times
-                        N_mat.row(i) = solver->solve(id, true);
-                        dvec N1 = N_mat.row(i);
-                        N2_mat.row(i) = solver->solve(N1, true);
-                        dvec N2 = N2_mat.row(i);
-                        
-                        // Calculate absorption time
-                        T_abs += N1.sum() * p_i;
-                        T_abs_var += ((2 * N2.sum() - N1.sum()) - pow(N1.sum(), 2)) * p_i;
-                        
-                        // Calculate extinction probability and time
-                        P_ext += B_ext(i) * p_i;
-                        dvec E_ext = B_ext.array() * N1.array() / B_ext(i);
-                        E_ext_mat.row(i) = E_ext;
-                        dvec E_ext_var = B_ext.array() * N2.array() / B_ext(i);
-                        T_ext += E_ext.sum() * p_i;
-                        T_ext_var += ((2 * E_ext_var.sum() - E_ext.sum()) - pow(E_ext.sum(), 2)) * p_i;
-                        
-                        // Calculate copies in extinction trajectory
-                        dvec C_ext = E_ext.array() * dvec::LinSpaced(size, 1, size).array();
-                        N_ext += p_i * C_ext.sum();
-                        
-                        // Calculate fixation probability and time
-                        P_fix += B_fix(i) * p_i;
-                        dvec E_fix = B_fix.array() * N1.array() / B_fix(i);
-                        E_fix_mat.row(i) = E_fix;
-                        dvec E_fix_var = B_fix.array() * N2.array() / B_fix(i);
-                        T_fix += E_fix.sum() * p_i;
-                        T_fix_var += ((2 * E_fix_var.sum() - E_fix.sum()) - pow(E_fix.sum(), 2)) * p_i;
+                        starts.emplace_back(i, starting_copies_p(i));
                     }
                 } else {
-                    // Use specified starting copies
-                    id.setZero();
-                    id(options.starting_copies) = 1;
-                    
-                    // Solve for absorption times
-                    N_mat.row(0) = solver->solve(id, true);
-                    dvec N1 = N_mat.row(0);
-                    N2_mat.row(0) = solver->solve(N1, true);
-                    dvec N2 = N2_mat.row(0);
-                    
-                    // Calculate absorption time
-                    T_abs = N1.sum();
-                    T_abs_var = (2 * N2.sum() - N1.sum()) - pow(N1.sum(), 2);
-                    
-                    // Calculate extinction probability and time
-                    P_ext = B_ext(options.starting_copies);
-                    dvec E_ext = B_ext.array() * N1.array() / B_ext(options.starting_copies);
-                    E_ext_mat.row(0) = E_ext;
-                    dvec E_ext_var = B_ext.array() * N2.array() / B_ext(options.starting_copies);
-                    T_ext = E_ext.sum();
-                    T_ext_var = (2 * E_ext_var.sum() - E_ext.sum()) - pow(E_ext.sum(), 2);
-                    
-                    // Calculate fixation probability and time
-                    P_fix = B_fix(options.starting_copies);
-                    dvec E_fix = B_fix.array() * N1.array() / B_fix(options.starting_copies);
-                    E_fix_mat.row(0) = E_fix;
-                    dvec E_fix_var = B_fix.array() * N2.array() / B_fix(options.starting_copies);
-                    T_fix = E_fix.sum();
-                    T_fix_var = (2 * E_fix_var.sum() - E_fix.sum()) - pow(E_fix.sum(), 2);
-                    
-                    // Calculate copies in extinction trajectory
-                    dvec C_ext = E_ext.array() * dvec::LinSpaced(size, 1, size).array();
-                    N_ext = C_ext.sum();
+                    starts.emplace_back(options.starting_copies, 1.0);
                 }
-                
-                // Calculate standard deviations
-                double T_abs_std = sqrt(T_abs_var);
-                double T_ext_std = sqrt(T_ext_var);
-                double T_fix_std = sqrt(T_fix_var);
-                
-                // Normalize N_ext
-                N_ext /= (1 / (2 * options.population_size * options.forward_mutation)) + T_ext;
-                
-                // Output matrices if requested
+
+                // Integrity audit fix (section 1.1c): decide up front which
+                // conditional families double precision can support. Every
+                // conditional-on-extinction (resp. -fixation) moment divides
+                // by B_ext(start) (resp. B_fix(start)); once that anchor drops
+                // below COND_PROB_MIN the conditional expectation is
+                // numerically meaningless and the fields are OMITTED with a
+                // diagnostic instead of printed as 0/0 artifacts.
+                //   *_cond_ok : the scalar moments (mixture over states with
+                //               nonzero weight) are computable.
+                //   *_rows_ok : every requested row of the conditional sojourn
+                //               matrices (--output-N-ext/-N-fix) is computable;
+                //               zero-weight states still get rows, so this can
+                //               be false while the scalars are fine.
+                bool ext_cond_ok = true, fix_cond_ok = true;
+                bool ext_rows_ok = true, fix_rows_ok = true;
+                double min_B_ext_used = 1.0, min_B_fix_used = 1.0;
+                for (const auto& [st, w] : starts) {
+                    if (B_ext(st) < COND_PROB_MIN) {
+                        ext_rows_ok = false;
+                        if (w > 0) ext_cond_ok = false;
+                    }
+                    if (B_fix(st) < COND_PROB_MIN) {
+                        fix_rows_ok = false;
+                        if (w > 0) fix_cond_ok = false;
+                    }
+                    if (w > 0) {
+                        min_B_ext_used = std::min(min_B_ext_used, B_ext(st));
+                        min_B_fix_used = std::min(min_B_fix_used, B_fix(st));
+                    }
+                }
+
+                for (size_t r = 0; r < starts.size(); r++) {
+                    const llong st = starts[r].first;
+                    const double p_i = starts[r].second;
+                    id.setZero();
+                    id(st) = 1;
+
+                    // Solve for absorption times
+                    N_mat.row(r) = solver->solve(id, true);
+                    dvec N1 = N_mat.row(r);
+                    N2_mat.row(r) = solver->solve(N1, true);
+                    dvec N2 = N2_mat.row(r);
+                    if (!N1.allFinite() || !N2.allFinite()) {
+                        throw std::runtime_error(
+                            "the sojourn-time solve returned non-finite values "
+                            "for these parameters");
+                    }
+
+                    // Calculate absorption time
+                    T_abs += N1.sum() * p_i;
+                    T_abs_var += ((2 * N2.sum() - N1.sum()) - pow(N1.sum(), 2)) * p_i;
+
+                    // Calculate extinction probability and time
+                    P_ext += B_ext(st) * p_i;
+                    if (B_ext(st) >= COND_PROB_MIN) {
+                        dvec E_ext = B_ext.array() * N1.array() / B_ext(st);
+                        E_ext_mat.row(r) = E_ext;
+                        if (ext_cond_ok) {
+                            dvec E_ext_var = B_ext.array() * N2.array() / B_ext(st);
+                            T_ext += E_ext.sum() * p_i;
+                            T_ext_var += ((2 * E_ext_var.sum() - E_ext.sum()) - pow(E_ext.sum(), 2)) * p_i;
+
+                            // Calculate copies in extinction trajectory
+                            dvec C_ext = E_ext.array() * dvec::LinSpaced(size, 1, size).array();
+                            N_ext += p_i * C_ext.sum();
+                        }
+                    }
+
+                    // Calculate fixation probability and time
+                    P_fix += B_fix(st) * p_i;
+                    if (B_fix(st) >= COND_PROB_MIN) {
+                        dvec E_fix = B_fix.array() * N1.array() / B_fix(st);
+                        E_fix_mat.row(r) = E_fix;
+                        if (fix_cond_ok) {
+                            dvec E_fix_var = B_fix.array() * N2.array() / B_fix(st);
+                            T_fix += E_fix.sum() * p_i;
+                            T_fix_var += ((2 * E_fix_var.sum() - E_fix.sum()) - pow(E_fix.sum(), 2)) * p_i;
+                        }
+                    }
+                }
+
+                // ---- assemble the report: omit what double precision cannot
+                // ---- support, with a stderr diagnostic for every omission.
+                std::optional<double> out_P_ext, out_P_fix, out_T_abs,
+                    out_T_abs_std, out_T_ext, out_T_ext_std, out_N_ext,
+                    out_T_fix, out_T_fix_std;
+
+                // A probability is reportable only as a positive normal
+                // double: below DBL_MIN the computed value is underflow, not
+                // the (positive) probability itself.
+                auto report_probability =
+                    [](double value, const char* name) -> std::optional<double> {
+                    if (value > 1.0) {
+                        // B entries are already clamped to [0,1]; a mixture
+                        // can only land here through fp roundoff of the
+                        // weighted sum (or unnormalized --initial weights).
+                        if (value > 1.0 + PROB_RANGE_TOL) {
+                            std::ostringstream os;
+                            os << name << " = " << value
+                               << " exceeds 1 beyond the roundoff tolerance; "
+                                  "check that the --initial weights sum to 1";
+                            throw std::runtime_error(os.str());
+                        }
+                        std::cerr << "Note: " << name << " exceeded 1 by "
+                                  << (value - 1.0)
+                                  << " (floating-point roundoff in the "
+                                     "starting-state weights and absorption "
+                                     "probabilities); clamped to 1."
+                                  << std::endl;
+                        return 1.0;
+                    }
+                    if (value < PROB_UNDERFLOW) {
+                        std::cerr << "Note: " << name
+                                  << " is positive but not representable in "
+                                     "double precision (computed value "
+                                  << value
+                                  << " is below the smallest positive normal "
+                                     "double, 2.2250738585072014e-308). "
+                                     "Omitting " << name
+                                  << " rather than printing 0." << std::endl;
+                        return std::nullopt;
+                    }
+                    return value;
+                };
+                out_P_ext = report_probability(P_ext, "P_ext");
+                out_P_fix = report_probability(P_fix, "P_fix");
+
+                out_T_abs = T_abs;
+                if (T_abs_var >= 0) {
+                    out_T_abs_std = sqrt(T_abs_var);
+                } else {
+                    std::cerr << "Note: the T_abs variance came out negative at "
+                                 "double precision (cancellation; computed "
+                              << T_abs_var << "). Omitting T_abs_std."
+                              << std::endl;
+                }
+
+                if (ext_cond_ok) {
+                    out_T_ext = T_ext;
+                    if (T_ext_var >= 0) {
+                        out_T_ext_std = sqrt(T_ext_var);
+                    } else {
+                        std::cerr << "Note: the T_ext variance came out negative "
+                                     "at double precision (cancellation; "
+                                     "computed " << T_ext_var
+                                  << "). Omitting T_ext_std." << std::endl;
+                    }
+                } else {
+                    std::cerr << "Note: conditional-on-extinction moments are "
+                                 "numerically meaningless here: B_ext at a "
+                                 "starting state with nonzero weight is "
+                              << min_B_ext_used << " (below " << COND_PROB_MIN
+                              << "), and every conditional moment divides by "
+                                 "it. Omitting T_ext and T_ext_std."
+                              << std::endl;
+                }
+
+                if (fix_cond_ok) {
+                    out_T_fix = T_fix;
+                    if (T_fix_var >= 0) {
+                        out_T_fix_std = sqrt(T_fix_var);
+                    } else {
+                        std::cerr << "Note: the T_fix variance came out negative "
+                                     "at double precision (cancellation; "
+                                     "computed " << T_fix_var
+                                  << "). Omitting T_fix_std." << std::endl;
+                    }
+                } else {
+                    std::cerr << "Note: conditional-on-fixation moments are "
+                                 "numerically meaningless here: B_fix at a "
+                                 "starting state with nonzero weight is "
+                              << min_B_fix_used << " (below " << COND_PROB_MIN
+                              << "), and every conditional moment divides by "
+                                 "it. Omitting T_fix and T_fix_std."
+                              << std::endl;
+                }
+
+                // N_ext is the stationary mean number of segregating copies on
+                // extinction trajectories under recurrent mutational influx at
+                // rate 2Nv (renewal-reward: expected copy-generations per
+                // extinction trajectory over expected cycle length
+                // 1/(2Nv) + T_ext).
+                //
+                // Integrity audit fix (section 5.3b): with v = 0 there is no
+                // influx and no stationary regime -- the defining renewal
+                // process has no arrivals -- so the quantity is undefined, not
+                // 0. The old code evaluated 1/(2N*0) = inf and printed the
+                // IEEE artifact C/inf = 0 as if it were a result. Omit the
+                // field instead. (The v -> 0+ limit is 0, but reporting a
+                // limit of vanishing influx as a property of the no-influx
+                // model would substitute an artifact for an answer.)
+                if (!ext_cond_ok) {
+                    std::cerr << "Note: N_ext also requires the conditional-"
+                                 "extinction sojourns; omitting N_ext."
+                              << std::endl;
+                } else {
+                    const double influx_wait =
+                        1 / (2 * options.population_size * options.forward_mutation);
+                    if (std::isfinite(influx_wait)) {
+                        // Normalize N_ext (same expression as always)
+                        N_ext /= influx_wait + T_ext;
+                        out_N_ext = N_ext;
+                    } else {
+                        std::cerr << "Note: N_ext is undefined when the forward "
+                                     "mutation rate is 0 (-v 0): it is the "
+                                     "stationary mean number of segregating "
+                                     "copies under recurrent mutational influx "
+                                     "at rate 2Nv, and with v = 0 there is no "
+                                     "influx and no stationary regime. "
+                                     "Omitting N_ext." << std::endl;
+                    }
+                }
+
+                // Output matrices if requested. The unconditional sojourn
+                // matrix N is always computable; the conditional matrices are
+                // only written when every row of them is (nothing non-finite
+                // may ever reach an output file).
                 if (!options.output_N_path.empty()) {
                     CLI::OutputFormatter::write_matrix_to_file(N_mat, options.output_N_path);
                 }
                 if (!options.output_N_ext_path.empty()) {
-                    CLI::OutputFormatter::write_matrix_to_file(E_ext_mat, options.output_N_ext_path);
+                    if (ext_rows_ok && E_ext_mat.allFinite()) {
+                        CLI::OutputFormatter::write_matrix_to_file(E_ext_mat, options.output_N_ext_path);
+                    } else {
+                        std::cerr << "Note: --output-N-ext not written: the "
+                                     "conditional-extinction sojourns are not "
+                                     "computable in double precision for at "
+                                     "least one requested starting state "
+                                     "(B_ext below " << COND_PROB_MIN << ")."
+                                  << std::endl;
+                    }
                 }
                 if (!options.output_N_fix_path.empty()) {
-                    CLI::OutputFormatter::write_matrix_to_file(E_fix_mat, options.output_N_fix_path);
+                    if (fix_rows_ok && E_fix_mat.allFinite()) {
+                        CLI::OutputFormatter::write_matrix_to_file(E_fix_mat, options.output_N_fix_path);
+                    } else {
+                        std::cerr << "Note: --output-N-fix not written: the "
+                                     "conditional-fixation sojourns are not "
+                                     "computable in double precision for at "
+                                     "least one requested starting state "
+                                     "(B_fix below " << COND_PROB_MIN << ")."
+                                  << std::endl;
+                    }
                 }
                 if (!options.output_B_path.empty()) {
                     dmat B(size, 2);
@@ -471,12 +848,27 @@ int main(int argc, char const *argv[]) {
                     B.col(1) = B_fix;
                     CLI::OutputFormatter::write_matrix_to_file(B, options.output_B_path);
                 }
-                
-                // Output results
-                CLI::OutputFormatter::print_absorption_results(
-                    options, P_ext, P_fix, T_abs, T_abs_std, 
-                    T_ext, T_ext_std, N_ext, T_fix, T_fix_std
-                );
+
+                // Output results. When every field is computable this goes
+                // through the shared formatter, byte-identical to what it
+                // always printed; the local partial printer exists only for
+                // honest omissions.
+                if (out_P_ext && out_P_fix && out_T_abs && out_T_abs_std &&
+                    out_T_ext && out_T_ext_std && out_N_ext && out_T_fix &&
+                    out_T_fix_std) {
+                    CLI::OutputFormatter::print_absorption_results(
+                        options, *out_P_ext, *out_P_fix, *out_T_abs, *out_T_abs_std,
+                        *out_T_ext, *out_T_ext_std, *out_N_ext, *out_T_fix, *out_T_fix_std
+                    );
+                } else {
+                    print_absorption_results_partial(options, {
+                        {"P_ext", out_P_ext}, {"P_fix", out_P_fix},
+                        {"T_abs", out_T_abs}, {"T_abs_std", out_T_abs_std},
+                        {"T_ext", out_T_ext}, {"T_ext_std", out_T_ext_std},
+                        {"N_ext", out_N_ext},
+                        {"T_fix", out_T_fix}, {"T_fix_std", out_T_fix_std},
+                    });
+                }
                 
                 delete solver;
                 break;
@@ -504,20 +896,26 @@ int main(int argc, char const *argv[]) {
                 
                 // Solve for equilibrium distribution
                 dvec pi = solver->solve(O, true);
-                
+                if (!pi.allFinite()) {
+                    throw std::runtime_error(
+                        "the equilibrium solve returned non-finite values for "
+                        "these parameters");
+                }
+
                 // Output equilibrium distribution if requested
                 if (!options.output_E_path.empty()) {
                     CLI::OutputFormatter::write_vector_to_file(pi, options.output_E_path);
                 }
-                
+
                 // Calculate expected frequency
                 double e_freq = 0.0;
                 for (llong i = 0; i < size; i++) {
                     e_freq += i * pi[i];
                 }
                 e_freq /= (size - 1);
-                
+
                 // Output results with distribution for JSON/CSV
+                require_finite_result(e_freq, "E_freq");
                 CLI::OutputFormatter::print_equilibrium_results_with_distribution(options, e_freq, pi);
                 
                 delete solver;
@@ -617,6 +1015,12 @@ int main(int argc, char const *argv[]) {
                     id(options.starting_copies) = 1;
                     sojourn = solver->solve(id, true);
                 }
+                if ((need_full && !N.allFinite()) ||
+                    (sojourn.size() > 0 && !sojourn.allFinite())) {
+                    throw std::runtime_error(
+                        "the fundamental-matrix solve returned non-finite "
+                        "values for these parameters");
+                }
 
                 // What --output-N writes follows the same rule: the row that was
                 // asked for, or the whole matrix.
@@ -637,10 +1041,16 @@ int main(int argc, char const *argv[]) {
                     dvec Ndg = (2 * N.diagonal().array()) - 1;
                     dmat Nsq = N.array().square();
                     dmat V = (N * Ndg.asDiagonal()) - Nsq;
+                    if (!V.allFinite()) {
+                        throw std::runtime_error(
+                            "the variance-time matrix V is not finite for "
+                            "these parameters; refusing to write it");
+                    }
                     CLI::OutputFormatter::write_matrix_to_file(V, options.output_V_path);
                 }
-                
+
                 // Output results
+                require_finite_result(T_abs_total, "T_abs");
                 CLI::OutputFormatter::print_fundamental_results(options, sojourn, T_abs_total);
                 
                 delete solver;
@@ -824,6 +1234,12 @@ int main(int argc, char const *argv[]) {
                 }
                 
                 // Output results
+                require_finite_result(E_allele_age, "E_T");
+                require_finite_result(S_allele_age, "Std_T");
+                for (size_t k = 0; k < raw_moments.size(); k++) {
+                    require_finite_result(raw_moments[k],
+                                          ("age_raw_moments[" + std::to_string(k) + "]").c_str());
+                }
                 CLI::OutputFormatter::print_allele_age_results(options, E_allele_age, S_allele_age,
                                                                raw_moments);
                 
@@ -1022,6 +1438,16 @@ int main(int argc, char const *argv[]) {
                 double T_est_std = sqrt(T_est_var);
                 
                 // Output results
+                require_finite_result(est_freq, "est_freq");
+                require_finite_result(P_est, "P_est");
+                require_finite_result(T_seg, "T_seg");
+                require_finite_result(T_seg_std, "T_seg_std");
+                require_finite_result(T_seg_ext, "T_seg_ext");
+                require_finite_result(T_seg_ext_std, "T_seg_ext_std");
+                require_finite_result(T_seg_fix, "T_seg_fix");
+                require_finite_result(T_seg_fix_std, "T_seg_fix_std");
+                require_finite_result(T_est, "T_est");
+                require_finite_result(T_est_std, "T_est_std");
                 CLI::OutputFormatter::print_establishment_results(
                     options, est_freq, P_est, T_seg, T_seg_std,
                     T_seg_ext, T_seg_ext_std, T_seg_fix, T_seg_fix_std,
