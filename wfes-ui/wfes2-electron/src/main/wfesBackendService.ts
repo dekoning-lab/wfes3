@@ -264,7 +264,7 @@ export class WfesBackendService {
       if (params.mode === 'moments') {
         return this.parsePhaseTypeMomentsOutput(result.stdout)
       } else {
-        return this.parsePhaseTypeDistOutput(result.stdout, params.sampling_frequency)
+        return this.parsePhaseTypeDistOutput(result.stdout)
       }
     } finally {
       this.activeProcesses.delete(processId)
@@ -808,21 +808,23 @@ export class WfesBackendService {
       args.push('--num-threads', params.n_threads.toString())
     }
     
-    // Force parameter checks
-    if (params.force) {
+    // Skip parameter checks. Only phase_type_moments declares this flag;
+    // phase_type_dist does not, and args-parsing is fatal there -- the run
+    // exits 1 with "Flag could not be matched: force" before computing
+    // anything, so ticking Force made the distribution mode unusable.
+    if (params.force && params.mode === 'moments') {
       args.push('--force')
     }
-    
+
     // Library selection
     if (params.library) {
       args.push('--library', params.library)
     }
-    
-    // Solver for ViennaCL
-    if (params.library === 'ViennaCL' && params.solver) {
-      args.push('--solver', params.solver)
-    }
-    
+
+    // No --solver here: no WFES binary declares one (phase_type_moments exits
+    // 1 with "Flag could not be matched: solver"), and the ViennaCL backend
+    // that the option existed for is no longer offered in the library Select.
+
     // Output options
     if (params.output_Q && params.output_Q !== false) {
       args.push('--output-Q', this.outputPath(params, 'phase_type', 'Q'))
@@ -830,15 +832,21 @@ export class WfesBackendService {
     if (params.output_R && params.output_R !== false) {
       args.push('--output-R', this.outputPath(params, 'phase_type', 'R'))
     }
-    // NOTE: do NOT push a bare --output-P here. The CLI declares it as a
-    // required-value flag, so passing it without a path is an argument error
-    // and the run fails before computing anything -- which is what made the
-    // GUI's phase-type distribution mode unusable, since the view defaults
-    // writeP to true. The distribution now arrives in the JSON payload
-    // instead, so a file is only requested when the user actually supplies a
-    // path to write to.
-    if (params.mode === 'dist' && typeof params.output_P === 'string' && params.output_P.trim() !== '') {
-      args.push('--output-P', params.output_P)
+    // --output-P is a required-value flag, so a bare `--output-P` is an
+    // argument error that kills the run before it computes anything. The
+    // handler forwards a boolean (the checkbox state), which the previous
+    // string-only guard silently discarded -- Write P did nothing at all.
+    // Resolve a real destination for it the way every other write flag does.
+    // Only phase_type_dist declares --output-P; phase_type_moments does not.
+    // (time_dist_sgv declares it too, but that tool is built by
+    // buildTimeDistArgs and is left alone here.)
+    if (params.mode === 'dist' && params.output_P) {
+      args.push(
+        '--output-P',
+        typeof params.output_P === 'string' && params.output_P.trim() !== ''
+          ? params.output_P
+          : this.outputPath(params, 'phase_type', 'P')
+      )
     }
     // Note: phase_type_moments doesn't have --output-Res option
     // It always outputs moments to stdout, with optional --output-N for file output
@@ -1713,12 +1721,14 @@ export class WfesBackendService {
   /**
    * Parses phase type distribution CSV output
    * @param {string} output - Raw CSV output with time,P(t),CDF columns
-   * @param {number} [samplingFrequency] - Optional sampling rate for data reduction
    * @returns {any} Object with distribution array
    * @private
-   * @remarks Applies sampling to reduce data points if specified
+   * @remarks Returns every point the solver produced. Nothing is stride-sampled
+   *          here: the statistics and the CSV export are computed from this
+   *          array, so dropping points silently changed the reported numbers.
+   *          Charts thin for display at the chart layer instead.
    */
-  private parsePhaseTypeDistOutput(output: string, samplingFrequency?: number): any {
+  private parsePhaseTypeDistOutput(output: string): any {
     // phase_type_dist now emits JSON (it declared --json but never consumed it,
     // and printed its banner unconditionally on top of any output). Parse that.
     //
@@ -1757,16 +1767,15 @@ export class WfesBackendService {
     } catch (error) {
       console.error('parsePhaseTypeDistOutput: JSON parse failed, falling back to text', error)
     }
-    return this.parsePhaseTypeDistOutputText(output, samplingFrequency)
+    return this.parsePhaseTypeDistOutputText(output)
   }
 
-  private parsePhaseTypeDistOutputText(output: string, samplingFrequency?: number): any {
+  private parsePhaseTypeDistOutputText(output: string): any {
     try {
       // Phase type dist outputs a CSV with columns: time, P(t), CDF
       const lines = output.split('\n')
-      const allData: Array<{time: number, probability: number, cumulative: number}> = []
       const distribution: Array<{time: number, probability: number, cumulative: number}> = []
-      
+
       // Skip banner and find data start
       let dataStarted = false
       
@@ -1792,33 +1801,15 @@ export class WfesBackendService {
             const probability = parseFloat(parts[1])
             const cumulative = parseFloat(parts[2])
             
-            allData.push({ time, probability, cumulative })
+            distribution.push({ time, probability, cumulative })
             dataStarted = true
           }
         }
       }
-      
-      // Apply sampling if specified
-      if (samplingFrequency && samplingFrequency > 1) {
-        // Always include the first data point
-        if (allData.length > 0) {
-          distribution.push(allData[0])
-        }
-        
-        // Sample every nth point
-        for (let i = samplingFrequency; i < allData.length; i += samplingFrequency) {
-          distribution.push(allData[i])
-        }
-        
-        // Always include the last data point if not already included
-        if (allData.length > 1 && distribution[distribution.length - 1] !== allData[allData.length - 1]) {
-          distribution.push(allData[allData.length - 1])
-        }
-      } else {
-        // No sampling, return all data
-        distribution.push(...allData)
-      }
-      
+
+      // Every parsed point is returned. Stride sampling used to happen here,
+      // which quietly changed the statistics and the exported CSV as well as
+      // the chart.
       return { distribution }
     } catch (error) {
       console.error('Failed to parse phase type dist output:', error)
@@ -1854,6 +1845,40 @@ export class WfesBackendService {
       console.error('Failed to parse phase type moments output:', error)
       return { mean: '', std: '', moments: [] }
     }
+  }
+
+  /**
+   * Bring every time-dist tool's convergence report onto one shape.
+   *
+   * time_dist and time_dist_dual nest it under `statistics`. time_dist_sgv
+   * reports the same facts at the TOP level of its JSON and names its step
+   * count `time_steps` rather than `time_steps_computed`, so reading
+   * `jsonResult.statistics` for an SGV run yielded {} -- and a run that
+   * captured 2.5e-05 of the distribution's mass was reported as a converged
+   * expected time with no warning at all.
+   *
+   * The names here are deliberately the snake_case ones the CLI itself emits,
+   * because TimeDistViewMantine already reads `st.reached_cutoff`,
+   * `st.time_steps_computed`, `st.distribution_cutoff` and
+   * `st.total_probability_absorption` off this object. Renaming them to
+   * camelCase would silently disable the truncation banner in the two views
+   * where it currently works. Nothing is invented: a field is filled in only
+   * when the tool actually reported it, and a `statistics` object that is
+   * already present always wins.
+   */
+  private normalizeTimeDistStatistics(jsonResult: any): any {
+    const statistics: any = { ...(jsonResult?.statistics ?? {}) }
+    const lift = (target: string, source: string) => {
+      if (statistics[target] === undefined && jsonResult?.[source] !== undefined) {
+        statistics[target] = jsonResult[source]
+      }
+    }
+    lift('reached_cutoff', 'reached_cutoff')
+    lift('distribution_cutoff', 'distribution_cutoff')
+    lift('final_cdf', 'final_cdf')
+    // time_dist_sgv's step count. Mapped onto the name the views read.
+    lift('time_steps_computed', 'time_steps')
+    return statistics
   }
 
   /**
@@ -1981,7 +2006,7 @@ export class WfesBackendService {
         
         return {
           parameters: jsonResult.parameters || {},
-          statistics: jsonResult.statistics || {},
+          statistics: this.normalizeTimeDistStatistics(jsonResult),
           distribution: distribution,
           results: mode === 'time-dist-sgv' ? 
             distribution.map(d => `${d.time}\t${d.probability}\t${d.cumulative}`) :

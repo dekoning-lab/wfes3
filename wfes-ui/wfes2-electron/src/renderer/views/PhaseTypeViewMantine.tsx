@@ -16,6 +16,7 @@ import {
   Button,
   Select,
   Box,
+  Checkbox,
   Tooltip,
   ActionIcon,
   useMantineTheme,
@@ -33,10 +34,9 @@ import {
   validateProbability,
   generateFilename
 } from '../components/shared'
-import { PhaseTypeParams, WfesResultItem } from '../types/wfes'
+import { WfesOutputOptions, WfesResultItem } from '../types/wfes'
 import { qtyRow, sdRow } from '../utils/quantityLabels'
 import { wfesService } from '../services/wfesService'
-import PhaseTypeChartModal from '../components/PhaseTypeChartModal'
 import TimeToSubstitutionChartModal from '../components/TimeToSubstitutionChartModal'
 import { Math as MathTeX } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
@@ -63,6 +63,20 @@ interface Component {
   u: string
   v: string
   s: string
+}
+
+/**
+ * The captured probability mass, as a percentage a reader can act on.
+ *
+ * A plain toFixed(2) printed a run that captured 2.4767e-05 of the mass as
+ * "0.00%", which reads as a rounding artefact rather than as the shortfall of
+ * several orders of magnitude that it is.
+ */
+const formatCapturedMass = (fraction: number): string => {
+  const pct = 100 * fraction
+  if (!Number.isFinite(pct)) return '—'
+  if (pct === 0) return '0%'
+  return pct >= 0.01 ? `${pct.toFixed(2)}%` : `${pct.toExponential(2)}%`
 }
 
 const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackButton = false, initialMomentsOnly = false }) => {
@@ -119,24 +133,28 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
   const [s, setS] = useState('0')
   const [h, setH] = useState('0.5')
   
-  // Additional parameters for Dist mode
-  const [samplingFrequency, setSamplingFrequency] = useState('100')
-  
-  // Output options - mode specific
-  const [outputOptions, setOutputOptions] = useState({
+  // Output options - mode specific.
+  //
+  // writeP defaults off. It used to default on while the flag it stood for was
+  // never emitted, so the badge counted an output that was never written; now
+  // that --output-P is wired up, defaulting it on would drop a CSV in the
+  // user's output folder on every run without them asking for one.
+  const [outputOptions, setOutputOptions] = useState<
+    WfesOutputOptions & { writeP?: boolean; writeMoments?: boolean }
+  >({
     writeQ: false,
     writeR: false,
-    writeP: true, // Phase type distribution (Dist mode only)
+    writeP: false, // Phase type distribution file (Dist mode only)
     writeMoments: true, // Always true for Moments mode
     writeRes: false // Results file (Moments mode only)
   })
-  
-  // Execution options
+
+  // Execution options. No `solver`: no WFES binary declares --solver, and
+  // ViennaCL is no longer offered in the library Select.
   const [executionOptions, setExecutionOptions] = useState({
     force: false,
     threads: navigator.hardwareConcurrency || 4,
-    library: 'Accelerate' as 'Accelerate' | 'Pardiso' | 'ViennaCL',
-    solver: 'BicGStab' as const
+    library: 'Accelerate' as 'Accelerate' | 'Pardiso' | 'ViennaCL'
   })
   
   // Results state
@@ -313,33 +331,14 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
         
         // Process results similar to phase-type-dist
         if (result.distribution && result.distribution.length > 0) {
-          // Apply sampling frequency if specified
-          let sampledDistribution = result.distribution
-          const samplingFreq = parseInt(samplingFrequency)
-          
-          if (samplingFreq > 1) {
-            const sampled: any[] = []
-            // Always include the first data point
-            if (result.distribution.length > 0) {
-              sampled.push(result.distribution[0])
-            }
-            
-            // Sample every nth point
-            for (let i = samplingFreq; i < result.distribution.length; i += samplingFreq) {
-              sampled.push(result.distribution[i])
-            }
-            
-            // Always include the last data point if not already included
-            if (result.distribution.length > 1 && 
-                sampled[sampled.length - 1] !== result.distribution[result.distribution.length - 1]) {
-              sampled.push(result.distribution[result.distribution.length - 1])
-            }
-            
-            sampledDistribution = sampled
-          }
-          
-          const stats = calculateStats(result.distribution) // Calculate stats on full distribution
-          const short = result.statistics?.reachedCutoff === false
+          const stats = calculateStats(result.distribution)
+          // snake_case, because that is what every time-dist tool emits and
+          // what parseTimeDistOutput now normalises time_dist_sgv's top-level
+          // keys onto. This used to test camelCase names that no time-dist
+          // parser produces, so `short` was always false and a run capturing
+          // 2.5e-05 of the mass was labelled a converged expected time.
+          const st = result.statistics || {}
+          const short = st.reached_cutoff === false
           const resultItems: WfesResultItem[] = [
             qtyRow('T_sub', stats.mean, {
               description: short
@@ -352,13 +351,18 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
             qtyRow('P_total', stats.totalProb),
             qtyRow('F_max', stats.maxCDF)
           ]
+          // The solver's own account of the mass it captured is preferred over
+          // our sum over the window; they agree, but the banner should quote
+          // the number the tool reported.
           setTruncation(short ? {
-            captured: stats.totalProb,
-            steps: result.statistics?.timeStepsComputed ?? 0,
-            cutoff: result.statistics?.distributionCutoff ?? 0
+            captured: st.final_cdf ?? stats.totalProb,
+            steps: st.time_steps_computed ?? 0,
+            cutoff: st.distribution_cutoff ?? 0
           } : null)
           setResults(resultItems)
-          setDistribution(sampledDistribution) // Use sampled distribution for display
+          // The full distribution: the chart thins for display, and the export
+          // and the statistics above must see every point.
+          setDistribution(result.distribution)
         }
         setExecutionTime(result.executionTime || '')
       } else {
@@ -391,19 +395,18 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
           outputOptions: {
             Q: outputOptions.writeQ,
             R: outputOptions.writeR,
-            ...(!momentsOnly ? { 
-              P: outputOptions.writeP,
-              sampling_frequency: parseInt(samplingFrequency)
+            // Where the files above are written. Rebuilding this object used
+            // to drop the folder the user chose in the options drawer.
+            outputDirectory: outputOptions.outputDirectory,
+            ...(!momentsOnly ? {
+              P: outputOptions.writeP
             } : {}),
-            ...(momentsOnly ? { 
+            ...(momentsOnly ? {
               Moments: true, // Always true for moments mode
-              Res: outputOptions.writeRes 
+              Res: outputOptions.writeRes
             } : {})
           },
-          executionParams: {
-            ...executionOptions,
-            ...(executionOptions.library === 'ViennaCL' ? { solver: executionOptions.solver } : {})
-          }
+          executionParams: executionOptions
         }
         
         result = await wfesService.executePhaseType(scaledParams)
@@ -572,11 +575,13 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
     parts.push(`--forward-mu ${rawV}`)
     parts.push(`--alpha ${a}`)
     parts.push(`--num-threads ${executionOptions.threads}`)
-    if (executionOptions.force) parts.push('--force')
+    // Only phase_type_moments declares --force; phase_type_dist exits 1 on it.
+    if (momentsOnly && executionOptions.force) parts.push('--force')
     parts.push(`--library ${executionOptions.library}`)
-    const dir = '~/Downloads'
+    const dir = outputOptions.outputDirectory || '~/Downloads'
     if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/phase_type_Q.mtx`)
     if (outputOptions.writeR) parts.push(`--output-R ${dir}/phase_type_R.csv`)
+    if (!momentsOnly && outputOptions.writeP) parts.push(`--output-P ${dir}/phase_type_P.csv`)
     parts.push('--json')
     return parts.join(' ')
   }
@@ -622,6 +627,28 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
       executionOptions={executionOptions}
       onExecutionOptionsChange={setExecutionOptions}
       activeOptionsCount={activeOutputOptions}
+      optionsContent={
+        // The shared drawer has no Write P checkbox, so the flag had no
+        // control to be ticked from. Only phase_type_dist declares
+        // --output-P, so it is offered only where it can be honoured.
+        mode === 'phase-type-dist' && !momentsOnly ? (
+          <Paper p="md" withBorder>
+            <Title order={6} mb="sm">Distribution Output</Title>
+            <Checkbox
+              label="Write P"
+              checked={outputOptions.writeP || false}
+              onChange={(e) =>
+                setOutputOptions({ ...outputOptions, writeP: e.currentTarget.checked })
+              }
+            />
+            <Text size="xs" c="dimmed" ml={22}>
+              Write the phase-type distribution to phase_type_P.csv in the output
+              folder. The distribution is shown and exported from the results panel
+              either way.
+            </Text>
+          </Paper>
+        ) : undefined
+      }
     >
       <style>{`
         .mode-selector .mantine-SegmentedControl-label {
@@ -875,14 +902,15 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
                 <Alert color="yellow" mb="md" title="Distribution did not converge">
                   <Text size="sm">
                     The solver stopped at the generation limit ({truncation.steps.toLocaleString()}{' '}
-                    generations) with {(100 * truncation.captured).toFixed(2)}% of the distribution's
-                    mass, short of the {truncation.cutoff} cutoff. The time to substitution and its
-                    standard deviation are computed over that window only, so both are
-                    UNDERESTIMATES.
+                    generations) with {formatCapturedMass(truncation.captured)} of the
+                    distribution's mass, short of the {truncation.cutoff} cutoff. The time to
+                    substitution and its standard deviation are computed over that window only, so
+                    both are UNDERESTIMATES.
                   </Text>
                   <Text size="sm" mt={6}>
-                    Raise the generation limit, or tick "Moments only" -- that path solves for the
-                    moments directly and is exact, with no window and no truncation.
+                    {mode === 'phase-type-dist-sgv'
+                      ? 'Raise the generation limit (m) until the run reaches the cutoff. There is no exact-moments path for the SGV model.'
+                      : 'Raise the generation limit, or tick "Moments only" -- that path solves for the moments directly and is exact, with no window and no truncation.'}
                   </Text>
                 </Alert>
               )}
@@ -1007,21 +1035,13 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
               </Paper>
             )}
             
-            {/* Additional Options for Dist mode and SGV mode */}
-            {((mode === 'phase-type-dist' && !momentsOnly) || mode === 'phase-type-dist-sgv') && (
-              <Paper p="md" withBorder>
-                <Title order={6} mb="sm">Distribution Options</Title>
-                <WfesParameterInput
-                  type="text"
-                  label="Sampling Frequency"
-                  description="Frequency for chart data sampling"
-                  value={samplingFrequency}
-                  onChange={setSamplingFrequency}
-                  error={!validatePositiveInteger(samplingFrequency)}
-                />
-              </Paper>
-            )}
-            
+            {/* No sampling-frequency control here any more. It described
+                itself as affecting only the chart while it actually thinned
+                the series that the CSV export was written from -- an export
+                whose headers disclosed nothing about the stride. The chart
+                thins for display on its own; the export and the statistics
+                use every point the solver produced. */}
+
           </Stack>
         </Grid.Col>
       </Grid>

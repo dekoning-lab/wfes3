@@ -484,16 +484,17 @@ function setupIpcHandlers(): void {
         force: params.executionParams.force,
         n_threads: parseInt(params.executionParams.threads) || 1,
         library: params.executionParams.library || 'Accelerate',
-        // ViennaCL solver if needed
-        ...(params.executionParams.library === 'ViennaCL' ? {
-          solver: params.executionParams.solver
-        } : {}),
+        // No solver is forwarded: no WFES binary declares --solver, and
+        // passing one aborts the run at argument parsing.
         // Output options
         output_Q: params.outputOptions.Q,
         output_R: params.outputOptions.R,
+        // Destination for the files the write flags request. Without this the
+        // arg builder's outputPath() had nothing to read and every file went
+        // to Downloads regardless of the folder chosen in the options drawer.
+        output_directory: params.outputOptions.outputDirectory,
         ...(params.mode === 'dist' ? {
-          output_P: params.outputOptions.P,
-          sampling_frequency: params.outputOptions.sampling_frequency
+          output_P: params.outputOptions.P
         } : {}),
         ...(params.mode === 'moments' ? {
           output_Res: params.outputOptions.Res
