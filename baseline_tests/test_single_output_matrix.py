@@ -1,19 +1,35 @@
 #!/usr/bin/env python3
 """Per-mode output-flag contract for wfes_single (integrity audit 3.1, task CX1b).
 
-Contract under test — every `--output-*` flag, in every model, has exactly two
-permitted outcomes and no third:
+Contract under test — every `--output-*` flag, in every model, ends in exactly
+one of THREE permitted outcomes, and never in a fourth:
 
-  1. the quantity is produced by that model, and a non-empty file with the
-     model's own dimensions is written; or
-  2. the quantity is not defined for that model, and the run exits nonzero with
-     a stderr diagnostic that names both the flag and the model, having written
-     nothing.
+  1. WRITE — the quantity is produced by that model, and a non-empty file with
+     the model's own dimensions is written;
+  2. REFUSE — the quantity is not defined for that model, or the solve that
+     would produce it cannot be trusted at these parameters. The run exits
+     nonzero with a stderr diagnostic that names both the flag and the model
+     (or the failed solve), having written nothing at all — a refusal that
+     leaves an artefact behind is not a refusal;
+  3. DISCLOSED OMISSION — the quantity is defined for the model and the run is
+     otherwise sound, but this particular value is not computable in double
+     precision (a conditional sojourn whose anchor probability has fallen below
+     COND_PROB_MIN). The run exits 0, writes NO file for that flag, and says so
+     on stderr naming the flag and the reason. The rest of the run proceeds
+     normally.
 
-Silent acceptance — flag parsed, no file, exit 0 — is the defect this suite
-locks out. The shipped binary had 24 such cells (plus 14 documented-scope
-`--output-E`/`--output-V` ones that were also silently accepted, and 3 cells
-whose file misrepresented the run).
+Outcome 3 is the CX1a convention, carried into this tool deliberately: the
+alternative to omitting a conditional sojourn is writing a matrix of roundoff,
+which is the substitution this whole audit exists to remove. It is a distinct
+outcome from 1 and 2 and is pinned as such below (`section_disclosed_omission`)
+— an earlier revision of this docstring claimed two outcomes and no third,
+which did not describe the binary it was testing.
+
+Silent acceptance — flag parsed, no file, exit 0, and NOTHING said — is the
+defect this suite locks out, and it is what separates outcome 3 from a bug: the
+stderr note is the whole difference. The shipped binary had 24 silently
+accepted cells (plus 14 documented-scope `--output-E`/`--output-V` ones that
+were also silently accepted, and 3 cells whose file misrepresented the run).
 
 Also locked in here:
   * `--output-I` records the distribution the run ACTUALLY used: the delta at
@@ -23,7 +39,11 @@ Also locked in here:
     validating and then discarding them (the stationary distribution does not
     depend on the start);
   * `--fixation --output-B` is SOLVED, not a hardcoded vector of ones: the
-    entries must sit within solver tolerance of 1 without being exactly 1;
+    entries must sit within solver tolerance of 1 without being exactly 1, and
+    that tolerance is CAPPED — a solve whose own forward-error bound exceeds
+    the range of a probability refuses instead of clamping to a ones vector;
+  * `--fixation` refuses a T_fix its solve cannot resolve, whichever SIGN the
+    unresolvable value happens to carry;
   * `--establishment` derives no absorption vector by subtraction — checked
     against an independent dense-LU reference in the large `--odds-ratio`
     regime, where `1 - B_fix` loses most of its significant digits;
@@ -384,10 +404,39 @@ def section_fixation_B(binary: Path) -> None:
             check(worst < 1e-4,
                   f"fixation {label}: every entry within tolerance of 1",
                   f"worst |B-1| = {worst:.3e}")
+
+    # Falsifying the ones-literal.
+    #
+    # The direct falsification is a nonzero deviation somewhere: a literal
+    # `dvec::Ones(size)` deviates by exactly 0 in every entry of every case, so
+    # one nonzero |B-1| anywhere in the spread proves a solve happened. That
+    # test is real but it leans on ROUNDOFF LUCK -- a well-conditioned enough
+    # model can legitimately land on exactly 1.0 everywhere, and if the spread
+    # above ever narrowed to only such cases the check would start failing on a
+    # correct binary. Keep it (it is the sharpest evidence when it fires), but
+    # anchor the section on a signal that does not depend on luck.
     check(any(w > 0.0 for _, w in deviations),
           "at least one --fixation --output-B carries the solve's own roundoff, "
           "so the file cannot be a ones-literal write",
           ", ".join(f"{lbl}: {w:.3e}" for lbl, w in deviations))
+
+    # Luck-free anchor: the CONDITIONING GATE. A hardcoded ones vector has no
+    # solve behind it, so there is nothing whose forward-error bound could be
+    # measured and nothing that could fail -- it would be written at every
+    # parameter setting, unconditionally. The solved implementation refuses
+    # exactly where the bound on its own solve exceeds the range of a
+    # probability, and the refusal quotes that measured bound. A binary that
+    # writes a file here cannot be solving. (The RED case and the measured
+    # numbers live in section_solve_conditioning.)
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "B.txt"
+        proc = run(binary, ["--fixation", "--pop-size", "200",
+                            "--selection", "-0.05", "--dominance", "0.5",
+                            "--output-B", str(out), "--json"])
+        check(proc.returncode != 0 and not out.exists(),
+              "--fixation --output-B refuses where its own solve cannot certify "
+              "B, which a ones-literal could never do",
+              f"exit={proc.returncode} file={out.exists()}")
 
 
 # --------------------------------------------------------------------------
@@ -550,7 +599,200 @@ def section_establishment(binary: Path, skip_dense: bool) -> None:
 
 
 # --------------------------------------------------------------------------
-# Section 6 — structured output is never an empty success
+# Section 6 — a solve that cannot certify its answer refuses, either sign
+# --------------------------------------------------------------------------
+
+# Ground truth for the cases below, from an independent GTH (Grassmann-Taksar-
+# Heyman) state-reduction reference in pure Python. GTH is subtraction-free for
+# a substochastic M-matrix -- it recovers every diagonal it divides by as a SUM
+# of nonnegative probabilities rather than as 1 - Q[k][k] -- so it is
+# componentwise relative-accurate independent of the condition number, and it
+# runs in the SAME double precision the CLI does. Where the two disagree, the
+# subtractive LU is the one that lost the digits.
+#
+# --fixation, N = 200, h = 0.5, u = v = 1e-9, T_fix from count 1:
+#
+#   s        GTH (true)      LU (pre-fix CLI)  relative error   verdict
+#   -0.01    1.35134e+10     1.35134e+10       1.8e-07          write
+#   -0.02    3.93843e+11     3.93845e+11       5.3e-06          write
+#   -0.03    1.56684e+13     1.56718e+13       2.1e-04          refuse
+#   -0.04    7.31124e+14     7.38436e+14       1.0e-02          refuse
+#   -0.05    3.79792e+16     7.82089e+16       1.06             refuse
+#   -0.20    4.34509e+45    -7.38341e+16       garbage          refuse
+#
+# Two facts the pre-fix diagnostics got wrong, and that these cases pin:
+#   * the true values are all REPRESENTABLE -- 4.3e45 is 260 orders below
+#     DBL_MAX -- so this is not overflow, and a diagnostic that says "the
+#     sojourn sums overflowed" sends the user after a problem they do not have;
+#   * the failure is not signed. At s = -0.05 the LU's answer is positive, has
+#     no negative entry anywhere in N, and was printed to 17 digits at exit 0
+#     with not one of them correct. A gate that only catches negative times
+#     catches half of this.
+
+def section_solve_conditioning(binary: Path) -> None:
+    print("\n== a solve that cannot certify its answer refuses, either sign ==")
+
+    # RED 1 (Critical): --output-B wrote 400 clamped 1.0s at exit 0, under the
+    # note "worst excursion 1.05926 (solver roundoff, within tolerance
+    # 13892.7); clamped to the boundary" -- a tolerance four orders wider than
+    # the entire range of a probability, presented as roundoff. The file was
+    # byte-identical to the hardcoded ones-vector this task removed.
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "B.txt"
+        proc = run(binary, ["--fixation", "--pop-size", "200",
+                            "--selection", "-0.05", "--dominance", "0.5",
+                            "--output-B", str(out), "--json"])
+        check(proc.returncode != 0,
+              "N=200 s=-0.05 --output-B: refuses instead of clamping to ones",
+              f"exit={proc.returncode}")
+        check(not out.exists(),
+              "N=200 s=-0.05 --output-B: writes no file",
+              f"exists={out.exists()}")
+        low = proc.stderr.lower()
+        check("conditioning" in low,
+              "the diagnostic names the conditioning",
+              proc.stderr.strip()[:110])
+        # The pre-fix note called a 1.06 excursion on a probability "solver
+        # roundoff, within tolerance 13892.7". The replacement has to disclaim
+        # that explicitly, not merely omit it.
+        check("not roundoff" in low,
+              "the diagnostic says outright that this is NOT roundoff",
+              proc.stderr.strip()[:110])
+        check(not proc.stdout.strip(),
+              "nothing is printed to stdout on the refusal",
+              f"{len(proc.stdout)}B")
+
+    # RED 2a / 2b (Critical): BOTH signs of unresolvable T_fix. 2a came back
+    # negative and was already caught; 2b came back positive and was printed.
+    for label, sel in (("s=-0.2 (negative garbage)", "-0.2"),
+                       ("s=-0.05 (positive garbage)", "-0.05")):
+        proc = run(binary, ["--fixation", "--pop-size", "200",
+                            "--selection", sel, "--dominance", "0.5", "--json"])
+        check(proc.returncode != 0, f"{label}: exits nonzero",
+              f"exit={proc.returncode}")
+        check(not proc.stdout.strip(),
+              f"{label}: no 17-digit garbage on stdout",
+              proc.stdout.strip()[:110])
+        # The corrected mechanism. IEEE 754 doubles saturate to +inf and never
+        # to a negative, so a sum of nonnegative sojourns CANNOT wrap: the
+        # overflow story the first fix recorded was impossible as stated, and
+        # measurably wrong (see the table above).
+        low = proc.stderr.lower()
+        # The claim being pinned out of existence, verbatim from the first fix:
+        # "... so the sojourn sums overflowed. Refusing to print it". Nothing
+        # overflowed; a sum of nonnegative doubles cannot wrap negative under
+        # IEEE 754, and the true values are 260 orders below DBL_MAX. Neither
+        # diagnostic may say anything overflowed. (Saying it is NOT an
+        # overflow, as the T_fix message does, is the point.)
+        check("overflowed" not in low,
+              f"{label}: does not claim anything overflowed",
+              proc.stderr.strip()[:130])
+        check("conditioning" in low,
+              f"{label}: names the conditioning of the solve",
+              proc.stderr.strip()[:130])
+        check("representable" in low,
+              f"{label}: says the true value IS representable",
+              proc.stderr.strip()[:130])
+
+    # The gate is a property of the parameters, not of which files were asked
+    # for. Before the fix the conditioning was only measured inside the
+    # --output-B branch, so the same run refused or printed garbage depending
+    # on whether a -B path happened to be on the command line.
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "B.txt"
+        with_b = run(binary, ["--fixation", "--pop-size", "200",
+                              "--selection", "-0.05", "--dominance", "0.5",
+                              "--output-B", str(out), "--json"])
+        without_b = run(binary, ["--fixation", "--pop-size", "200",
+                                 "--selection", "-0.05", "--dominance", "0.5",
+                                 "--json"])
+        check((with_b.returncode != 0) == (without_b.returncode != 0),
+              "the verdict does not depend on whether --output-B was requested",
+              f"with={with_b.returncode} without={without_b.returncode}")
+
+    # A refusal must leave nothing behind, including the files it would have
+    # written from the same failed factorization.
+    with tempfile.TemporaryDirectory() as td:
+        paths = {f: Path(td) / f"{f}.txt" for f in ("N", "B", "N-fix", "I")}
+        args = ["--fixation", "--pop-size", "200", "--selection", "-0.05",
+                "--dominance", "0.5", "--json"]
+        for flag, p in paths.items():
+            args += [f"--output-{flag}", str(p)]
+        proc = run(binary, args)
+        left = sorted(f for f, p in paths.items() if p.exists())
+        check(proc.returncode != 0 and not left,
+              "a refused --fixation run leaves no output files behind",
+              f"exit={proc.returncode} left={left or 'none'}")
+
+    # And the gate must NOT fire where the solve still resolves the answer.
+    # Measured against GTH: 1.8e-07 relative at s=-0.01, 5.3e-06 at s=-0.02.
+    for label, sel, want in (("s=-0.01", "-0.01", 1.3513403087419121e10),
+                             ("s=-0.02", "-0.02", 3.9384277908656226e11)):
+        proc = run(binary, ["--fixation", "--pop-size", "200",
+                            "--selection", sel, "--dominance", "0.5",
+                            "--starting-copies", "1", "--json"])
+        if not check(proc.returncode == 0, f"N=200 {label}: still exits 0",
+                     f"exit={proc.returncode} {proc.stderr.strip()[:110]}"):
+            continue
+        got = json.loads(proc.stdout)["results"]["T_fix"]
+        check(rel_diff(got, want) < 1e-4,
+              f"N=200 {label}: T_fix still agrees with the GTH reference",
+              f"cli={got:.9e} gth={want:.9e} rel={rel_diff(got, want):.2e}")
+
+
+# --------------------------------------------------------------------------
+# Section 7 — the third outcome: a disclosed omission
+# --------------------------------------------------------------------------
+
+def section_disclosed_omission(binary: Path) -> None:
+    print("\n== disclosed omission is a real, distinct third outcome ==")
+    # --absorption -N 150 -s -0.9: the fixation probability from one copy is
+    # 2.34e-302, a genuine positive double but below COND_PROB_MIN = 1e-300.
+    # Every conditional-on-fixation quantity divides by it, so the conditional
+    # sojourn matrix would be entirely roundoff. The run is otherwise sound and
+    # its other outputs are real, so it is neither a WRITE nor a REFUSE: the
+    # one uncomputable file is omitted, out loud, and the run continues.
+    #
+    # (--force is required: 2Ns = -270 trips the strongly-deleterious advisory,
+    # which is a separate, deliberate guard.)
+    base = ["--absorption", "--pop-size", "150", "--selection", "-0.9",
+            "--dominance", "0.5", "--starting-copies", "1", "--force"]
+    with tempfile.TemporaryDirectory() as td:
+        nfix = Path(td) / "N-fix.txt"
+        next_ = Path(td) / "N-ext.txt"
+        n = Path(td) / "N.txt"
+        proc = run(binary, [*base, "--output-N-fix", str(nfix),
+                            "--output-N-ext", str(next_),
+                            "--output-N", str(n), "--json"])
+        if not check(proc.returncode == 0,
+                     "disclosed omission: the run still exits 0",
+                     f"exit={proc.returncode} {proc.stderr.strip()[:110]}"):
+            return
+        check(not nfix.exists(),
+              "disclosed omission: the uncomputable file is NOT written",
+              f"exists={nfix.exists()}")
+        check("--output-N-fix not written" in proc.stderr,
+              "disclosed omission: stderr names the flag it omitted",
+              proc.stderr.strip()[:130])
+        check("1e-300" in proc.stderr,
+              "disclosed omission: stderr names the threshold that was crossed",
+              proc.stderr.strip()[:130])
+        # This is what separates outcome 3 from silent acceptance: the run
+        # still delivers everything it CAN compute.
+        check(next_.exists() and n.exists(),
+              "disclosed omission: the computable files are still written",
+              f"N-ext={next_.exists()} N={n.exists()}")
+        res = json.loads(proc.stdout)["results"]
+        check("T_fix" not in res and "T_fix_std" not in res,
+              "disclosed omission: the matching scalar fields are omitted too, "
+              "not printed as 0/0 artifacts", str(sorted(res)))
+        check("P_ext" in res and "T_abs" in res,
+              "disclosed omission: the unconditional results are still reported",
+              str(sorted(res)))
+
+
+# --------------------------------------------------------------------------
+# Section 8 — structured output is never an empty success
 # --------------------------------------------------------------------------
 
 def section_structured(binary: Path) -> None:
@@ -625,6 +867,8 @@ def main() -> int:
     section_equilibrium_start(binary)
     section_fixation_B(binary)
     section_establishment(binary, opts.skip_dense)
+    section_solve_conditioning(binary)
+    section_disclosed_omission(binary)
     section_structured(binary)
 
     n_fail = sum(1 for ok, *_ in _results if not ok)

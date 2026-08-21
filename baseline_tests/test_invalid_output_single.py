@@ -386,6 +386,102 @@ def section_underflow(new_bin: Path):
         check(f in results, f"{f} is still reported")
 
 
+def section_refusal_leaves_nothing(new_bin: Path):
+    print("\n== a refused run leaves no output artefacts behind ==")
+    # --establishment -p at or above the establishment count is refused (it
+    # indexes past the end of the truncated model's state space -- SIGABRT on a
+    # debug build, an out-of-bounds write under NDEBUG). The guard was correct
+    # but it ran ~160 lines too late: WF::Truncated had already been built and
+    # --output-Q / --output-R had already been written from it, so the rejected
+    # run exited 1 with a matrix file on disk that a user could pick up and
+    # analyse. Measured on the pre-fix build:
+    #
+    #   $ wfes_single --establishment -N 8 -s 0.05 -h 0.5 -p 10 \
+    #                 --output-Q leak.mtx
+    #   Error: -p / --starting-copies 10 is at or above the establishment
+    #          count 7 ...
+    #   $ ls leak.mtx        ->  -rw-r--r--  1025 bytes
+    #
+    # A refusal that leaves an artefact is not a refusal. The range check now
+    # runs the moment est_idx is known, before anything is built or written.
+    with tempfile.TemporaryDirectory() as td:
+        paths = {
+            "Q": Path(td) / "leak_Q.mtx",
+            "R": Path(td) / "leak_R.txt",
+            "N": Path(td) / "leak_N.txt",
+            "B": Path(td) / "leak_B.txt",
+            "I": Path(td) / "leak_I.txt",
+        }
+        args = ["--establishment", "-N", "8", "-s", "0.05", "-h", "0.5",
+                "-p", "10"]
+        for flag, p in paths.items():
+            args += [f"--output-{flag}", str(p)]
+        proc = run(new_bin, args)
+        check(proc.returncode != 0,
+              "establishment -p above the establishment count is refused",
+              f"exit={proc.returncode}")
+        left = sorted(f for f, p in paths.items() if p.exists())
+        check(not left,
+              "the refusal writes NO output file, --output-Q included",
+              f"left behind: {left or 'nothing'}")
+        check("establishment count" in proc.stderr,
+              "the diagnostic names the establishment count and the valid range",
+              proc.stderr.strip()[:130])
+
+    # The healthy neighbour still works: -p just below the establishment count
+    # must write everything, so the guard is a range check and not a blanket
+    # refusal of --establishment -p.
+    with tempfile.TemporaryDirectory() as td:
+        q = Path(td) / "Q.mtx"
+        proc = run(new_bin, ["--establishment", "-N", "8", "-s", "0.05",
+                             "-h", "0.5", "-p", "3", "--output-Q", str(q)])
+        check(proc.returncode == 0 and q.exists(),
+              "establishment -p below the establishment count still writes",
+              f"exit={proc.returncode} Q={q.exists()}")
+
+    # A SECOND out-of-bounds access in the same branch, found while verifying
+    # the one above, and not previously reported.
+    #
+    # --establishment starts its post-establishment calculation one copy ABOVE
+    # the establishment count (a deliberate, frozen convention). When the odds
+    # threshold is first crossed at the last transient count, that start index
+    # is one past the end of every full-model vector: the state is fixation,
+    # which is absorbing, not transient. Measured at -N 5 -s 0.05 --odds-ratio
+    # 10, where est_idx == size == 9:
+    #
+    #   unoptimised build : SIGABRT on the Eigen bounds assertion (exit 134)
+    #   Release build     : assertion compiled out (-DNDEBUG is the default
+    #                       since bd0bc2e, and is what ships), so id_full(9)=1
+    #                       writes past the end, B_full_*(9) read past it, and
+    #                       the run prints, at exit 0:
+    #                          Est. freq. = 0.9   P_est = 0.131484
+    #                          T_seg = 0   T_seg_std = 0   T_est = 14.1072
+    #
+    # The two zeros are the tell: id_full never received its 1, so the sojourn
+    # solve returned the zero vector and T_seg was "measured" as 0 generations.
+    # This is the shape the whole audit exists to remove -- a fabricated number
+    # at exit 0 -- and on the shipping build configuration it is silent.
+    proc = run(new_bin, ["--establishment", "-N", "5", "-s", "0.05",
+                         "-h", "0.5", "--odds-ratio", "10"])
+    check(proc.returncode not in (0, -6, 134),
+          "establishment at est_idx == size refuses instead of aborting or "
+          "reading out of bounds", f"exit={proc.returncode}")
+    check("T_seg" not in proc.stdout,
+          "no fabricated T_seg = 0 from an out-of-bounds sojourn solve",
+          proc.stdout.strip()[-90:])
+    check("fixation itself" in proc.stderr,
+          "the diagnostic explains that the post-establishment state IS "
+          "fixation", proc.stderr.strip()[:130])
+
+    # ... and the neighbouring odds ratio, whose establishment count is inside
+    # the transient space, still computes.
+    proc = run(new_bin, ["--establishment", "-N", "5", "-s", "0.05",
+                         "-h", "0.5", "--odds-ratio", "2"])
+    check(proc.returncode == 0,
+          "establishment with est_idx < size is unaffected",
+          f"exit={proc.returncode} {proc.stderr.strip()[:90]}")
+
+
 def section_csv(new_bin: Path, shipped: Path):
     print("\n== --csv output: healthy case and degenerate refusal ==")
     # The suite above exercises --json exclusively; --csv is a separate
@@ -470,6 +566,7 @@ def main() -> int:
     section_degenerate_cutoff(new_bin)
     section_v0(new_bin, opts.shipped)
     section_underflow(new_bin)
+    section_refusal_leaves_nothing(new_bin)
     section_csv(new_bin, opts.shipped)
     if opts.skip_dense:
         print("\n(dense reference section skipped on request)")

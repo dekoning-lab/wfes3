@@ -80,6 +80,63 @@ namespace {
 // downstream of it could be trusted either.
 constexpr double PROB_RANGE_TOL = 1e-8;
 
+// Ceiling on the MEASURED forward-error bound (solve_error_scale) above which
+// a solve certifies nothing about a PROBABILITY it produced, and the run is
+// refused rather than the bound being used as a tolerance.
+//
+// Without a ceiling, `tol = max(PROB_RANGE_TOL, solve_error_scale(...))` grows
+// without limit with the conditioning, so a bound large enough to admit ANY
+// value at all was still being reported as "solver roundoff, within
+// tolerance". Measured on the pre-fix build:
+//
+//   wfes_single --fixation -N 200 -s -0.05 -h 0.5 --output-B b.txt
+//   Note: B: 400 of 400 entries exceeded [0,1], worst excursion 1.05926
+//         (solver roundoff, within tolerance 13892.7); clamped to the boundary.
+//
+// -- 400 clamped 1.0s written at exit 0, under a "solved, within tolerance"
+// provenance, from a solve whose own bound was four orders of magnitude wider
+// than the range of the quantity. That file is indistinguishable from the
+// hardcoded `dvec::Ones(size)` this task removed.
+//
+// WHY 1e-2. solve_error_scale bounds the ABSOLUTE error of a solve whose
+// right-hand side is a column of R, i.e. of B itself. A probability's entire
+// range is 1, so a bound of 1e-2 already admits an error of one percent of
+// everything the quantity can possibly be: past that line the solve does not
+// certify two decimal places of any probability, and for --fixation -- where
+// B == 1 exactly and enforce_probability_range then clamps every entry to the
+// boundary -- it certifies nothing whatsoever about whether the solve
+// reproduced the identity. The line is deliberately drawn an order of
+// magnitude BELOW the zero-digit point (a bound of 1 admits every probability
+// there is), so the refusal fires while the file is merely uncertifiable
+// rather than already pure noise.
+//
+// Calibrated against the healthy cases the suite pins, using each model's own
+// max expected time to absorption (independent GTH reference, see
+// require_resolvable_time): N=8 defaults 7.1e-6, N=50 s=0 4.4e-5,
+// N=100 s=0.01 3.9e-5, N=500 s=0.001 2.8e-4. 1e-2 clears the worst of those
+// by more than an order of magnitude, and refuses the 1.4e4 case above.
+constexpr double PROB_SOLVE_ERROR_CEILING = 1e-2;
+
+// The same bound read as a RELATIVE error on an expected time, and the ceiling
+// past which not one printed digit of that time is certified.
+//
+// (I - Q)^-1 is nonnegative with row sums equal to the expected times to
+// absorption, so ||(I - Q)^-1||_inf = T_max and the solution vector of a
+// time solve has norm ~T_max. The absolute bound 2*n*eps*T_max that
+// solve_error_scale returns is therefore, divided by that same T_max, a
+// RELATIVE bound on any expected time this factorization produces. At 1.0 the
+// bound permits an error as large as the answer: zero significant digits.
+//
+// This is the principled zero-digit line for a relative bound, not a tuned
+// constant. It is conservative -- the a priori bound overestimates the
+// realised error by a roughly constant ~1.3e4 on this family (see the table in
+// require_resolvable_time), so runs whose answer still holds a few good digits
+// are refused along with the ones that hold none. That is the intended
+// direction: the tool prints 17 digits and has no way to say "the first four
+// of these are real", so a bound that certifies none of them is not a bound to
+// print under.
+constexpr double TIME_SOLVE_ERROR_CEILING = 1.0;
+
 // Below this, a per-starting-state absorption probability can no longer
 // anchor a conditional expectation in double precision. Every
 // conditional-on-absorption moment divides by B(start): E[time at j | abs] =
@@ -153,29 +210,104 @@ void enforce_probability_range(dvec& B, const char* name,
     }
 }
 
-// An expected first-passage time is positive by definition, so a negative or
-// zero one is arithmetic that overflowed, not a result.
+// Refuse an expected first-passage time that the linear solve cannot resolve
+// at these parameters.
 //
-// Found while calibrating the --fixation absorption tolerance (task CX1b):
-// --fixation -N 200 -s -0.2 -h 0.5 printed T_fix = -7.38e16 with exit 0 on the
-// shipped binary. Fixation of a strongly deleterious allele takes far longer
-// than a double can hold, so the sojourn sums overflow and come back with a
-// sign; require_finite_result cannot see it, because the wrapped value is a
-// perfectly finite double. The run is refused rather than reporting a negative
-// expected time, and refusing here also keeps the verdict the same whether or
-// not the run asked for --output-B, whose own conditioning check
-// (solve_error_scale) catches the identical failure one solve earlier.
-void require_positive_time(double value, const char* name) {
+// CORRECTION (task CX1b, fix round 1). The first version of this gate asserted,
+// in this comment and in the user-facing diagnostic, that the sojourn sums had
+// OVERFLOWED and wrapped negative. That is not what happens, and it cannot be:
+// IEEE 754 doubles saturate to +inf, never to a negative, so a sum of
+// nonnegative terms cannot come back with a sign -- and if it did reach +inf,
+// require_finite_result would already have caught it. The mechanism recorded
+// there was wrong, and the wrong mechanism sent users looking for a
+// representable-range problem they do not have.
+//
+// What actually happens, measured against an independent GTH (Grassmann-
+// Taksar-Heyman) state-reduction reference implemented in pure Python. GTH is
+// entirely subtraction-free for a substochastic M-matrix -- it recovers every
+// diagonal it divides by as a SUM of nonnegative off-diagonal and absorption
+// probabilities rather than as 1 - Q(k,k) -- and is therefore componentwise
+// relative-accurate INDEPENDENT of the condition number. --fixation, N = 200,
+// h = 0.5, u = v = 1e-9, T_fix from count 1:
+//
+//   s        GTH (true)      LU (this tool)    relative error of the LU
+//   -0.01    1.35134e+10     1.35134e+10       1.8e-07
+//   -0.02    3.93843e+11     3.93845e+11       5.3e-06
+//   -0.03    1.56684e+13     1.56718e+13       2.1e-04
+//   -0.04    7.31124e+14     7.38436e+14       1.0e-02
+//   -0.05    3.79792e+16     7.82089e+16       1.06   <- 0 digits, printed
+//   -0.20    4.34509e+45    -7.38341e+16       garbage
+//
+// Two things follow, and both contradict the overflow story. The true values
+// are ALL comfortably representable -- 4.3e45 at s = -0.2 is 260 orders below
+// DBL_MAX -- so the quantity is fine and it is the SOLVE that fails. And the
+// LU's answer does not track the truth at all once it breaks: it saturates
+// near 1/eps in magnitude (7.8e16, -7.4e16) while the true time ranges over
+// 1e16 to 1e45. (I - Q) is an M-matrix whose inverse row sums ARE these
+// times, so cond_inf(I - Q) ~ 2 * T_max and a plain LU loses digits in
+// proportion; GTH gets the same numbers right in the same double precision
+// because it never subtracts. The honest diagnosis names the conditioning of
+// the solve, not the size of the answer.
+//
+// Three independent signals, any ONE of which is proof the solve failed:
+//
+//  (a) a nonpositive value: an expected first-passage time is positive by
+//      definition;
+//  (b) a negative entry anywhere in the sojourn matrix: each row of N is a row
+//      of (I - Q)^-1 = sum_k Q^k, entrywise nonnegative for an M-matrix by
+//      construction, so a negative entry is not a rounding of anything. Free
+//      -- the matrix is already in hand;
+//  (c) the factorization's forward-error bound read as a RELATIVE error on a
+//      time, at or above TIME_SOLVE_ERROR_CEILING.
+//
+// (a) alone was the gate that landed, and it caught only the negative half.
+// The s = -0.05 row above is positive, has no negative entry in N, and was
+// printed to 17 digits at exit 0 with none of them correct -- which is what
+// (c) closes.
+void require_resolvable_time(double value, const char* name,
+                             const dmat& sojourn, double solve_err,
+                             double t_max) {
+    std::ostringstream proof;
+    proof << std::setprecision(std::numeric_limits<double>::max_digits10);
+
     if (!std::isfinite(value) || value <= 0) {
-        std::ostringstream os;
-        os << std::setprecision(std::numeric_limits<double>::max_digits10)
-           << "computed " << name << " is " << value
-           << ", which is not a possible expected time: a first-passage time is "
-              "positive by definition. The time to absorption exceeds what "
-              "double precision can represent for these parameters, so the "
-              "sojourn sums overflowed. Refusing to print it";
-        throw std::runtime_error(os.str());
+        proof << "computed " << name << " is " << value
+              << ", which is not a possible expected time: a first-passage "
+                 "time is positive by definition";
+    } else if (sojourn.size() > 0 && sojourn.minCoeff() < 0.0) {
+        proof << "the sojourn solve behind " << name
+              << " returned negative entries (smallest " << sojourn.minCoeff()
+              << "). Each row of N is a row of (I - Q)^-1 = sum_k Q^k, which is "
+                 "entrywise nonnegative for this M-matrix by construction, so a "
+                 "negative entry cannot be a rounding of the true value";
+    } else if (!(solve_err < TIME_SOLVE_ERROR_CEILING)) {
+        proof << "the forward-error bound on the solve behind " << name
+              << " is " << solve_err
+              << " RELATIVE (2 * n * eps * T_max, with n = " << sojourn.cols()
+              << " states and T_max = " << t_max
+              << "), at or above " << TIME_SOLVE_ERROR_CEILING
+              << ": the bound permits an error as large as the answer, so not "
+                 "one of the digits that would be printed is certified";
+    } else {
+        return;
     }
+
+    std::ostringstream os;
+    os << std::setprecision(std::numeric_limits<double>::max_digits10)
+       << proof.str()
+       << ". This is the CONDITIONING of the (I - Q) solve at these "
+          "parameters, not an overflow and not the magnitude of the answer: "
+          "the true value is representable in double precision, and a "
+          "subtraction-free method reaches it in double precision, but the "
+          "sparse LU this tool uses cannot -- cond(I - Q) grows in proportion "
+          "to the expected time to absorption, and every backend factorizes "
+          "the same matrix, so changing --library will not change this. "
+          "Refusing to print a number with no correct digits. Bring the "
+          "expected time to absorption within reach of the solve: a smaller "
+          "population size, a weaker |selection coefficient|, or larger "
+          "mutation rates (the time scales roughly as 1 / (2Nv)) all reduce "
+          "the conditioning";
+    throw std::runtime_error(os.str());
 }
 
 // Gate for every computed scalar that is about to be printed: a non-finite
@@ -206,16 +338,44 @@ void require_finite_result(double value, const char* name) {
 // the solve's own error is ~1e-6, four orders above the standing
 // PROB_RANGE_TOL. Comparing such a solve against a fixed 1e-8 would refuse
 // perfectly healthy runs; comparing it against nothing would accept anything.
+//
+// The bound is a TOLERANCE only up to PROB_SOLVE_ERROR_CEILING (probabilities)
+// and TIME_SOLVE_ERROR_CEILING (times). Past those it stops being a tolerance
+// and becomes the refusal itself: a bound wider than the quantity's own range
+// certifies nothing, and using it to wave a value through was the defect those
+// two ceilings close. Callers must apply them; this function only measures.
 double solve_error_scale(solver::Solver& solver, llong size, double& t_max_out) {
     dvec ones = dvec::Ones(size);
     dvec t = solver.solve(ones, false);
     t_max_out = t.allFinite() ? t.maxCoeff() : std::numeric_limits<double>::infinity();
+    // (I - Q)^-1 = sum_k Q^k is entrywise nonnegative for this M-matrix, so
+    // every entry of t is a nonnegative expected time by construction. A
+    // negative or non-finite one is proof the solve failed -- not evidence
+    // about the true value's magnitude.
+    //
+    // CORRECTION (fix round 1): this used to say the time was "not
+    // representable in double precision", which is false at exactly the
+    // parameters that reach it. At --fixation -N 200 -s -0.2 -h 0.5 the LU
+    // returns all-negative times of magnitude ~7.4e16 while the true maximum,
+    // from an independent subtraction-free GTH reference, is 4.35e45 -- 260
+    // orders of magnitude below DBL_MAX and perfectly representable. See
+    // require_resolvable_time for the measurement table.
     if (!std::isfinite(t_max_out) || t_max_out < 0) {
-        throw std::runtime_error(
-            "the expected time to absorption is not representable in double "
-            "precision for these parameters (the (I - Q) x = 1 solve returned "
-            "non-finite or negative times), so neither the absorption "
-            "probabilities nor their accuracy can be established");
+        std::ostringstream os;
+        os << std::setprecision(std::numeric_limits<double>::max_digits10)
+           << "the (I - Q) x = 1 solve returned non-finite or negative expected "
+              "times (largest entry " << t_max_out
+           << "). Those times are the row sums of (I - Q)^-1, which is "
+              "entrywise nonnegative for this M-matrix by construction, so this "
+              "is proof the linear solve failed at these parameters -- the "
+              "CONDITIONING of (I - Q), not the magnitude of the answer, which "
+              "is representable and which a subtraction-free method reaches in "
+              "the same double precision. Neither the absorption probabilities "
+              "nor any expected time can be established from this "
+              "factorization. A smaller population size, a weaker |selection "
+              "coefficient|, or larger mutation rates all reduce the "
+              "conditioning.";
+        throw std::runtime_error(os.str());
     }
     return 2.0 * static_cast<double>(size) * t_max_out *
            std::numeric_limits<double>::epsilon();
@@ -629,8 +789,16 @@ void check_output_flag_scope(const CLI::CommandLineOptions& options) {
 // and the shared formatter (owned by another remediation task) has fixed
 // all-fields signatures.
 struct AbsorptionField {
-    const char* name;
+    const char* name;               // JSON key and CSV column header
     std::optional<double> value;
+    // Plain-text label, when the shared formatter's differs from `name`.
+    // Only --establishment needs this: output_formatter.cpp prints
+    // "Est. freq. = " where the JSON/CSV key is "est_freq" (every other field
+    // in every other mode prints its own name). Without it, a run that omitted
+    // one establishment field silently relabelled a row of the plain-text
+    // output, so the same quantity had two names depending on whether some
+    // OTHER field was reportable.
+    const char* label = nullptr;
 };
 
 void print_results_partial(const CLI::CommandLineOptions& options,
@@ -666,7 +834,10 @@ void print_results_partial(const CLI::CommandLineOptions& options,
         std::cout << std::endl;
     } else {
         for (const auto& f : fields) {
-            if (f.value) std::cout << f.name << " = " << *f.value << std::endl;
+            if (f.value) {
+                std::cout << (f.label ? f.label : f.name) << " = " << *f.value
+                          << std::endl;
+            }
         }
     }
 }
@@ -692,12 +863,31 @@ struct StatusField {
     bool numeric;
 };
 
+// Escape a string for a JSON string literal.
+//
+// Mirrors OutputFormatter's json_escape (output_formatter.cpp, landed in
+// 9ebf5eb) rather than handling only the three characters this file happened
+// to hit. The values that pass through here are user-supplied paths, and a
+// path may legally contain any byte except '/' and NUL on a POSIX filesystem
+// -- a tab or a stray control byte in one used to be copied through verbatim,
+// producing JSON that a strict parser rejects (RFC 8259 forbids unescaped
+// U+0000..U+001F inside a string). Every control character is emitted as a
+// \uXXXX escape, which is valid for all of them.
 std::string json_escape(const std::string& s) {
     std::string out;
+    out.reserve(s.size());
     for (char c : s) {
-        if (c == '"' || c == '\\') { out += '\\'; out += c; }
-        else if (c == '\n') { out += "\\n"; }
-        else { out += c; }
+        if (c == '"' || c == '\\') {
+            out += '\\';
+            out += c;
+        } else if (static_cast<unsigned char>(c) < 0x20) {
+            std::ostringstream os;
+            os << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+               << static_cast<int>(static_cast<unsigned char>(c));
+            out += os.str();
+        } else {
+            out += c;
+        }
     }
     return out;
 }
@@ -972,6 +1162,22 @@ int main(int argc, char const *argv[]) {
                     std::cout << "  Library (in use):    " << solver->backendName() << std::endl;
                 }
 
+                // Conditioning of THIS factorization, measured once and shared
+                // by every gate below. One extra back-substitution
+                // ((I - Q) t = 1) against a factorization that already exists;
+                // the factorization itself dominates the cost.
+                //
+                // Measured UNCONDITIONALLY, not only when --output-B was asked
+                // for. It used to sit inside the need_B block, which is how the
+                // tool came to give two different verdicts on the same run: at
+                // -N 200 -s -0.05 -h 0.5 the bound is ~1.4e4, and the run
+                // refused or printed 17 digits of garbage depending on whether
+                // a --output-B path happened to be on the command line. The
+                // conditioning of the solve is a property of the parameters,
+                // not of which files the user asked for.
+                double t_max = 0;
+                const double solve_err = solve_error_scale(*solver, size, t_max);
+
                 // Absorption probabilities for this model.
                 //
                 // Integrity audit fix (section 5.3c): --output-B used to write
@@ -991,6 +1197,15 @@ int main(int argc, char const *argv[]) {
                 // error puts it outside, and T_abs for this model runs to ~1e9
                 // generations at default mutation rates, where the solve's own
                 // error is ~1e-6. See solve_error_scale.
+                //
+                // ... but a measured tolerance still needs a CEILING, which the
+                // first version of this did not have. Because B == 1 here and
+                // enforce_probability_range clamps to the boundary, an
+                // uncapped tolerance turns a total solve failure into a file of
+                // 400 exactly-1.0 entries at exit 0 -- byte-identical to the
+                // hardcoded ones-vector this whole change replaced, and carrying
+                // a "solved, within tolerance" provenance it has not earned.
+                // See PROB_SOLVE_ERROR_CEILING.
                 const bool need_B = !options.output_B_path.empty() ||
                                     !options.output_N_fix_path.empty();
                 dvec B_fix_only;
@@ -1001,9 +1216,34 @@ int main(int argc, char const *argv[]) {
                             "there is no absorption probability vector to solve "
                             "for");
                     }
-                    double t_max = 0;
-                    const double b_tol = std::max(PROB_RANGE_TOL,
-                                                  solve_error_scale(*solver, size, t_max));
+                    if (!(solve_err < PROB_SOLVE_ERROR_CEILING)) {
+                        std::ostringstream os;
+                        os << std::setprecision(std::numeric_limits<double>::max_digits10)
+                           << "the absorption probability B cannot be certified "
+                              "at these parameters: the forward-error bound on "
+                              "the solve that produces it is " << solve_err
+                           << " (2 * n * eps * T_max, with n = " << size
+                           << " states and a max expected time to absorption of "
+                           << t_max << "), while B is a probability whose entire "
+                              "range is 1. A bound wider than "
+                           << PROB_SOLVE_ERROR_CEILING
+                           << " certifies fewer than two decimal places of any "
+                              "probability, and here -- where B = 1 exactly and "
+                              "the range guard clamps to the boundary -- it "
+                              "certifies nothing at all: every entry would be "
+                              "written as exactly 1.0 whether the solve "
+                              "succeeded or failed. This is the CONDITIONING of "
+                              "(I - Q) at these parameters, not roundoff: "
+                              "cond(I - Q) grows in proportion to the expected "
+                              "time to absorption, and every --library backend "
+                              "factorizes the same matrix. Refusing to write a "
+                              "vector the solve cannot vouch for. A smaller "
+                              "population size, a weaker |selection "
+                              "coefficient|, or larger mutation rates all "
+                              "reduce the conditioning.";
+                        throw std::runtime_error(os.str());
+                    }
+                    const double b_tol = std::max(PROB_RANGE_TOL, solve_err);
                     dvec R_fix = W.R.col(0);
                     B_fix_only = solver->solve(R_fix, false);
                     if (!B_fix_only.allFinite()) {
@@ -1053,7 +1293,18 @@ int main(int argc, char const *argv[]) {
                     double T_var = ((2 * N2.sum()) - N1.sum()) - pow(N1.sum(), 2);
                     double rate = 1.0 / T_fix;
                     double T_std = sqrt(T_var);
-                    
+
+                    // Gate BEFORE anything is written. Every file below comes
+                    // out of the same factorization as T_fix, so if the solve
+                    // cannot resolve T_fix it cannot resolve N, B or N-fix
+                    // either -- refusing after writing them would leave
+                    // uncertifiable artefacts on disk at a nonzero exit, which
+                    // is exactly the "refuse but litter" shape this task fixed
+                    // in --establishment.
+                    require_resolvable_time(T_fix, "T_fix", N_mat, solve_err, t_max);
+                    require_finite_result(T_std, "T_std");
+                    require_finite_result(rate, "rate");
+
                     // Output N matrix if requested
                     if (!options.output_N_path.empty()) {
                         CLI::OutputFormatter::write_matrix_to_file(N_mat, options.output_N_path);
@@ -1086,10 +1337,7 @@ int main(int argc, char const *argv[]) {
                             options.output_I_path);
                     }
 
-                    // Output results
-                    require_positive_time(T_fix, "T_fix");
-                    require_finite_result(T_std, "T_std");
-                    require_finite_result(rate, "rate");
+                    // Output results (gated above, before the files went out)
                     CLI::OutputFormatter::print_fixation_results(
                         options, T_fix, T_std, rate
                     );
@@ -1131,7 +1379,13 @@ int main(int argc, char const *argv[]) {
                     
                     double rate = 1.0 / T_fix;
                     double T_std = sqrt(T_fix_var);
-                    
+
+                    // Gate BEFORE anything is written -- see the single-start
+                    // branch above for why the refusal has to come first.
+                    require_resolvable_time(T_fix, "T_fix", N_mat, solve_err, t_max);
+                    require_finite_result(T_std, "T_std");
+                    require_finite_result(rate, "rate");
+
                     // Output N matrix if requested
                     if (!options.output_N_path.empty()) {
                         CLI::OutputFormatter::write_matrix_to_file(N_mat, options.output_N_path);
@@ -1158,10 +1412,7 @@ int main(int argc, char const *argv[]) {
                             options.output_I_path);
                     }
 
-                    // Output results
-                    require_positive_time(T_fix, "T_fix");
-                    require_finite_result(T_std, "T_std");
-                    require_finite_result(rate, "rate");
+                    // Output results (gated above, before the files went out)
                     CLI::OutputFormatter::print_fixation_results(
                         options, T_fix, T_std, rate
                     );
@@ -2158,7 +2409,13 @@ int main(int argc, char const *argv[]) {
                 // against an independent dense reference at N = 100, s = 0.5,
                 // the printed T_seg_ext lost 4 significant digits at
                 // --odds-ratio 1e12 (7.1e-4 relative) and T_seg_ext_std 4.5e-3,
-                // while the direct solve reproduces the reference to ~1e-9.
+                // while the direct solve reproduces the reference to 1.3e-16 /
+                // 2.2e-16 / 2.0e-16 in T_seg_ext at --odds-ratio 1e6 / 1e9 /
+                // 1e12 and to 1.5e-15 / 0 / 9.5e-16 in T_seg_ext_std -- i.e. to
+                // the last bit, not to "~1e-9". (The 1e-9 in the earlier
+                // wording was the loosest figure in the measurement table, not
+                // the direct solve's accuracy; the test gate is set at 1e-12,
+                // which separates the two methods at every odds ratio tested.)
                 AbsorptionPair BB_full = solve_absorption_pair(
                     *solver_full, W_full.R, size, "B_full_ext", "B_full_fix");
                 dvec& B_full_ext = BB_full.first;
@@ -2232,7 +2489,95 @@ int main(int argc, char const *argv[]) {
                 // Convert to 1-based index for calculations
                 est_idx++;
                 double est_freq = (double)(est_idx) / (2 * options.population_size);
-                
+
+                // -p must lie inside the TRUNCATED state space, and this has to
+                // be settled HERE -- the moment est_idx is known and before
+                // anything is built, solved or written.
+                //
+                // Fix round 1: this guard used to sit ~160 lines further down,
+                // after WF::Truncated was built and after --output-Q /
+                // --output-R had already been written from it. A refusal that
+                // leaves files behind is not a refusal: measured on the
+                // pre-fix build, `--establishment -N 8 -s 0.05 -h 0.5 -p 10
+                // --output-Q leak.mtx` exited 1 with leak.mtx on disk, so a
+                // rejected run still produced an artefact a user could pick up
+                // and analyse. Nothing between est_idx and that old position
+                // was needed to decide this: the condition is a range check on
+                // -p against est_idx alone.
+                //
+                // The check itself is load-bearing (validated NEW FINDING, §4):
+                // -p is range-checked by the parser against the FULL model's
+                // 1..2N-1, but this branch indexes vectors of length
+                // est_idx - 1, so any count at or above the establishment
+                // threshold indexed one past the end. On macOS that aborts on
+                // an Eigen assertion (SIGABRT, no message naming the
+                // parameter); in a Release build with NDEBUG the assertion
+                // compiles out and it is a genuine out-of-bounds write.
+                // The post-establishment start must exist in the FULL model.
+                //
+                // NEW FINDING (fix round 1, found while verifying the -p guard
+                // below). The frozen convention immediately after this starts
+                // the post-establishment calculation at index est_idx of a
+                // vector of length `size` = 2N-1 -- count c*+1. When the odds
+                // threshold is first crossed at the LAST transient count
+                // (pre-increment est_idx == size - 1, so c* == 2N-1), that
+                // index is one past the end and there is no such state: c*+1
+                // IS fixation, which is absorbing, not transient.
+                //
+                // Reproduced at --establishment -N 5 -s 0.05 -h 0.5
+                // --odds-ratio 10, where est_idx == size == 9. Unoptimised
+                // build: SIGABRT on the Eigen bounds assertion, exit 134, no
+                // message naming a parameter. Release build (-DNDEBUG, which
+                // is now the default -- commit bd0bc2e -- and is what ships):
+                // the assertion is compiled out, id_full(est_idx) = 1 writes
+                // past the end, B_full_ext(est_idx) and B_full_fix(est_idx)
+                // read past it, and the run PRINTS
+                //
+                //   Est. freq. = 0.9   P_est = 0.131484
+                //   T_seg = 0   T_seg_std = 0   T_est = 14.1072
+                //
+                // at exit 0. The two zeros are not results: id_full never got
+                // its 1, so the sojourn solve returned the zero vector. The
+                // two "B ... is 0 (below 1e-300)" notes on stderr are reads of
+                // whatever follows the vector in memory.
+                //
+                // This does NOT touch the c*+1 convention, which is deliberate
+                // and frozen (see the note below): it refuses the case where
+                // that convention has no state to point at.
+                if (est_idx >= size) {
+                    std::ostringstream os;
+                    os << "the establishment count is " << est_idx
+                       << ", the largest count below fixation at 2N = "
+                       << (2 * options.population_size)
+                       << ". This model measures segregation AFTER "
+                          "establishment, starting one copy above the "
+                          "establishment count, and that state is fixation "
+                          "itself -- an absorbing state, not a transient one, "
+                          "so there is no post-establishment segregation to "
+                          "measure. Nothing here is computable rather than "
+                          "merely small. Lower --odds-ratio so establishment "
+                          "is reached before the last count, or use a larger "
+                          "population size or a stronger selection "
+                          "coefficient.";
+                    throw std::runtime_error(os.str());
+                }
+
+                if (options.starting_copies >= est_idx - 1) {
+                    // -p omitted is starting_copies == -1, which cannot reach
+                    // this: est_idx - 1 >= 1 here (est_idx == 0 was refused
+                    // above, then incremented), so the integration case falls
+                    // through to the z >= est_idx guard that already covers it.
+                    std::ostringstream os;
+                    os << "-p / --starting-copies " << (options.starting_copies + 1)
+                       << " is at or above the establishment count " << est_idx
+                       << ", but this model only follows the population UP TO "
+                          "establishment: its state space is counts 1.."
+                       << (est_idx - 1) << ". Give a starting count below "
+                       << est_idx << ", or raise --odds-ratio so establishment "
+                          "needs more copies.";
+                    throw std::runtime_error(os.str());
+                }
+
                 // Post-establishment calculations.
                 //
                 // NOTE (deliberate, frozen): est_idx is now the copy count c*,
@@ -2403,28 +2748,18 @@ int main(int argc, char const *argv[]) {
                         est_starts.push_back(options.starting_copies);
                     }
                     for (llong st : est_starts) {
-                        if (st < 0 || st >= est_idx - 1) {
-                            // The truncated system has est_idx - 1 transient
-                            // states, but -p is range-checked against the FULL
-                            // model's 1..2N-1, so any count at or above the
-                            // establishment threshold used to index one past
-                            // the end: id(options.starting_copies) on a vector
-                            // of length est_idx - 1. On macOS that aborts on an
-                            // Eigen assertion (SIGABRT, no message naming the
-                            // parameter); on a Release build with NDEBUG the
-                            // assertion compiles out and it is an out-of-bounds
-                            // write.
-                            std::ostringstream os;
-                            os << "-p / --starting-copies " << (st + 1)
-                               << " is at or above the establishment count "
-                               << est_idx
-                               << ", but this model only follows the population "
-                                  "UP TO establishment: its state space is "
-                                  "counts 1.." << (est_idx - 1)
-                               << ". Give a starting count below " << est_idx
-                               << ", or raise --odds-ratio so establishment "
-                                  "needs more copies.";
-                            throw std::runtime_error(os.str());
+                        // The range of every starting state was settled the
+                        // moment est_idx was known, above, and before anything
+                        // was built or written -- see the -p guard there.
+                        // Keep the invariant asserted here anyway: this is the
+                        // line that actually indexes B_est, and an out-of-range
+                        // index is an out-of-bounds read that NDEBUG would
+                        // compile the Eigen assertion out of.
+                        if (st < 0 || st >= B_est.size()) {
+                            throw std::runtime_error(
+                                "internal error: a starting state lies outside "
+                                "the truncated model's establishment "
+                                "probability vector");
                         }
                         if (!(B_est(st) >= COND_PROB_MIN)) {
                             std::ostringstream os;
@@ -2547,7 +2882,10 @@ int main(int argc, char const *argv[]) {
                     );
                 } else {
                     print_results_partial(options, "establishment", {
-                        {"est_freq", est_freq}, {"P_est", P_est},
+                        // "Est. freq." is the plain-text label the shared
+                        // formatter uses for this field; the JSON/CSV key stays
+                        // "est_freq". See AbsorptionField::label.
+                        {"est_freq", est_freq, "Est. freq."}, {"P_est", P_est},
                         {"T_seg", T_seg}, {"T_seg_std", T_seg_std},
                         {"T_seg_ext", out_T_seg_ext},
                         {"T_seg_ext_std", out_T_seg_ext_std},
