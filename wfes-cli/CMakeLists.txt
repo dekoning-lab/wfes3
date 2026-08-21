@@ -218,13 +218,20 @@ set(SHARED_SOURCES
     # Sparse matrix implementation
     ${WFES_LIB_SOURCE_DIR}/model/sparse-matrix/sparseMatrix.cpp
     ${WFES_LIB_SOURCE_DIR}/model/sparse-matrix/sparseMatrixFactory_with_accelerate.cpp
-    ${WFES_LIB_SOURCE_DIR}/model/sparse-matrix/viennacl/sparseMatrixViennacl.cpp
-    
+
     # Solver implementation
     ${WFES_LIB_SOURCE_DIR}/model/solver/solver.cpp
     ${WFES_LIB_SOURCE_DIR}/model/solver/solverFactory_with_accelerate.cpp
-    ${WFES_LIB_SOURCE_DIR}/model/solver/viennacl/solverViennaCL.cpp
-    
+
+    # (The ViennaCL sparse matrix and solver used to be listed here. They were
+    #  compiled into every one of the 11 binaries and reachable from none of
+    #  them: WFES_USE_VIENNACL is never defined anywhere in the tree, so both
+    #  factories took the "ViennaCL not available" throw instead. Both classes
+    #  also carried live defects behind that wall -- an empty resizeVectors()
+    #  overriding a pure virtual nine Wright-Fisher builders call, and a solve()
+    #  that returned an uninitialised vector for any unrecognised solver name.
+    #  Deleted rather than left as a trap for whoever turns the macro on.)
+
     # Utility functions
     ${WFES_LIB_SOURCE_DIR}/utils/parsing.cpp
     # Note: utils.cpp contains Qt-specific code, so we'll need a CLI version
@@ -287,13 +294,19 @@ if(APPLE)
         ${WFES_LIB_SOURCE_DIR}/model/solver/accelerate/solverAccelerate.cpp
     )
     
-    # Include SuiteSparse if available
+    # Include SuiteSparse if available.
+    #
+    # Only the SOLVER half. sparseMatrixSuiteSparse.cpp used to be listed here
+    # too, but that class overrode none of SparseMatrix's 17 pure virtuals, so
+    # it was abstract and could never be constructed -- the only `new
+    # SparseMatrixSuiteSparse` sites were in the superseded sparseMatrixFactory.cpp
+    # that was never compiled. SuiteSparse solves against the platform's own
+    # sparse-matrix class (Accelerate here, Pardiso below).
     if(SUITESPARSE_FOUND)
         set(SHARED_SOURCES ${SHARED_SOURCES}
-            ${WFES_LIB_SOURCE_DIR}/model/sparse-matrix/suitesparse/sparseMatrixSuiteSparse.cpp
             ${WFES_LIB_SOURCE_DIR}/model/solver/suitesparse/solverSuiteSparse.cpp
         )
-        
+
         # Add ParU solver if available
         if(PARU_FOUND)
             set(SHARED_SOURCES ${SHARED_SOURCES}
@@ -308,13 +321,12 @@ else()
         ${WFES_LIB_SOURCE_DIR}/model/solver/pardiso/solverPardiso.cpp
     )
     
-    # Include SuiteSparse if available
+    # Include SuiteSparse if available (solver only -- see the note above).
     if(SUITESPARSE_FOUND)
         set(SHARED_SOURCES ${SHARED_SOURCES}
-            ${WFES_LIB_SOURCE_DIR}/model/sparse-matrix/suitesparse/sparseMatrixSuiteSparse.cpp
             ${WFES_LIB_SOURCE_DIR}/model/solver/suitesparse/solverSuiteSparse.cpp
         )
-        
+
         # Add ParU solver if available
         if(PARU_FOUND)
             set(SHARED_SOURCES ${SHARED_SOURCES}

@@ -10,9 +10,9 @@
     #include "accelerate/sparseMatrixAccelerate.h"
 #endif
 
-#ifdef WFES_USE_VIENNACL
-    #include "viennacl/sparseMatrixViennacl.h"
-#endif
+// sparseMatrixViennacl.h used to be included here; the class has been deleted.
+// The WFES_USE_VIENNACL branches below are dead for the same reason the class
+// was: nothing in the build ever defines that macro.
 
 
 using namespace wfes::sparsematrix;

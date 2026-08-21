@@ -22,9 +22,9 @@
     #include "model/solver/accelerate/solverAccelerate.h"
 #endif
 
-#ifdef WFES_USE_VIENNACL
-    #include "model/solver/viennacl/solverViennaCL.h"
-#endif
+// solverViennaCL.h used to be included here. Nothing ever defined
+// WFES_USE_VIENNACL, so the class was compiled into every binary and reachable
+// from none of them; it has been removed.
 
 #ifdef WFES_USE_SUITESPARSE
     #include "model/solver/suitesparse/solverSuiteSparse.h"

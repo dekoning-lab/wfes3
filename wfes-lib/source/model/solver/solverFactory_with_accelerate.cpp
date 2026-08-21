@@ -12,14 +12,15 @@
     #include "../sparse-matrix/accelerate/sparseMatrixAccelerate.h"
 #endif
 
-#ifdef WFES_USE_VIENNACL
-    #include "viennacl/solverViennaCL.h"
-    #include "../sparse-matrix/viennacl/sparseMatrixViennacl.h"
-#endif
+// The ViennaCL solver/matrix headers used to be included here; both classes
+// have been deleted (nothing ever defined WFES_USE_VIENNACL). The
+// WFES_USE_VIENNACL branches below are dead for the same reason.
 
 #ifdef WFES_USE_SUITESPARSE
     #include "suitesparse/solverSuiteSparse.h"
-    #include "../sparse-matrix/suitesparse/sparseMatrixSuiteSparse.h"
+    // sparseMatrixSuiteSparse.h used to be included here too. That class was
+    // abstract -- it overrode none of SparseMatrix's pure virtuals -- so it
+    // could never be constructed; only the SOLVER half of SuiteSparse is real.
 #endif
 
 #ifdef WFES_USE_PARU

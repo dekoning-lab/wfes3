@@ -22,13 +22,12 @@
     #include "model/sparse-matrix/accelerate/sparseMatrixAccelerate.h"
 #endif
 
-#ifdef WFES_USE_VIENNACL
-    #include "model/sparse-matrix/viennacl/sparseMatrixViennacl.h"
-#endif
-
-#ifdef WFES_USE_SUITESPARSE
-    #include "model/sparse-matrix/suitesparse/sparseMatrixSuiteSparse.h"
-#endif
+// The ViennaCL and SuiteSparse sparse-matrix classes used to be included here.
+// Both are gone: nothing ever defined WFES_USE_VIENNACL, and
+// SparseMatrixSuiteSparse never overrode a single one of SparseMatrix's pure
+// virtuals, so it was abstract and could not be instantiated. SuiteSparse is
+// still a live SOLVER backend (solverSuiteSparse.h); it just builds its
+// matrices with the platform's own sparse-matrix class.
 
 #include <Eigen/SparseCore>
 
