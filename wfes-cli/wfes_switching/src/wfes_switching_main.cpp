@@ -259,6 +259,22 @@ struct CsvRow {
         }
     }
 
+    // Same column names as add_per_model, so the schema (and column count)
+    // stays identical whether or not this run consumed `values` -- but with
+    // empty fields in place of numbers when `used` is false, so a column
+    // that played no part in the result does not carry a number a reader
+    // would take for one that did.
+    template <typename V>
+    void add_per_model_or_empty(const std::string &prefix, const V &values, bool used) {
+        for (llong i = 0; i < values.size(); i++) {
+            if (used) {
+                add(prefix + std::to_string(i), values(i));
+            } else {
+                cols.emplace_back(prefix + std::to_string(i), std::string());
+            }
+        }
+    }
+
     void print() const {
         for (size_t i = 0; i < cols.size(); i++) {
             std::cout << (i ? "," : "") << cols[i].first;
@@ -358,10 +374,19 @@ int main(int argc, char const *argv[]) {
         CLI::Args_Parser::validate_model_domain_vectors(
             population_sizes, s, h, u, v, options.alpha);
 
-        // -p is a probability distribution over the models, not a free weight.
-        // Done before the echo below and before any use, so what is printed and
-        // recorded is what the run actually integrates with.
-        normalise_starting_probabilities(p, "Starting probabilities");
+        // -p is a probability distribution over the models, not a free weight
+        // -- but only when the run actually starts from it. --initial
+        // replaces the per-model starting states (and their -p weights)
+        // with one supplied distribution in both FIXATION and ABSORPTION
+        // mode (see the two dispatch branches below), so -p is dead input
+        // whenever it is set: validating or renormalising it would refuse,
+        // or warn about renormalising, a vector the run never reads.
+        //
+        // Done before the echo below and before any use, so what is printed
+        // and recorded is what the run actually integrates with.
+        if (options.initial_distribution_path.empty()) {
+            normalise_starting_probabilities(p, "Starting probabilities");
+        }
 
         // -c (--integration-cutoff) drops starting COPY NUMBERS whose
         // probability under the mutation-injection distribution p0 falls below
@@ -525,7 +550,20 @@ int main(int argc, char const *argv[]) {
                     "and -r");
             }
             double rate = 1.0 / T_fix;
-            
+
+            // T_fix is now known finite and positive, but that only guards
+            // the reciprocal by proxy: an extremely small (denormal) T_fix
+            // can still make 1.0 / T_fix overflow to inf even though T_fix
+            // itself passed the check above. Check the value actually
+            // published, not just the value it was derived from.
+            if (!std::isfinite(rate)) {
+                throw std::runtime_error(
+                    "Fixation rate 1/T_fix came out as " + num_str(rate) +
+                    " (from T_fix = " + num_str(T_fix) + "). This "
+                    "computation did not produce a usable result; check -N, "
+                    "-p and -r");
+            }
+
             // Calculate B matrix if needed
             dmat B(size, n_models);
             for (llong i = 0; i < n_models; i++) {
@@ -603,7 +641,7 @@ int main(int argc, char const *argv[]) {
                 row.add_per_model("h", h);
                 row.add_per_model("u", u);
                 row.add_per_model("v", v);
-                row.add_per_model("p", p);
+                row.add_per_model_or_empty("p", p, options.initial_distribution_path.empty());
                 row.add("a", options.alpha);
                 row.add("T_fix", T_fix);
                 row.add("rate", rate);
@@ -734,17 +772,6 @@ int main(int argc, char const *argv[]) {
                 CLI::OutputFormatter::write_matrix_to_file(B, options.output_B_path);
             }
             
-            // Output N matrix if requested
-            if (!options.output_N_path.empty()) {
-                // Convert map to matrix for output
-                dmat N_matrix(size, N_rows.size());
-                llong col_idx = 0;
-                for (const auto& pair : N_rows) {
-                    N_matrix.col(col_idx++) = pair.second;
-                }
-                CLI::OutputFormatter::write_matrix_to_file(N_matrix, options.output_N_path);
-            }
-            
             // Calculate overall absorption probabilities weighted by initial distribution
             double P_ext = 0.0;
             double P_fix = 0.0;
@@ -800,15 +827,32 @@ int main(int argc, char const *argv[]) {
             // starting state's absorption probability, which is the same 0/0
             // that let wfes_sequential report T_ext = nan alongside a positive
             // P_ext, with exit status 0 and a JSON document no parser accepts.
+            // The causal clause below only fits values that are an
+            // expectation conditional on an outcome (P_ext, P_fix, T_ext,
+            // T_fix and their per-model breakdowns, all checked here).
+            // wfes_sequential's copy of this lambda also guards a T_*_std
+            // family, whose actual failure mode is a variance gone slightly
+            // negative from cancellation rather than a conditional
+            // expectation with a zero-probability condition; the wording is
+            // branched on the name there (and here, so the two stay in
+            // step) rather than asserting a cause that does not apply.
             auto require_finite = [](double value, const std::string &name) {
                 if (!std::isfinite(value)) {
+                    bool is_std = name.size() >= 4 &&
+                        name.compare(name.size() - 4, 4, "_std") == 0;
+                    std::string cause = is_std
+                        ? "it is a square root of a variance built from "
+                          "cancelling terms, and floating-point error can "
+                          "drive that variance slightly negative when the "
+                          "true value is at or near zero"
+                        : "an expectation conditional on an outcome is "
+                          "undefined when that outcome cannot occur from "
+                          "the starting states";
                     throw std::runtime_error(
                         "Computed " + name + " = " + num_str(value) + ", which "
                         "is not a number this tool can report. The computation "
-                        "did not produce a usable result -- an expectation "
-                        "conditional on an outcome is undefined when that "
-                        "outcome cannot occur from the starting states. Check "
-                        "-N, -r and -p");
+                        "did not produce a usable result -- " + cause +
+                        ". Check -N, -r and -p");
                 }
             };
             auto require_finite_vec = [&](const dvec &vals, const char *name) {
@@ -822,6 +866,24 @@ int main(int argc, char const *argv[]) {
             require_finite(T_fix, "T_fix");
             require_finite_vec(P_cond_ext, "P_cond_ext");
             require_finite_vec(P_cond_fix, "P_cond_fix");
+
+            // --output-N was writing N_matrix before these checks ran,
+            // directly contradicting the "nothing may be written to disk"
+            // comment above: on a non-finite result the file still landed on
+            // disk before the throw. N_rows feeds T_ext and T_fix above (via
+            // E_ext_i / E_fix_i), so a non-finite entry here would already
+            // have failed one of those two checks; nothing between the old
+            // and new positions reads this file back, so moving the write is
+            // just a reordering.
+            if (!options.output_N_path.empty()) {
+                // Convert map to matrix for output
+                dmat N_matrix(size, N_rows.size());
+                llong col_idx = 0;
+                for (const auto& pair : N_rows) {
+                    N_matrix.col(col_idx++) = pair.second;
+                }
+                CLI::OutputFormatter::write_matrix_to_file(N_matrix, options.output_N_path);
+            }
 
             // --output-N-ext / --output-N-fix were declared and parsed into
             // options, but nothing ever read them: both flags were accepted,

@@ -287,22 +287,43 @@ def is_number(token):
         return False
 
 
-def check_csv_header(r, what):
+def check_csv_header(r, what, empty_ok=()):
+    """Check header/data shape: a header line, then data line(s) with one
+    field per header column -- counted by splitting on ',', which counts
+    delimiters rather than values and so is unaffected by an empty field.
+
+    Every field must be numeric, except a field whose header name is listed
+    in `empty_ok`: the schema keeps that column (a fixed-position CSV
+    consumer must not see the column count change across runs), but the run
+    did not use it, so the field must be empty rather than carry a number
+    that played no part in the result.
+
+    Returns (header, data_lines) for callers that need to inspect the parsed
+    row further; returns None if the basic header/data-line shape is wrong.
+    """
     check(r.returncode == 0, "%s: exits 0" % what, context(r))
     lines = [ln for ln in r.stdout.strip().split("\n") if ln.strip()]
     if not check(len(lines) >= 2, "%s: emits a header line and a data line" % what, context(r)):
-        return
+        return None
     header = lines[0].split(",")
     check(not any(is_number(tok) for tok in header),
           "%s: first line is a header, not data" % what, "header=%r" % (lines[0],))
-    for i, line in enumerate(lines[1:], start=1):
+    data_lines = lines[1:]
+    for i, line in enumerate(data_lines, start=1):
         fields = line.split(",")
-        check(len(fields) == len(header),
-              "%s: data row %d has one field per header column" % (what, i),
-              "header has %d columns, row has %d\nheader=%s\nrow=%s"
-              % (len(header), len(fields), lines[0], line))
-        check(all(is_number(tok) for tok in fields),
-              "%s: data row %d is all numeric" % (what, i), "row=%s" % line)
+        if not check(len(fields) == len(header),
+                     "%s: data row %d has one field per header column" % (what, i),
+                     "header has %d columns, row has %d\nheader=%s\nrow=%s"
+                     % (len(header), len(fields), lines[0], line)):
+            continue
+        for name, tok in zip(header, fields):
+            if name in empty_ok:
+                check(tok == "", "%s: data row %d field %s is empty (unused)" % (what, i, name),
+                      "row=%s" % line)
+            else:
+                check(is_number(tok), "%s: data row %d field %s is numeric" % (what, i, name),
+                      "row=%s" % line)
+    return header, data_lines
 
 
 def test_csv_output_has_a_header():
@@ -311,6 +332,21 @@ def test_csv_output_has_a_header():
                      "switching --fixation --csv")
     check_csv_header(run("wfes_sequential", SEQUENTIAL_BASE + ["--csv"]),
                      "sequential --csv")
+
+    # --starting-copies is one of three mutually exclusive starting rules
+    # (see test_json_parameters_record_the_values_used above) and replaces
+    # -p entirely, so -p 1,1 here is dead input -- exactly the case that
+    # used to print "renormalising" for a vector the run never reads, and
+    # the case the CSV schema fix is for: the header keeps p0/p1 (a
+    # fixed-position CSV consumer must see the same column count across
+    # runs), but the data row must leave them empty rather than carry a
+    # number that played no part in the result.
+    r = run("wfes_sequential",
+            SEQUENTIAL_BASE + ["--starting-copies", "3", "-p", "1,1", "--csv"])
+    check("normalis" not in r.stderr.lower(),
+          "sequential --starting-copies -p 1,1 --csv: "
+          "no renormalisation warning for an unused -p", context(r))
+    check_csv_header(r, "sequential --starting-copies --csv", empty_ok=("p0", "p1"))
 
 
 # ---------------------------------------------------------------------------

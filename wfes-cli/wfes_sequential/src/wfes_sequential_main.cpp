@@ -203,6 +203,22 @@ struct CsvRow {
         }
     }
 
+    // Same column names as add_per_model, so the schema (and column count)
+    // stays identical whether or not this run consumed `values` -- but with
+    // empty fields in place of numbers when `used` is false, so a column
+    // that played no part in the result does not carry a number a reader
+    // would take for one that did.
+    template <typename V>
+    void add_per_model_or_empty(const std::string &prefix, const V &values, bool used) {
+        for (llong i = 0; i < values.size(); i++) {
+            if (used) {
+                add(prefix + std::to_string(i), values(i));
+            } else {
+                cols.emplace_back(prefix + std::to_string(i), std::string());
+            }
+        }
+    }
+
     void print() const {
         for (size_t i = 0; i < cols.size(); i++) {
             std::cout << (i ? "," : "") << cols[i].first;
@@ -308,10 +324,18 @@ int main(int argc, char const *argv[]) {
         CLI::Args_Parser::validate_model_domain_vectors(
             population_sizes, s, h, u, v, options.alpha);
 
-        // -p is a probability distribution over the epochs, not a free weight.
-        // Done before the echo below and before any use, so what is printed and
-        // recorded is what the run actually integrates with.
-        normalise_starting_probabilities(p, "Epoch starting probabilities");
+        // -p is a probability distribution over the epochs, not a free weight
+        // -- but only when the run actually starts from it. --initial and
+        // --starting-copies each replace it entirely (see the three-way
+        // branch below that picks start_weights), so whenever either is set
+        // -p is dead input: validating or renormalising it would refuse, or
+        // warn about renormalising, a vector the run never reads.
+        //
+        // Done before the echo below and before any use, so what is printed
+        // and recorded is what the run actually integrates with.
+        if (options.initial_distribution_path.empty() && options.starting_copies < 0) {
+            normalise_starting_probabilities(p, "Epoch starting probabilities");
+        }
 
         // Set message level for solvers
         llong msg_level = options.verbose ? MKL_PARDISO_MSG_VERBOSE : MKL_PARDISO_MSG_QUIET;
@@ -557,14 +581,36 @@ int main(int argc, char const *argv[]) {
         // extinction boundary before the epoch times out has probability
         // exactly 0, so the quotient is 0/0. All three output branches printed
         // it, and `"T_ext": nan` is not JSON any parser will read.
+        // The causal clause below fits most of what require_finite guards
+        // here (P_ext, P_fix, P_tmo, T_ext, T_fix, T_tmo and their per-model
+        // breakdowns): each is an expectation conditional on an outcome, and
+        // is undefined when that outcome has zero probability from the
+        // starting states -- the 0/0 described above. T_ext_std, T_fix_std
+        // and T_tmo_std are not such an expectation: each is sqrt() of a
+        // variance built from cancelling terms (see T_ext_var and its
+        // siblings above), and floating-point error can drive that variance
+        // slightly negative when the true value is at or near zero, making
+        // the square root undefined for a different reason entirely. Naming
+        // the zero-probability outcome as the cause for a _std value would
+        // be naming the wrong bug, so the wording is branched on the name
+        // instead.
         auto require_finite = [](double value, const std::string &name) {
             if (!std::isfinite(value)) {
+                bool is_std = name.size() >= 4 &&
+                    name.compare(name.size() - 4, 4, "_std") == 0;
+                std::string cause = is_std
+                    ? "it is a square root of a variance built from "
+                      "cancelling terms, and floating-point error can drive "
+                      "that variance slightly negative when the true value "
+                      "is at or near zero"
+                    : "an expectation conditional on an outcome is "
+                      "undefined when that outcome cannot occur from the "
+                      "starting states";
                 throw std::runtime_error(
                     "Computed " + name + " = " + num_str(value) + ", which is "
                     "not a number this tool can report. The computation did not "
-                    "produce a usable result -- an expectation conditional on an "
-                    "outcome is undefined when that outcome cannot occur from "
-                    "the starting states. Check -N and --exp-time");
+                    "produce a usable result -- " + cause +
+                    ". Check -N and --exp-time");
             }
         };
         auto require_finite_vec = [&](const dvec &vals, const char *name) {
@@ -709,7 +755,8 @@ int main(int argc, char const *argv[]) {
             row.add_per_model("h", h);
             row.add_per_model("u", u);
             row.add_per_model("v", v);
-            row.add_per_model("p", p);
+            row.add_per_model_or_empty("p", p,
+                options.initial_distribution_path.empty() && options.starting_copies < 0);
             row.add("a", options.alpha);
             row.add("P_ext", P_ext);
             row.add("P_fix", P_fix);
