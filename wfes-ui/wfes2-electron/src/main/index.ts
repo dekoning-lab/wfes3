@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Menu, shell, ipcMain, dialog } from 'electron'
-import { join } from 'path'
+import { join, extname, basename } from 'path'
 import { promises as fsPromises } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { wfesBackendService } from './wfesBackendService'
@@ -275,7 +275,28 @@ function createWindow(): void {
         {
           label: 'About WFES3',
           click: () => {
-            // TODO: Open about dialog
+            // Was a `// TODO: Open about dialog` no-op: the menu item existed,
+            // did nothing, and said nothing -- and there was no other place in
+            // the app that reported which version you were running, which
+            // matters for a tool whose figures now carry a version stamp.
+            //
+            // A message box rather than role:'about', because the native panel
+            // is macOS/Linux only and this needs to answer the same question on
+            // every platform.
+            void dialog.showMessageBox({
+              type: 'info',
+              title: 'About WFES3',
+              message: `WFES3 ${app.getVersion()}`,
+              detail:
+                'Wright-Fisher Exact Solver\n\n' +
+                'Ivan Krukov, Alberto Casas-Ortiz, Bianca DeSanctis,\n' +
+                'and A.P. de Koning\n\n' +
+                `Electron ${process.versions.electron}  ·  ` +
+                `Chromium ${process.versions.chrome}  ·  ` +
+                `Node ${process.versions.node}`,
+              buttons: ['OK'],
+              noLink: true
+            })
           }
         }
       ]
@@ -823,6 +844,39 @@ function setupIpcHandlers(): void {
   ipcMain.handle('dialog:defaultOutputDirectory', async () => app.getPath('downloads'))
 
   /**
+   * A free path in `dir` for `fileName`, adding " 2", " 3", ... before the
+   * extension when something is already there -- the way Finder does it.
+   *
+   * Exports used to write straight to the name they were given, and every
+   * filename in the app carries only a date, so a second export on the same
+   * day landed on the first one. Node's writeFile overwrites without
+   * complaint, so the earlier figure was gone with nothing said: the app
+   * looked like it had done nothing (Finder was already open on that folder,
+   * showing a file of the same name) while it had in fact destroyed the
+   * previous export. Silently replacing a figure someone may already have
+   * put in a manuscript is the worse half of that.
+   *
+   * Bounded so a pathological directory cannot spin here; at the cap the
+   * caller gets an error rather than a silent overwrite.
+   */
+  async function uniqueExportPath(dir: string, fileName: string): Promise<string> {
+    const ext = extname(fileName)
+    const stem = basename(fileName, ext)
+    for (let n = 1; n < 1000; n++) {
+      const candidate = join(dir, n === 1 ? fileName : `${stem} ${n}${ext}`)
+      try {
+        await fsPromises.access(candidate)
+      } catch {
+        return candidate // access threw => nothing there => free
+      }
+    }
+    throw new Error(
+      `cannot find a free filename for "${fileName}" in ${dir}: ` +
+      `999 numbered variants already exist`
+    )
+  }
+
+  /**
    * Write a file the renderer produced, through a save dialog.
    *
    * Every export in the app used the browser idiom instead: build a Blob, point
@@ -836,6 +890,8 @@ function setupIpcHandlers(): void {
    * output folder (Downloads unless one is chosen) and then reveals the file,
    * so the export is visible rather than silent -- which is the complaint that
    * started this.
+   *
+   * Names never collide: see uniqueExportPath.
    */
   ipcMain.handle('dialog:saveFile', async (_event, args: {
     content: string
@@ -848,7 +904,7 @@ function setupIpcHandlers(): void {
       // WFES_SAVE_DIR lets an automated run direct exports somewhere harmless
       // instead of the user's Downloads; unset in normal use.
       const dir = args.directory || process.env.WFES_SAVE_DIR || app.getPath('downloads')
-      const target = join(dir, args.defaultFileName)
+      const target = await uniqueExportPath(dir, args.defaultFileName)
       await fsPromises.writeFile(
         target,
         args.encoding === 'base64' ? Buffer.from(args.content, 'base64') : args.content,

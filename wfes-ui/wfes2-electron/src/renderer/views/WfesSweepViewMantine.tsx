@@ -131,11 +131,20 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
 
   // Helper function to clear results and reset execution state
   const clearResults = () => {
+    setRanCommand('')
     setResults([])
     setWarnings([])
     setExecutionTime('')
     setError('')
   }
+
+  /**
+   * The command line that produced the results now on screen, captured at
+   * execution. Exported figures are stamped with it. Rebuilding it at export
+   * time would read the live form, which stays editable after a run and can
+   * therefore describe a different analysis than the one plotted.
+   */
+  const [ranCommand, setRanCommand] = useState('')
   
   // Handle population scaling toggle
   const handlePopulationScaledToggle = (newValue: boolean) => {
@@ -213,6 +222,9 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
     }
     setIsExecuting(true)
     clearResults()
+    // After clearResults, which wipes it: this records the command for the
+    // run about to start, and must outlive the reset that precedes it.
+    setRanCommand(buildCommandLine())
 
     try {
       // Convert population-scaled values to raw values if needed
@@ -366,7 +378,7 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
     // was never token-for-token the spawned command.
     parts.push(`--library ${executionOptions.library}`)
     const dir = (outputOptions as any).outputDirectory || '~/Downloads'
-    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/wfes_sweep_Q.mtx`)
+    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/wfes_sweep_Q.csv`)
     if (outputOptions.writeR) parts.push(`--output-R ${dir}/wfes_sweep_R.csv`)
     if (outputOptions.writeN) parts.push(`--output-N ${dir}/wfes_sweep_N.csv`)
     if (outputOptions.writeB) parts.push(`--output-B ${dir}/wfes_sweep_B.csv`)
@@ -776,6 +788,7 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
       title="Substitution time by regime"
       filename="wfes_sweep_regimes"
       categoryLabel="Regime"
+          command={ranCommand}
     />
     </WfesViewLayout>
   )

@@ -133,12 +133,21 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
 
   // Helper function to clear results and reset execution state
   const clearResults = () => {
+    setRanCommand('')
     setResults([])
     setDistribution([])
     setWarnings([])
     setExecutionTime('')
     setError('')
   }
+
+  /**
+   * The command line that produced the results now on screen, captured at
+   * execution. Exported figures are stamped with it. Rebuilding it at export
+   * time would read the live form, which stays editable after a run and can
+   * therefore describe a different analysis than the one plotted.
+   */
+  const [ranCommand, setRanCommand] = useState('')
   
   // Handle population scaling toggle
   // Scaling is per epoch, against that epoch's own N, because each epoch now
@@ -168,6 +177,9 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
   const handleExecute = async () => {
     setIsExecuting(true)
     clearResults()
+    // After clearResults, which wipes it: this records the command for the
+    // run about to start, and must outlive the reset that precedes it.
+    setRanCommand(buildCommandLine())
     
     try {
       // Validate: every epoch needs a positive N and a positive duration.
@@ -576,16 +588,16 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
                     <Group mt="md">
                       <WfesExportButtons
                         onExport={(format) => {
+                          // Data formats only. Export PNG and Export SVG used to
+                          // sit beside these, but a chart can only be serialised
+                          // while it is on screen, so both did the only thing they
+                          // could -- open the chart -- and a button labelled
+                          // "Export PNG" that opens a window instead of writing a
+                          // file misstates what it does. The chart's own Export PNG
+                          // and Export SVG do the real work.
                           if (format === 'csv') handleExportData('csv')
-                          else if (format === 'png' || format === 'svg') {
-                            // A chart can only be serialized while it is on
-                            // screen, so this opens it; the modal's own Export
-                            // SVG writes every panel it is showing. Previously
-                            // both formats were silently no-ops.
-                            setShowChartModal(true)
-                          }
                         }}
-                        formats={['csv', 'png', 'svg']}
+                        formats={['csv']}
                       />
                     </Group>
                   )}
@@ -712,6 +724,7 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
         }))}
         title="Allele frequency distribution (deterministic)"
         filename="wfafs_deterministic_spectrum"
+              command={ranCommand}
       />
       
       {/* Table Modal */}

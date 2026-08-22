@@ -20,16 +20,22 @@ import {
   ResponsiveContainer,
   TooltipProps 
 } from 'recharts'
-import { IconDownload, IconFileVector } from '@tabler/icons-react'
+import { IconDownload, IconFileVector, IconPhoto } from '@tabler/icons-react'
 
 interface TimeToSubstitutionChartModalProps {
   distribution: Array<{ time: number; probability: number; cumulative: number }>
+  /**
+   * Command line that produced the plotted data, captured when the run
+   * executed. Passed straight through to the exporters, which stamp it onto
+   * the figure. Absent, the figure exports without a provenance block.
+   */
+  command?: string
 }
 
 import { thinSeries, thinningNote } from '../utils/thinSeries'
-import { exportChartsSvg } from '../utils/exportChartsSvg'
+import { exportChartsSvg, exportChartsPng } from '../utils/exportChartsSvg'
 
-const TimeToSubstitutionChartModal: React.FC<TimeToSubstitutionChartModalProps> = ({ distribution }) => {
+const TimeToSubstitutionChartModal: React.FC<TimeToSubstitutionChartModalProps> = ({ distribution, command}) => {
   const [useLogScale, setUseLogScale] = useState(true)
   const [showPDF, setShowPDF] = useState(true)
   const [showCDF, setShowCDF] = useState(false)
@@ -101,13 +107,24 @@ const TimeToSubstitutionChartModal: React.FC<TimeToSubstitutionChartModalProps> 
 
   const exportSVG = () => {
     // Whatever charts the panel is showing, not just the first one.
-    exportChartsSvg({
+    exportChartsSvg({ command, version: __APP_VERSION__,
       container: chartsRef.current,
       titles: ['Time to substitution'],
       caption: note,
       filename: 'time_to_substitution'
     })
   }
+  /** Same figure, rasterised -- for anywhere that will not take an SVG. */
+  const exportPNG = () => {
+    void exportChartsPng({ command, version: __APP_VERSION__,
+      container: chartsRef.current,
+      titles: ['Time to substitution'],
+      caption: note,
+      filename: 'time_to_substitution'
+    })
+      .catch((e: any) => alert(`The chart could not be exported as PNG: ${e?.message ?? e}`))
+  }
+
 
 
   return (
@@ -137,6 +154,14 @@ const TimeToSubstitutionChartModal: React.FC<TimeToSubstitutionChartModalProps> 
             variant="light"
           >
             Export Data
+          </Button>
+          <Button
+            leftSection={<IconPhoto size={16} />}
+            onClick={exportPNG}
+            variant="light"
+            color="grape"
+          >
+            Export PNG
           </Button>
           <Button
             leftSection={<IconFileVector size={16} />}

@@ -188,6 +188,7 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
   
   // Helper function to clear results and reset execution state
   const clearResults = () => {
+    setRanCommand('')
     setResults([])
     setTruncation(null)
     setDistribution([])
@@ -196,6 +197,14 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
     setExecutionTime('')
     setError('')
   }
+
+  /**
+   * The command line that produced the results now on screen, captured at
+   * execution. Exported figures are stamped with it. Rebuilding it at export
+   * time would read the live form, which stays editable after a run and can
+   * therefore describe a different analysis than the one plotted.
+   */
+  const [ranCommand, setRanCommand] = useState('')
   
   // Helper function to update component values
   const updateComponent = (index: number, field: keyof Component, value: string) => {
@@ -273,6 +282,9 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
   const handleExecute = async () => {
     setIsExecuting(true)
     clearResults()
+    // After clearResults, which wipes it: this records the command for the
+    // run about to start, and must outlive the reset that precedes it.
+    setRanCommand(buildCommandLine())
 
     try {
       // Convert parameters based on population scaling
@@ -569,7 +581,7 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
       parts.push(`--library ${executionOptions.library}`)
       // time_dist_sgv declares --force (the one tool in its family that does).
       if (executionOptions.force) parts.push('--force')
-      if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/time_dist_sgv_Q.mtx`)
+      if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/time_dist_sgv_Q.csv`)
       if (outputOptions.writeR) parts.push(`--output-R ${dir}/time_dist_sgv_R.csv`)
       if (outputOptions.writeP) parts.push(`--output-P ${dir}/time_dist_sgv_P.csv`)
       parts.push('--json')
@@ -600,7 +612,7 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
     // Only phase_type_moments declares --force; phase_type_dist exits 1 on it.
     if (momentsOnly && executionOptions.force) parts.push('--force')
     parts.push(`--library ${executionOptions.library}`)
-    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/phase_type_Q.mtx`)
+    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/phase_type_Q.csv`)
     if (outputOptions.writeR) parts.push(`--output-R ${dir}/phase_type_R.csv`)
     if (!momentsOnly && outputOptions.writeP) parts.push(`--output-P ${dir}/phase_type_P.csv`)
     if (momentsOnly && outputOptions.writeN) parts.push(`--output-N ${dir}/phase_type_N.csv`)
@@ -1005,13 +1017,16 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
                     <Group mt="md">
                       <WfesExportButtons
                         onExport={(format) => {
+                          // Data formats only. Export PNG and Export SVG used to
+                          // sit beside these, but a chart can only be serialised
+                          // while it is on screen, so both did the only thing they
+                          // could -- open the chart -- and a button labelled
+                          // "Export PNG" that opens a window instead of writing a
+                          // file misstates what it does. The chart's own Export PNG
+                          // and Export SVG do the real work.
                           if (format === 'csv' || format === 'tsv') handleExportData(format as 'csv' | 'tsv')
-                          else if (format === 'png' || format === 'svg') {
-                            // Open chart modal for visual export
-                            setShowChartModal(true)
-                          }
                         }}
-                        formats={((mode === 'phase-type-dist' && !momentsOnly) || mode === 'phase-type-dist-sgv') ? ['csv', 'tsv', 'png', 'svg'] : ['csv']}
+                        formats={((mode === 'phase-type-dist' && !momentsOnly) || mode === 'phase-type-dist-sgv') ? ['csv', 'tsv'] : ['csv']}
                       />
                     </Group>
                   )}
@@ -1176,7 +1191,7 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
         size="90%"
         title="Time to Substitution"
       >
-        <TimeToSubstitutionChartModal distribution={distribution} />
+        <TimeToSubstitutionChartModal distribution={distribution} command={ranCommand} />
       </Modal>
     </WfesViewLayout>
   )

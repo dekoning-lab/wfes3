@@ -21,7 +21,7 @@ import {
   ResponsiveContainer,
   TooltipProps 
 } from 'recharts'
-import { IconDownload, IconFileVector } from '@tabler/icons-react'
+import { IconDownload, IconFileVector, IconPhoto } from '@tabler/icons-react'
 
 interface EquilibriumChartModalProps {
   data: Array<{
@@ -38,17 +38,23 @@ interface EquilibriumChartModalProps {
     u: number
     v: number
   }
+  /**
+   * Command line that produced the plotted data, captured when the run
+   * executed. Passed straight through to the exporters, which stamp it onto
+   * the figure. Absent, the figure exports without a provenance block.
+   */
+  command?: string
 }
 
 import { thinSeries, thinningNote } from '../utils/thinSeries'
-import { exportChartsSvg } from '../utils/exportChartsSvg'
+import { exportChartsSvg, exportChartsPng } from '../utils/exportChartsSvg'
 import { formatQuantity } from '../utils/quantityLabels'
 
 const EquilibriumChartModalNew: React.FC<EquilibriumChartModalProps> = ({ 
   data, 
   populationSize, 
   expectedFrequency,
-  parameters 
+  parameters, command
 }) => {
   const [useLogScale, setUseLogScale] = useState(true)
 
@@ -112,13 +118,24 @@ const EquilibriumChartModalNew: React.FC<EquilibriumChartModalProps> = ({
 
   const exportSVG = () => {
     // Every chart in the panel, not just the first querySelector match.
-    exportChartsSvg({
+    exportChartsSvg({ command, version: __APP_VERSION__,
       container: chartsRef.current,
       titles: ['Equilibrium frequency distribution'],
       caption: note,
       filename: `equilibrium_distribution_N${parameters.N}`
     })
   }
+  /** Same figure, rasterised -- for anywhere that will not take an SVG. */
+  const exportPNG = () => {
+    void exportChartsPng({ command, version: __APP_VERSION__,
+      container: chartsRef.current,
+      titles: ['Equilibrium frequency distribution'],
+      caption: note,
+      filename: `equilibrium_distribution_N${parameters.N}`
+    })
+      .catch((e: any) => alert(`The chart could not be exported as PNG: ${e?.message ?? e}`))
+  }
+
 
 
   return (
@@ -136,6 +153,14 @@ const EquilibriumChartModalNew: React.FC<EquilibriumChartModalProps> = ({
             variant="light"
           >
             Export Data
+          </Button>
+          <Button
+            leftSection={<IconPhoto size={16} />}
+            onClick={exportPNG}
+            variant="light"
+            color="grape"
+          >
+            Export PNG
           </Button>
           <Button
             leftSection={<IconFileVector size={16} />}

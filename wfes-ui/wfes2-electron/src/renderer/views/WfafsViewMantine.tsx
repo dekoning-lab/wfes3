@@ -149,12 +149,21 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
   }
 
   const clearResults = () => {
+    setRanCommand('')
     setResults([])
     setSpectrum([])
     setWarnings([])
     setExecutionTime('')
     setError('')
   }
+
+  /**
+   * The command line that produced the results now on screen, captured at
+   * execution. Exported figures are stamped with it. Rebuilding it at export
+   * time would read the live form, which stays editable after a run and can
+   * therefore describe a different analysis than the one plotted.
+   */
+  const [ranCommand, setRanCommand] = useState('')
   
   // Handle population scaling toggle
   const handlePopulationScaledToggle = (checked: boolean) => {
@@ -211,6 +220,9 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
     }
     setIsExecuting(true)
     clearResults()
+    // After clearResults, which wipes it: this records the command for the
+    // run about to start, and must outlive the reset that precedes it.
+    setRanCommand(buildCommandLine())
 
     try {
       // Convert to unscaled values if currently in scaled mode
@@ -407,7 +419,7 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
     parts.push(`--num-threads ${executionOptions.threads}`)
     parts.push(`--library ${executionOptions.library}`)
     const dir = (outputOptions as any).outputDirectory || '~/Downloads'
-    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/wfafs_Q.mtx`)
+    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/wfafs_Q.csv`)
     if (outputOptions.writeN) parts.push(`--output-N ${dir}/wfafs_N.csv`)
     if (outputOptions.writeB) parts.push(`--output-B ${dir}/wfafs_B.csv`)
     if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
@@ -658,18 +670,26 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
                   <Text size="xs" c="dimmed">Execution time: {executionTime}</Text>
                   {spectrum.length > 0 && (
                     <Group mt="md">
+                      {/* CSV only. The panel also offered Export PNG and
+                          Export SVG, but a chart can only be serialised while
+                          it is on screen, so both did the one thing they could
+                          -- open the chart -- and a button labelled "Export
+                          PNG" that opens a window instead of writing a file is
+                          telling the user something untrue. The chart's own
+                          export buttons do the real work, and View Chart is
+                          right here. */}
                       <WfesExportButtons
                         onExport={(format) => {
+                          // Data formats only. Export PNG and Export SVG used to
+                          // sit beside these, but a chart can only be serialised
+                          // while it is on screen, so both did the only thing they
+                          // could -- open the chart -- and a button labelled
+                          // "Export PNG" that opens a window instead of writing a
+                          // file misstates what it does. The chart's own Export PNG
+                          // and Export SVG do the real work.
                           if (format === 'csv') handleExportData()
-                          else if (format === 'png' || format === 'svg') {
-                            // A chart can only be serialized while it is on
-                            // screen, so this opens it; the modal's own Export
-                            // SVG writes every panel it is showing. Previously
-                            // both formats were silently no-ops.
-                            setShowChartModal(true)
-                          }
                         }}
-                        formats={['csv', 'png', 'svg']}
+                        formats={['csv']}
                       />
                     </Group>
                   )}
@@ -797,6 +817,7 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
         }))}
         title="Allele frequency spectrum (stochastic)"
         filename="wfafs_stochastic_spectrum"
+              command={ranCommand}
       />
       
       {/* Table Modal */}

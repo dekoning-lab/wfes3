@@ -2,9 +2,9 @@ import React, { useState } from 'react'
 import { SERIES, PRIMARY, SECONDARY, INK } from '../utils/chartTheme'
 import { Modal, Switch, Group, Select, Stack, Button, Text, Checkbox, Paper, Alert } from '@mantine/core'
 import { LineChart, Line, Area, AreaChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Legend } from 'recharts'
-import { IconDownload } from '@tabler/icons-react'
+import { IconDownload, IconPhoto } from '@tabler/icons-react'
 import { thinSeries, thinningNote } from '../utils/thinSeries'
-import { exportChartsSvg } from '../utils/exportChartsSvg'
+import { exportChartsSvg, exportChartsPng } from '../utils/exportChartsSvg'
 
 interface TimeDistData {
   time: number
@@ -25,6 +25,12 @@ interface TimeDistChartModalProps {
   data: TimeDistData[]
   mode: 'time-dist' | 'time-dist-sgv' | 'time-dist-skip'
   components?: Array<{ N: string; s: string; h: string; u: string; v: string }>
+  /**
+   * Command line that produced the plotted data, captured when the run
+   * executed. Passed straight through to the exporters, which stamp it onto
+   * the figure. Absent, the figure exports without a provenance block.
+   */
+  command?: string
 }
 
 const TimeDistChartModal: React.FC<TimeDistChartModalProps> = ({
@@ -32,7 +38,7 @@ const TimeDistChartModal: React.FC<TimeDistChartModalProps> = ({
   onClose,
   data,
   mode,
-  components
+  components, command
 }) => {
   const [logScaleExt, setLogScaleExt] = useState(false)
   const [logScaleFix, setLogScaleFix] = useState(false)
@@ -134,7 +140,7 @@ const TimeDistChartModal: React.FC<TimeDistChartModalProps> = ({
     // Every chart in the panel, not just the first one querySelector happened
     // to return -- this modal shows extinction beside fixation, and the
     // fixation panel was silently missing from every file it ever wrote.
-    exportChartsSvg({
+    exportChartsSvg({ command, version: __APP_VERSION__,
       container: chartsRef.current,
       titles: mode === 'time-dist-sgv'
         ? ['Time to fixation by component']
@@ -143,6 +149,19 @@ const TimeDistChartModal: React.FC<TimeDistChartModalProps> = ({
       filename: 'time_dist_pdf_cdf'
     })
   }
+  /** Same figure, rasterised -- for anywhere that will not take an SVG. */
+  const exportChartPng = () => {
+    void exportChartsPng({ command, version: __APP_VERSION__,
+      container: chartsRef.current,
+      titles: mode === 'time-dist-sgv'
+        ? ['Time to fixation by component']
+        : ['Time to extinction', 'Time to fixation'],
+      caption: note,
+      filename: 'time_dist_pdf_cdf'
+    })
+      .catch((e: any) => alert(`The chart could not be exported as PNG: ${e?.message ?? e}`))
+  }
+
 
   const renderStandardChart = () => {
     
@@ -417,6 +436,14 @@ const TimeDistChartModal: React.FC<TimeDistChartModalProps> = ({
               style={{ width: 100 }}
             />
           </Group>
+          <Group gap="xs">
+          <Button
+            leftSection={<IconPhoto size={16} />}
+            onClick={exportChartPng}
+            variant="light"
+          >
+            Export PNG
+          </Button>
           <Button
             leftSection={<IconDownload size={16} />}
             onClick={exportChart}
@@ -424,6 +451,7 @@ const TimeDistChartModal: React.FC<TimeDistChartModalProps> = ({
           >
             Export SVG
           </Button>
+          </Group>
         </Group>
 
         {note && <Text size="xs" c="dimmed">{note}</Text>}

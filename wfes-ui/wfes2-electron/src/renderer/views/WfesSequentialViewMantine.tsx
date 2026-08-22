@@ -143,12 +143,21 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
 
   // Helper function to clear results and reset execution state
   const clearResults = () => {
+    setRanCommand('')
     setResults([])
     setTrajectoryData([])
     setWarnings([])
     setExecutionTime('')
     setError('')
   }
+
+  /**
+   * The command line that produced the results now on screen, captured at
+   * execution. Exported figures are stamped with it. Rebuilding it at export
+   * time would read the live form, which stays editable after a run and can
+   * therefore describe a different analysis than the one plotted.
+   */
+  const [ranCommand, setRanCommand] = useState('')
   
   // Handle population scaling toggle
   const handlePopulationScaledToggle = (newValue: boolean) => {
@@ -276,6 +285,9 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
     }
     setIsExecuting(true)
     clearResults()
+    // After clearResults, which wipes it: this records the command for the
+    // run about to start, and must outlive the reset that precedes it.
+    setRanCommand(buildCommandLine())
 
     try {
       // Prepare parameters for wfes_sequential
@@ -495,7 +507,7 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
     parts.push(`--alpha ${parseFloat(alpha) || 1e-20}`)
     parts.push(`--num-threads ${executionOptions.threads}`)
     const dir = (outputOptions as any).outputDirectory || '~/Downloads'
-    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/wfes_sequential_Q.mtx`)
+    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/wfes_sequential_Q.csv`)
     if (outputOptions.writeR) parts.push(`--output-R ${dir}/wfes_sequential_R.csv`)
     if (outputOptions.writeN) parts.push(`--output-N ${dir}/wfes_sequential_N.csv`)
     if (outputOptions.writeB) parts.push(`--output-B ${dir}/wfes_sequential_B.csv`)
@@ -665,16 +677,16 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
                   <Group mt="md">
                     <WfesExportButtons
                       onExport={(format) => {
+                          // Data formats only. Export PNG and Export SVG used to
+                          // sit beside these, but a chart can only be serialised
+                          // while it is on screen, so both did the only thing they
+                          // could -- open the chart -- and a button labelled
+                          // "Export PNG" that opens a window instead of writing a
+                          // file misstates what it does. The chart's own Export PNG
+                          // and Export SVG do the real work.
                         if (format === 'csv') handleExportData('csv')
-                        else if (format === 'png' || format === 'svg') {
-                          // Opens the decomposition chart, where Export SVG
-                          // writes both panels. There are no trajectories to
-                          // export -- the solver computes expectations, and the
-                          // previous handler was a no-op.
-                          setShowChartModal(true)
-                        }
                       }}
-                      formats={['csv', 'png', 'svg']}
+                      formats={['csv']}
                     />
                   </Group>
                 )}
@@ -956,6 +968,7 @@ const WfesSequentialViewMantine: React.FC<WfesSequentialViewProps> = ({ onBack, 
         title="Per-epoch decomposition"
         filename="wfes_sequential_decomposition"
         categoryLabel="Epoch"
+              command={ranCommand}
       />
 
       {/* Trajectory Modal */}

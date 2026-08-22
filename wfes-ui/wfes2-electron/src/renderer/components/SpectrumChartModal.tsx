@@ -19,9 +19,9 @@ import { Modal, Stack, Group, Text, Button, Switch, Checkbox, Paper, SegmentedCo
 import {
   ComposedChart, Area, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts'
-import { IconDownload } from '@tabler/icons-react'
+import { IconDownload, IconPhoto } from '@tabler/icons-react'
 import { thinSeries, thinningNote } from '../utils/thinSeries'
-import { exportChartsSvg } from '../utils/exportChartsSvg'
+import { exportChartsSvg, exportChartsPng } from '../utils/exportChartsSvg'
 import { formatQuantity } from '../utils/quantityLabels'
 
 export interface SpectrumPoint {
@@ -38,10 +38,16 @@ interface SpectrumChartModalProps {
   /** Shown in the heading and used for the export filename. */
   title: string
   filename: string
+  /**
+   * Command line that produced the plotted data, captured when the run
+   * executed. Passed straight through to the exporters, which stamp it onto
+   * the figure. Absent, the figure exports without a provenance block.
+   */
+  command?: string
 }
 
 const SpectrumChartModal: React.FC<SpectrumChartModalProps> = ({
-  opened, onClose, data, title, filename
+  opened, onClose, data, title, filename, command
 }) => {
   const [logY, setLogY] = useState(false)
   // Hidden by default. Mass at 0 and 2N is routinely orders of magnitude above
@@ -138,11 +144,22 @@ const SpectrumChartModal: React.FC<SpectrumChartModalProps> = ({
               onChange={e => setShowCumulative(e.currentTarget.checked)}
             />
           </Group>
-          <Button leftSection={<IconDownload size={16} />} variant="light" onClick={() =>
-            exportChartsSvg({ container: chartsRef.current, titles: [title], caption: note, filename })
-          }>
-            Export SVG
-          </Button>
+          {/* One group, so the enclosing space-between sees two children --
+              the controls and the exports -- and not three, which pushed
+              Export PNG into the middle of the header. */}
+          <Group gap="xs">
+            <Button leftSection={<IconPhoto size={16} />} variant="light" onClick={() =>
+              void exportChartsPng({ command, version: __APP_VERSION__, container: chartsRef.current, titles: [title], caption: note, filename })
+                .catch((e: any) => alert(`The chart could not be exported as PNG: ${e?.message ?? e}`))
+            }>
+              Export PNG
+            </Button>
+            <Button leftSection={<IconDownload size={16} />} variant="light" onClick={() =>
+              exportChartsSvg({ command, version: __APP_VERSION__, container: chartsRef.current, titles: [title], caption: note, filename })
+            }>
+              Export SVG
+            </Button>
+          </Group>
         </Group>
 
         <Group gap="xl">

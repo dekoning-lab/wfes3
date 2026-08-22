@@ -129,6 +129,7 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
   
   // Helper function to clear results and reset execution state
   const clearResults = () => {
+    setRanCommand('')
     setResults([])
     setTruncation(null)
     setDistribution([])
@@ -136,6 +137,14 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
     setExecutionTime('')
     setError('')
   }
+
+  /**
+   * The command line that produced the results now on screen, captured at
+   * execution. Exported figures are stamped with it. Rebuilding it at export
+   * time would read the live form, which stays editable after a run and can
+   * therefore describe a different analysis than the one plotted.
+   */
+  const [ranCommand, setRanCommand] = useState('')
 
   // Handle mode change
   useEffect(() => {
@@ -172,6 +181,9 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
   const handleExecute = async () => {
     setIsExecuting(true)
     clearResults()
+    // After clearResults, which wipes it: this records the command for the
+    // run about to start, and must outlive the reset that precedes it.
+    setRanCommand(buildCommandLine())
 
     try {
       // Convert population-scaled values to raw values if needed
@@ -429,7 +441,7 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
     parts.push(`--num-threads ${executionOptions.threads}`)
     parts.push(`--library ${executionOptions.library}`)
     const dir = (outputOptions as any).outputDirectory || '~/Downloads'
-    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/${toolName}_Q.mtx`)
+    if (outputOptions.writeQ) parts.push(`--output-Q ${dir}/${toolName}_Q.csv`)
     if (outputOptions.writeR) parts.push(`--output-R ${dir}/${toolName}_R.csv`)
     if (outputOptions.writeP) parts.push(`--output-P ${dir}/${toolName}_P.csv`)
     parts.push('--json')
@@ -690,13 +702,16 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
                     <Group mt="md">
                       <WfesExportButtons
                         onExport={(format) => {
+                          // Data formats only. Export PNG and Export SVG used to
+                          // sit beside these, but a chart can only be serialised
+                          // while it is on screen, so both did the only thing they
+                          // could -- open the chart -- and a button labelled
+                          // "Export PNG" that opens a window instead of writing a
+                          // file misstates what it does. The chart's own Export PNG
+                          // and Export SVG do the real work.
                           if (format === 'csv' || format === 'tsv') handleExportData(format as 'csv' | 'tsv')
-                          else if (format === 'png' || format === 'svg') {
-                            // Open chart modal for visual export
-                            setShowChartModal(true)
-                          }
                         }}
-                        formats={['csv', 'tsv', 'png', 'svg']}
+                        formats={['csv', 'tsv']}
                       />
                     </Group>
                   )}
@@ -816,6 +831,7 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
         onClose={() => setShowChartModal(false)}
         data={distribution}
         mode={mode}
+              command={ranCommand}
       />
     </WfesViewLayout>
   )
