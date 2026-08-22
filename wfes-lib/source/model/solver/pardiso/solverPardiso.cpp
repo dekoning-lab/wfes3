@@ -27,7 +27,12 @@ PardisoSolver::PardisoSolver(SparseMatrixPardiso& A, llong matrix_type, llong me
     control(MKL_PARDISO_WEIGHTED_MATCHING_OPTION) = MKL_PARDISO_WEIGHTED_MATCHING_ENABLE;                                       // iparm[12] = 1
     control(MKL_PARDISO_PRECISION_OPTION) = MKL_PARDISO_PRECISION_DOUBLE;                                                       // iparm[27] = 0
     control(MKL_PARDISO_INDEXING_OPTION) = MKL_PARDISO_INDEXING_ZERO;                                                           // iparm[34] = 1
-    control(MKL_PARDISO_OOC_OPTION) = MKL_PARDISO_OOC_ALWAYS;                                                                   // iparm[59] = 2
+    // In-core by default, spilling to out-of-core only when RAM is insufficient
+    // (iparm[59] = 1). The previous OOC_ALWAYS (= 2) forced every solve to write
+    // factorization scratch files to the working directory, which made all Linux
+    // solves disk-bound and failed outright with MKL error -10/-11 when concurrent
+    // processes shared a cwd (observed on the ARC cluster, 2026-08-22).
+    control(MKL_PARDISO_OOC_OPTION) = MKL_PARDISO_OOC_OVERFLOW;                                                                 // iparm[59] = 1
     control(MKL_PARDISO_REPORT_NNZ_FACTORS) = MKL_PARDISO_REPORT_ENABLE;                                                        // iparm[17] = -1
     control(MKL_PARDISO_REPORT_FLOP_FACTOR_PHASE) = MKL_PARDISO_REPORT_ENABLE;                                                  // iparm[18] = -1
     control(MKL_PARDISO_REPORT_CGS_CG_DIAGNOSTIC) = MKL_PARDISO_REPORT_ENABLE;                                                  // iparm[19] = -1
