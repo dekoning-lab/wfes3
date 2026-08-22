@@ -389,16 +389,58 @@ def write_initial_distribution(tmpdir, n_states, active_index=0):
     return path
 
 
-def check_csv_header(r, what, empty_ok=()):
+# The two solver-backend provenance columns (task CX8, integrity audit
+# section 2.3). Both --csv rows here publish the run's parameters, and
+# --library was the one parameter that was not necessarily what the run used:
+# SolverFactory serves an "Accelerate" request with SuiteSparse whenever the
+# build has it, which is every shipped macOS build. These two columns close
+# the parameters group, immediately after `a` and before the first result
+# column, and carry backend NAMES rather than numbers -- so check_csv_header
+# asserts them against the tool's own --library whitelist instead of against
+# float(). That is a stricter test than "is a number", not a relaxation:
+# `is_number` would have accepted any numeric token at all, while a name here
+# has to be one the factory could actually have produced.
+#
+# Positive assertions on the values themselves (that requested is what was
+# asked for, that effective is what ran, and that the pair matches the JSON
+# parameters block) live in test_shared_parser.py's provenance section.
+PROVENANCE_COLUMNS = ("library_requested", "library_effective")
+
+_LIBRARY_WHITELIST = {}
+
+
+def whitelisted_libraries(tool):
+    """The build's --library whitelist, read back out of the tool's --help.
+
+    Args_Parser::supported_libraries() is the single source of truth for the
+    help text, for what --library accepts, and for the name that appears in
+    library_effective, so reading it here keeps this suite from hardcoding a
+    platform's backend list.
+    """
+    if tool not in _LIBRARY_WHITELIST:
+        text = run(tool, ["--help"]).stdout
+        m = re.search(r"Library \(([^)]*)\)", text)
+        names = ([t.strip() for t in re.split(r",\s*|\s+or\s+", m.group(1))
+                  if t.strip()] if m else [])
+        _LIBRARY_WHITELIST[tool] = names
+    return _LIBRARY_WHITELIST[tool]
+
+
+def check_csv_header(r, what, empty_ok=(), tool=None):
     """Check header/data shape: a header line, then data line(s) with one
     field per header column -- counted by splitting on ',', which counts
     delimiters rather than values and so is unaffected by an empty field.
 
-    Every field must be numeric, except a field whose header name is listed
-    in `empty_ok`: the schema keeps that column (a fixed-position CSV
-    consumer must not see the column count change across runs), but the run
-    did not use it, so the field must be empty rather than carry a number
-    that played no part in the result.
+    Every field must be numeric, except:
+
+      * a field whose header name is listed in `empty_ok`: the schema keeps
+        that column (a fixed-position CSV consumer must not see the column
+        count change across runs), but the run did not use it, so the field
+        must be empty rather than carry a number that played no part in the
+        result;
+      * the two PROVENANCE_COLUMNS, which name a solver backend and must hold
+        a name from `tool`'s own --library whitelist. Pass `tool` to have them
+        checked; without it they are checked for non-emptiness only.
 
     Returns (header, data_lines) for callers that need to inspect the parsed
     row further; returns None if the basic header/data-line shape is wrong.
@@ -418,10 +460,17 @@ def check_csv_header(r, what, empty_ok=()):
                      "header has %d columns, row has %d\nheader=%s\nrow=%s"
                      % (len(header), len(fields), lines[0], line)):
             continue
+        libs = whitelisted_libraries(tool) if tool else []
         for name, tok in zip(header, fields):
             if name in empty_ok:
                 check(tok == "", "%s: data row %d field %s is empty (unused)" % (what, i, name),
                       "row=%s" % line)
+            elif name in PROVENANCE_COLUMNS:
+                ok = tok in libs if libs else bool(tok)
+                check(ok,
+                      "%s: data row %d field %s names a backend this build has"
+                      % (what, i, name),
+                      "value=%r whitelist=%r row=%s" % (tok, libs, line))
             else:
                 check(is_number(tok), "%s: data row %d field %s is numeric" % (what, i, name),
                       "row=%s" % line)
@@ -431,9 +480,9 @@ def check_csv_header(r, what, empty_ok=()):
 def test_csv_output_has_a_header():
     print("test_csv_output_has_a_header")
     check_csv_header(run("wfes_switching", ["--fixation"] + SWITCHING_BASE + ["--csv"]),
-                     "switching --fixation --csv")
+                     "switching --fixation --csv", tool="wfes_switching")
     check_csv_header(run("wfes_sequential", SEQUENTIAL_BASE + ["--csv"]),
-                     "sequential --csv")
+                     "sequential --csv", tool="wfes_sequential")
 
     # --starting-copies is one of three mutually exclusive starting rules
     # (see test_json_parameters_record_the_values_used above) and replaces
@@ -448,7 +497,8 @@ def test_csv_output_has_a_header():
     check("normalis" not in r.stderr.lower(),
           "sequential --starting-copies -p 1,1 --csv: "
           "no renormalisation warning for an unused -p", context(r))
-    check_csv_header(r, "sequential --starting-copies --csv", empty_ok=("p0", "p1"))
+    check_csv_header(r, "sequential --starting-copies --csv", empty_ok=("p0", "p1"),
+                     tool="wfes_sequential")
 
     # --initial is the other -p-replacing rule (see
     # test_json_parameters_record_the_values_used above), and it covers both
@@ -476,7 +526,7 @@ def test_csv_output_has_a_header():
               "switching --fixation --initial --csv: "
               "no renormalisation warning for an unused -p", context(r))
         check_csv_header(r, "switching --fixation --initial --csv",
-                         empty_ok=("p0", "p1"))
+                         empty_ok=("p0", "p1"), tool="wfes_switching")
 
         sequential_initial = write_initial_distribution(tmpdir, 30)
         r = run("wfes_sequential",
@@ -485,7 +535,8 @@ def test_csv_output_has_a_header():
         check("normalis" not in r.stderr.lower(),
               "sequential --initial --csv: "
               "no renormalisation warning for an unused -p", context(r))
-        check_csv_header(r, "sequential --initial --csv", empty_ok=("p0", "p1"))
+        check_csv_header(r, "sequential --initial --csv", empty_ok=("p0", "p1"),
+                         tool="wfes_sequential")
 
         # wfes_switching --absorption --initial: same -p-replacing rule as
         # the two cases above, but this output travels through the shared
@@ -504,7 +555,7 @@ def test_csv_output_has_a_header():
                 ["--absorption"] + SWITCHING_BASE +
                 ["--initial", absorption_initial, "-P", "-5,3", "--csv"])
         check_csv_header(r, "switching --absorption --initial --csv",
-                         empty_ok=("p0", "p1"))
+                         empty_ok=("p0", "p1"), tool="wfes_switching")
 
 
 # ---------------------------------------------------------------------------

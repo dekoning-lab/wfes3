@@ -141,6 +141,38 @@ DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cxstoch" / "bin"
 DEFAULT_REFERENCE = Path(
     "/Applications/WFES3.app/Contents/Resources/bin/wfafs_stochastic")
 
+# ---------------------------------------------------------------------------
+# Solver-backend provenance lines (task CX8, integrity audit section 2.3)
+#
+# Every tool's --json parameters block now carries two extra lines:
+#
+#     "library_requested": "Accelerate",
+#     "library_effective": "SuiteSparse",
+#
+# recording which backend was ASKED FOR and which one actually factorised the
+# matrix -- SolverFactory serves an "Accelerate" request with SuiteSparse
+# whenever the build has it, which is every shipped macOS build.
+#
+# They describe the RUN, not the result: no computed value moves because of
+# them, and the shipped reference binary predates them entirely. So they are
+# removed before the recorded digests are taken and before the byte-for-byte
+# reference comparison -- exactly as strip_banner() already removes the banner
+# in test_degenerate_wfafs_deterministic.py, and for the same reason. The
+# recorded md5s below therefore keep their ORIGINAL pre-fix values and go on
+# checking what they were written to check: that the NUMBERS did not move.
+#
+# The fields themselves are not left unchecked. test_shared_parser.py's
+# provenance section asserts them positively, for all eleven tools, in both
+# structured formats.
+# ---------------------------------------------------------------------------
+PROVENANCE_LINE_RE = re.compile(
+    rb'^[ \t]*"library_(?:requested|effective)": (?:"[^"]*"|null),?\n', re.M)
+
+
+def strip_provenance(stdout: bytes) -> bytes:
+    """`stdout` with the two solver-backend provenance lines removed."""
+    return PROVENANCE_LINE_RE.sub(b"", stdout)
+
 # `inf`, `-inf`, `infinity`, `nan` as standalone tokens. Bounded on both sides
 # so ordinary words ("info") and exponents ("1e-09") do not match.
 NONFINITE_RE = re.compile(
@@ -396,7 +428,7 @@ def test_legitimate_models(binary: Path, reference: Path | None) -> None:
         if not check(f"[{label}] exits 0", proc.returncode == 0,
                      f"exit {proc.returncode}: {text(proc).strip()[:400]}"):
             continue
-        got = hashlib.md5(proc.stdout).hexdigest()
+        got = hashlib.md5(strip_provenance(proc.stdout)).hexdigest()
         check(f"[{label}] stdout matches the recorded pre-fix md5",
               got == digest, f"recorded {digest}, got {got}")
         # stdout only, per the stderr-scope convention in the module docstring.
@@ -415,9 +447,12 @@ def test_legitimate_models(binary: Path, reference: Path | None) -> None:
             if ship_match:
                 ref = run(reference, args)
                 check(f"[{label}] byte-identical to the reference binary",
-                      ref.returncode == 0 and ref.stdout == proc.stdout,
+                      ref.returncode == 0 and strip_provenance(ref.stdout)
+                                             == strip_provenance(proc.stdout),
                       f"reference exit {ref.returncode}, "
-                      f"md5 {hashlib.md5(ref.stdout).hexdigest()} vs {got}")
+                      f"md5 "
+                      f"{hashlib.md5(strip_provenance(ref.stdout)).hexdigest()}"
+                      f" vs {got}")
             else:
                 print(f"  SKIP  [{label}] reference comparison "
                       "(known pre-existing divergence -- see module docstring)")

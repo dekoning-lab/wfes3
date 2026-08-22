@@ -90,6 +90,38 @@ WFAFS_N_UPPROJECTED = 21
 # recorded from the pre-fix build (see module docstring).
 WFAFS_DEFAULT_MD5 = "2a401eaf33ea2e3b175d77940d3c0071"
 
+# ---------------------------------------------------------------------------
+# Solver-backend provenance lines (task CX8, integrity audit section 2.3)
+#
+# Every tool's --json parameters block now carries two extra lines:
+#
+#     "library_requested": "Accelerate",
+#     "library_effective": "SuiteSparse",
+#
+# recording which backend was ASKED FOR and which one actually factorised the
+# matrix -- SolverFactory serves an "Accelerate" request with SuiteSparse
+# whenever the build has it, which is every shipped macOS build.
+#
+# They describe the RUN, not the result: no computed value moves because of
+# them, and the shipped reference binary predates them entirely. So they are
+# removed before the recorded digests are taken and before the byte-for-byte
+# reference comparison -- exactly as strip_banner() already removes the banner
+# in test_degenerate_wfafs_deterministic.py, and for the same reason. The
+# recorded md5s below therefore keep their ORIGINAL pre-fix values and go on
+# checking what they were written to check: that the NUMBERS did not move.
+#
+# The fields themselves are not left unchecked. test_shared_parser.py's
+# provenance section asserts them positively, for all eleven tools, in both
+# structured formats.
+# ---------------------------------------------------------------------------
+PROVENANCE_LINE_RE = re.compile(
+    rb'^[ \t]*"library_(?:requested|effective)": (?:"[^"]*"|null),?\n', re.M)
+
+
+def strip_provenance(stdout: bytes) -> bytes:
+    """`stdout` with the two solver-backend provenance lines removed."""
+    return PROVENANCE_LINE_RE.sub(b"", stdout)
+
 # `inf`, `-inf`, `infinity`, `nan` as standalone tokens. Bounded on both sides so
 # that ordinary words ("info") and exponents ("1e-09") do not match.
 NONFINITE_RE = re.compile(r"(?<![A-Za-z0-9_.])-?(?:inf(?:inity)?|nan)(?![A-Za-z0-9_])",
@@ -315,7 +347,7 @@ def test_wfafs_default_unchanged(wfafs: Path) -> str:
     proc = run(wfafs, WFAFS_MODEL + ["--json"])
     if not check("exits 0", proc.returncode == 0, f"exit {proc.returncode}: {text(proc)[:400]}"):
         return ""
-    digest = hashlib.md5(proc.stdout).hexdigest()
+    digest = hashlib.md5(strip_provenance(proc.stdout)).hexdigest()
     check("md5 of stdout matches the recorded pre-fix value",
           digest == WFAFS_DEFAULT_MD5,
           f"recorded {WFAFS_DEFAULT_MD5}, got {digest}")
@@ -341,7 +373,7 @@ def test_wfafs_no_project(wfafs: Path, default_digest: str) -> None:
           len(dist) == WFAFS_N_UPPROJECTED,
           f"got {len(dist)}; {WFAFS_N_PROJECTED} means the flag had no effect on "
           "the down-projection")
-    digest = hashlib.md5(proc.stdout).hexdigest()
+    digest = hashlib.md5(strip_provenance(proc.stdout)).hexdigest()
     check("differs from the default run", digest != default_digest,
           "--no-project produced byte-identical output to the default run")
     probs = [entry["probability"] for entry in dist]

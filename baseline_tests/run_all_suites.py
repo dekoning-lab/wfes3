@@ -171,13 +171,32 @@ EXPECTED = [
     ("validate_baselines.py",                  _pass_fail,           54),
     ("test_invalid_output_single.py",          _pass_fail,          162),
     ("test_single_output_matrix.py",           _pass_fail,          343),
-    ("test_degenerate_switching_sequential.py", _checks_failed,     294),
+    # 294 -> 306 (2026-08-21, task CX8): +12. Not new test code -- the same
+    # per-field loop in check_csv_header, run over two new columns. Both --csv
+    # rows this suite checks now close their parameters group with
+    # library_requested,library_effective (audit section 2.3: a "--library
+    # Accelerate" run is served by SuiteSparse, so the request alone was never
+    # a record of the run). Six check_csv_header call sites x one data row x
+    # two columns = 12. The columns carry backend NAMES, so they are asserted
+    # against the tool's own --library whitelist rather than against float();
+    # see PROVENANCE_COLUMNS in that suite.
+    ("test_degenerate_switching_sequential.py", _checks_failed,     306),
     ("test_numeric_switching_sequential.py",   _pass_fail,          330),
     ("test_degenerate_time_dist_family.py",    _slash_passed,        93),
     ("test_degenerate_wfafs_deterministic.py", _passed_slash,       185),
     ("test_degenerate_wfafs_stochastic.py",    _passed_slash,       190),
     ("test_degenerate_wfafs_sweep.py",         _passed_slash,        47),
-    ("test_shared_parser.py",                  _n_passed_m_failed,  189),
+    # 189 -> 309 (2026-08-21, task CX8): +120 checks for solver-backend
+    # provenance. The eleven tools now publish library_requested and
+    # library_effective in their --json parameters block (and, for the three
+    # whose --csv row already carries parameters, as two columns closing that
+    # group), so a run that asked for Accelerate and was served SuiteSparse --
+    # every macOS run, flagged or default -- says so in the record a methods
+    # section is copied from. The new section runs four cases per tool
+    # (identity backend, Accelerate, no flag, unknown flag), then the
+    # verbose/JSON agreement check and four --csv cases. Measured against
+    # wfes-cli/build-cx8: 61 of them fail on the pre-fix binaries.
+    ("test_shared_parser.py",                  _n_passed_m_failed,  309),
     ("test_flag_canonicalization.py",          _n_passed_m_failed,  107),
     ("test_paru_multirhs.py",                  _checks_failed,       37),
 ]

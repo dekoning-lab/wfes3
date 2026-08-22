@@ -52,6 +52,21 @@ What each section locks in, and why it is not a style preference:
       the platform default -- so on Linux a typo'd --library silently ran
       Pardiso and reported success.
 
+  --library provenance: requested vs effective (audit section 2.3)
+      A RECOGNISED --library was not safe either. SolverFactory::createSolver
+      serves "--library Accelerate" with SuiteSparse/UMFPACK whenever the build
+      has SuiteSparse -- every shipped macOS build -- and, because "Accelerate"
+      is also the macOS default, every macOS run that passes no --library at
+      all. The only disclosure anywhere was one --verbose text line in
+      wfes_single's --fixation branch. Every other run published the REQUEST as
+      though it were the record: a --json/--csv parameters block, the thing a
+      methods section gets copied from, naming a backend that never executed.
+      All eleven tools now publish both `library_requested` and
+      `library_effective`, from SolverFactory::effectiveLibrary() rather than
+      from eleven re-derivations of the substitution rule, and the runs where
+      the two AGREE say so explicitly -- otherwise the absence of a
+      substitution would still only be inferred from silence.
+
   CSV precision
       wfes_single printed ~6 significant figures of CSV in five modes and 17 in
       --fundamental. Six figures is lossy: the value cannot be round-tripped
@@ -630,6 +645,235 @@ def section_file_writer_guard(bindir: Path):
         # tool's pre-existing refusal, not a demonstration of this guard.
 
 
+# --------------------------------------------------------------------------
+# 11. Solver-backend provenance (integrity audit section 2.3)
+# --------------------------------------------------------------------------
+
+# Small, fast runs -- one per tool. The time_dist family is capped with -m
+# because its default --max-t of 100000 emits a multi-megabyte distribution
+# that this section has no interest in parsing.
+def provenance_invocations() -> list[tuple[str, list[str]]]:
+    return [
+        ("wfes_single", ["--absorption", "-N", "10"]),
+        ("wfes_switching", ["--absorption", "-N", "10,10",
+                            "-R", "0.5,0.5;0.5,0.5"]),
+        ("wfes_sequential", ["-N", "10,10", "-e", "10,10"]),
+        ("wfes_sweep", ["--fixation", "-N", "10", "-s", "0.01,0.02", "-L", "0.5"]),
+        ("time_dist", ["-N", "10", "-m", "50"]),
+        ("time_dist_dual", ["-N", "10", "-m", "50"]),
+        ("time_dist_sgv", ["-N", "10", "-L", "0.5", "-s", "0.01,0.01", "-m", "50"]),
+        ("phase_type_dist", ["-N", "10", "-m", "50"]),
+        ("phase_type_moments", ["-N", "10"]),
+        ("wfafs_stochastic", ["-N", "10,10", "-G", "10,10", "-f", "1,1"]),
+        ("wfafs_deterministic", ["-N", "10", "-G", "10", "-s", "0.01", "-p", "1"]),
+    ]
+
+
+def whitelisted_libraries(bindir: Path, tool: str) -> list[str]:
+    """The build's --library whitelist, read from the tool's own --help.
+
+    Args_Parser::supported_libraries() is the naming authority for both the
+    help text and the library_effective field, so parsing it back out of
+    --help is how this suite checks the two agree without hardcoding a
+    platform's backend list.
+    """
+    m = re.search(r"Library \(([^)]*)\)", run(bindir / tool, ["--help"]).stdout)
+    if not m:
+        return []
+    return [tok.strip() for tok in re.split(r",\s*|\s+or\s+", m.group(1))
+            if tok.strip()]
+
+
+def json_provenance(stdout: str) -> tuple[object, object]:
+    """(library_requested, library_effective) from a tool's --json document.
+
+    Ten of the eleven tools publish their parameters in a `parameters` object;
+    time_dist_sgv publishes them flat at top level, and the pair sits with the
+    rest of its parameters there. Falling back to the document itself covers
+    both without asking the caller which shape it is looking at.
+    """
+    doc = json.loads(stdout)
+    block = doc.get("parameters", doc)
+    if not isinstance(block, dict):
+        block = doc
+    return block.get("library_requested"), block.get("library_effective")
+
+
+def section_library_provenance(bindir: Path):
+    print("\n== --json records the backend REQUESTED and the one that RAN ==")
+    # THE DEFECT. SolverFactory::createSolver serves a "--library Accelerate"
+    # request with SuiteSparse/UMFPACK whenever the build has SuiteSparse --
+    # which is every shipped macOS build, and, because "Accelerate" is also the
+    # macOS DEFAULT, every macOS run that passes no --library at all. Before
+    # this, the only disclosure anywhere was a single --verbose text line in
+    # wfes_single's --fixation branch: a --json or --csv parameters block that
+    # echoed options.library named a backend that never executed, and that
+    # block is the provenance record a methods section is copied from.
+    libs = whitelisted_libraries(bindir, "wfes_single")
+    check(bool(libs), "--library whitelist is readable from --help", repr(libs))
+    if not libs:
+        return
+
+    # Accelerate is the one name the factory substitutes. Anything else in the
+    # whitelist is served by itself, so it is the case where requested and
+    # effective MUST agree -- the half of the record that proves the pair is a
+    # statement about the run rather than a warning that only ever fires.
+    identity = next((lib for lib in libs if lib != "Accelerate"), libs[0])
+    substituted = "Accelerate" in libs and "SuiteSparse" in libs
+    expect_for_accelerate = "SuiteSparse" if substituted else "Accelerate"
+    print(f"  (whitelist {libs}; identity backend {identity!r}; "
+          f"Accelerate -> {expect_for_accelerate!r})")
+
+    for name, args in provenance_invocations():
+        binary = bindir / name
+
+        # 1. A backend served by itself: requested == effective, said out loud.
+        proc = run(binary, args + ["--library", identity, "--json"])
+        label = f"{name} --library {identity}"
+        req = eff = None
+        ok = proc.returncode == 0
+        if ok:
+            try:
+                req, eff = json_provenance(proc.stdout)
+            except (json.JSONDecodeError, KeyError) as exc:
+                ok = False
+                detail = str(exc)
+        else:
+            detail = f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}"
+        check(ok, f"{label}: exits 0 and stdout parses as JSON",
+              "" if ok else detail)
+        check(req == identity, f"{label}: library_requested is {identity!r}",
+              repr(req))
+        check(eff == identity, f"{label}: library_effective is {identity!r}",
+              repr(eff))
+
+        # 2. The substitution itself, recorded rather than hidden.
+        proc = run(binary, args + ["--library", "Accelerate", "--json"])
+        label = f"{name} --library Accelerate"
+        req = eff = None
+        if proc.returncode == 0:
+            try:
+                req, eff = json_provenance(proc.stdout)
+            except json.JSONDecodeError:
+                pass
+        check(proc.returncode == 0, f"{label}: exits 0",
+              f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}")
+        check(req == "Accelerate", f"{label}: library_requested is 'Accelerate'",
+              repr(req))
+        check(eff == expect_for_accelerate,
+              f"{label}: library_effective is {expect_for_accelerate!r} "
+              f"(the backend that actually factorises)", repr(eff))
+
+        # 3. A run with no --library at all still carries the record, and the
+        #    effective name is one the whitelist knows. On macOS the default IS
+        #    "Accelerate", so this is NOT a run where the two agree -- which is
+        #    exactly why the default run needs the pair as much as an explicit
+        #    one does.
+        proc = run(binary, args + ["--json"])
+        label = f"{name} (default library)"
+        req = eff = None
+        if proc.returncode == 0:
+            try:
+                req, eff = json_provenance(proc.stdout)
+            except json.JSONDecodeError:
+                pass
+        check(proc.returncode == 0, f"{label}: exits 0",
+              f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}")
+        check(isinstance(req, str) and req in libs and
+              isinstance(eff, str) and eff in libs,
+              f"{label}: both fields present and named by the whitelist",
+              f"requested={req!r} effective={eff!r} whitelist={libs}")
+
+        # 4. An unrecognised --library is still refused outright, and a refused
+        #    run publishes no provenance -- there is no run to describe.
+        proc = run(binary, args + ["--library", "Pardsio", "--json"])
+        check(proc.returncode != 0 and "library_requested" not in proc.stdout,
+              f"{name} --library Pardsio: refused, and no provenance published",
+              f"exit={proc.returncode} stdout={proc.stdout.strip()[:160]!r}")
+
+    # 5. The --verbose text line and the machine-readable field are the same
+    #    fact, so they come from the same function and cannot disagree.
+    print("\n== the --verbose disclosure and library_effective agree ==")
+    single = bindir / "wfes_single"
+    vargs = ["--fixation", "-N", "10", "-p", "1", "--library", "Accelerate"]
+    vproc = run(single, vargs + ["--verbose"])
+    jproc = run(single, vargs + ["--json"])
+    jeff = None
+    if jproc.returncode == 0:
+        try:
+            jeff = json_provenance(jproc.stdout)[1]
+        except json.JSONDecodeError:
+            pass
+    m = re.search(r"Library \(in use\):\s*(\S+)", vproc.stdout)
+    check(m is not None,
+          "wfes_single --fixation --verbose: still discloses the backend in use",
+          vproc.stdout.strip()[-200:])
+    check(m is not None and jeff is not None and m.group(1) == jeff,
+          "wfes_single --fixation: the verbose line and library_effective match",
+          f"verbose={m.group(1) if m else None!r} json={jeff!r}")
+
+    # 6. CSV, for the three tools whose --csv row already publishes the run's
+    #    parameters. Position matters as much as presence: the pair closes the
+    #    PARAMETERS group, before the first result column. Appending it after
+    #    the results would silently shift every reader that indexes this row
+    #    from the last field backwards -- the GUI's own CSV fallback for
+    #    wfes_sequential and wfes_switching --fixation does exactly that.
+    print("\n== --csv carries the same pair, ahead of the result columns ==")
+    csv_cases = [
+        ("wfes_switching", ["--fixation", "-N", "10,10", "-R", "0.5,0.5;0.5,0.5"],
+         True),
+        ("wfes_switching", ["--absorption", "-N", "10,10", "-R", "0.5,0.5;0.5,0.5"],
+         True),
+        ("wfes_sequential", ["-N", "10,10", "-e", "10,10"], True),
+        # wfes_sweep prints a bare data row with no header line at all; the
+        # pair is located by position instead. Not restructured into a
+        # headered table here -- that is a different change with a different
+        # blast radius.
+        ("wfes_sweep", ["--fixation", "-N", "10", "-s", "0.01,0.02", "-L", "0.5"],
+         False),
+    ]
+    for name, args, has_header in csv_cases:
+        label = f"{name} {args[0]} --csv"
+        proc = run(bindir / name, args + ["--library", "Accelerate", "--csv"])
+        if not check(proc.returncode == 0, f"{label}: exits 0",
+                     f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}"):
+            continue
+        lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+        if has_header:
+            if not check(len(lines) >= 2, f"{label}: header and a data row",
+                         repr(lines[:2])):
+                continue
+            header = lines[0].split(",")
+            row = lines[1].split(",")
+            present = ("library_requested" in header
+                       and "library_effective" in header)
+            if not check(present, f"{label}: header names both fields",
+                         lines[0][:200]):
+                continue
+            i = header.index("library_requested")
+            check(header[i + 1] == "library_effective"
+                  and row[i] == "Accelerate"
+                  and row[i + 1] == expect_for_accelerate,
+                  f"{label}: the pair carries the run's actual backends",
+                  f"header={header[i:i+2]} row={row[i:i+2]}")
+            check(i + 2 < len(header),
+                  f"{label}: the pair precedes the result columns "
+                  f"(not appended at the end)",
+                  f"index {i} of {len(header)} columns")
+        else:
+            row = lines[-1].split(",")
+            pair = ["Accelerate", expect_for_accelerate]
+            positions = [j for j in range(len(row) - 1)
+                         if row[j:j + 2] == pair]
+            check(len(positions) == 1,
+                  f"{label}: the pair appears once in the data row",
+                  f"found at {positions} in {lines[-1][:200]!r}")
+            check(bool(positions) and positions[0] + 2 < len(row),
+                  f"{label}: the pair precedes the result columns "
+                  f"(not appended at the end)",
+                  f"position {positions} of {len(row)} fields")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -658,6 +902,7 @@ def main() -> int:
     section_banner(bindir)
     section_wfafs_stochastic_help(bindir)
     section_file_writer_guard(bindir)
+    section_library_provenance(bindir)
 
     print(f"\n{PASS} passed, {FAIL} failed")
     if FAILURES:

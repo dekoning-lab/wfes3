@@ -169,6 +169,38 @@ def strip_banner(stdout: bytes) -> bytes:
 
 FORMATS = (("json", ["--json"]), ("csv", ["--csv"]), ("plain", []))
 
+# ---------------------------------------------------------------------------
+# Solver-backend provenance lines (task CX8, integrity audit section 2.3)
+#
+# Every tool's --json parameters block now carries two extra lines:
+#
+#     "library_requested": "Accelerate",
+#     "library_effective": "SuiteSparse",
+#
+# recording which backend was ASKED FOR and which one actually factorised the
+# matrix -- SolverFactory serves an "Accelerate" request with SuiteSparse
+# whenever the build has it, which is every shipped macOS build.
+#
+# They describe the RUN, not the result: no computed value moves because of
+# them, and the shipped reference binary predates them entirely. So they are
+# removed before the recorded digests are taken and before the byte-for-byte
+# reference comparison -- exactly as strip_banner() already removes the banner
+# in test_degenerate_wfafs_deterministic.py, and for the same reason. The
+# recorded md5s below therefore keep their ORIGINAL pre-fix values and go on
+# checking what they were written to check: that the NUMBERS did not move.
+#
+# The fields themselves are not left unchecked. test_shared_parser.py's
+# provenance section asserts them positively, for all eleven tools, in both
+# structured formats.
+# ---------------------------------------------------------------------------
+PROVENANCE_LINE_RE = re.compile(
+    rb'^[ \t]*"library_(?:requested|effective)": (?:"[^"]*"|null),?\n', re.M)
+
+
+def strip_provenance(stdout: bytes) -> bytes:
+    """`stdout` with the two solver-backend provenance lines removed."""
+    return PROVENANCE_LINE_RE.sub(b"", stdout)
+
 # `inf`, `-inf`, `infinity`, `nan` as standalone tokens. Bounded on both sides
 # so that ordinary words ("info") and exponents ("1e-09") do not match.
 NONFINITE_RE = re.compile(
@@ -411,7 +443,7 @@ def test_healthy_unchanged(tool: Path) -> dict[str, str]:
               f"output: {both_text(proc)[:400]}")
         if fmt_name == "plain":
             stdout_bytes = strip_banner(stdout_bytes)
-        digest = hashlib.md5(stdout_bytes).hexdigest()
+        digest = hashlib.md5(strip_provenance(stdout_bytes)).hexdigest()
         digests[fmt_name] = digest
         check(f"{tag} stdout is byte-identical to the recorded pre-fix output",
               digest == HEALTHY_MD5[fmt_name],
@@ -584,7 +616,7 @@ def test_matches_reference_binary(tool: Path, reference: Path,
         # plain: the reference has no banner, and the build under test's digest
         # was taken with the banner stripped, so these compare like for like.
         ref_bytes = strip_banner(ref.stdout) if fmt_name == "plain" else ref.stdout
-        ref_digest = hashlib.md5(ref_bytes).hexdigest()
+        ref_digest = hashlib.md5(strip_provenance(ref_bytes)).hexdigest()
         check(f"[{fmt_name}] byte-identical to the reference binary",
               digests.get(fmt_name) == ref_digest,
               f"under test {digests.get(fmt_name)}, reference {ref_digest}")
