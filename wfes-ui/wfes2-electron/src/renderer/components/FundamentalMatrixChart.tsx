@@ -533,6 +533,11 @@ const FundamentalMatrixChart: React.FC<FundamentalMatrixChartProps> = ({
           )}
           
           {/* Axis labels */}
+          {/* Axes are labelled by ALLELE COUNT, not array index. The
+              transient states of these models are counts 1..2N-1, so column j
+              holds count j+1; labelling the index while calling the axis
+              "State" was off by one, and disagreed with the exported figure,
+              which has always numbered by count. */}
           {/* X-axis labels (columns) */}
           {Array.from({ length: Math.min(numCols, 10) }, (_, i) => {
             const colIndex = Math.floor(i * numCols / 10)
@@ -545,7 +550,7 @@ const FundamentalMatrixChart: React.FC<FundamentalMatrixChartProps> = ({
                 fontSize="12"
                 fill={colorScheme === 'dark' ? '#ffffff' : '#000000'}
               >
-                {colIndex}
+                {colIndex + 1}
               </text>
             )
           })}
@@ -563,7 +568,7 @@ const FundamentalMatrixChart: React.FC<FundamentalMatrixChartProps> = ({
                 fill={colorScheme === 'dark' ? '#ffffff' : '#000000'}
                 dominantBaseline="middle"
               >
-                {rowIndex}
+                {rowIndex + 1}
               </text>
             )
           })}

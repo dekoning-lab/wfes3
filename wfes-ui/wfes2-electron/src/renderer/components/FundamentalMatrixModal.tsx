@@ -6,6 +6,7 @@ import FundamentalMatrixChart from './FundamentalMatrixChart'
 import SojournVectorChart from './SojournVectorChart'
 import { buildMatrixSvg } from '../utils/matrixSvg'
 import { rasterWithStamp, rasterizeSvgString } from '../utils/chartStamp'
+import { exportChartsSvg, exportChartsPng } from '../utils/exportChartsSvg'
 
 interface FundamentalMatrixModalProps {
   opened: boolean
@@ -87,6 +88,24 @@ const FundamentalMatrixModal: React.FC<FundamentalMatrixModalProps> = ({
    * nothing at all and said nothing about it.
    */
   const handleExportPNG = () => {
+    // A single row is displayed as a line chart, not a heatmap, so it has to be
+    // exported as one. Both handlers used to go straight to buildMatrixSvg,
+    // which always draws a heatmap -- the axis LABELS were switched for the
+    // vector case but the figure was not, so the file disagreed with the screen
+    // it came from. Routing through the shared chart exporter also matches how
+    // every other chart in the app exports, and picks up the provenance stamp.
+    if (isVector) {
+      void exportChartsPng({
+        container: document.querySelector('.fundamental-matrix-container') as HTMLElement | null,
+        titles: [title],
+        filename: `${symbol}_vector_N${parameters.N}`,
+        command,
+        version: __APP_VERSION__
+      }).then(n => { if (!n) alert('The chart is not on screen yet. Wait for it to draw and try again.') })
+        .catch((e: any) => alert(`The figure could not be exported as PNG: ${e?.message ?? e}`))
+      return
+    }
+
     const { svg, canvas, img } = chartSurface()
 
     // Preferred route: rasterise the same white, vector figure that Export SVG
@@ -200,6 +219,24 @@ const FundamentalMatrixModal: React.FC<FundamentalMatrixModalProps> = ({
    * true vector at any size -- which is the whole reason to pick SVG over PNG.
    */
   const handleExportSVG = () => {
+    // A single row is displayed as a line chart, not a heatmap, so it has to be
+    // exported as one. Both handlers used to go straight to buildMatrixSvg,
+    // which always draws a heatmap -- the axis LABELS were switched for the
+    // vector case but the figure was not, so the file disagreed with the screen
+    // it came from. Routing through the shared chart exporter also matches how
+    // every other chart in the app exports, and picks up the provenance stamp.
+    if (isVector) {
+      const n = exportChartsSvg({
+        container: document.querySelector('.fundamental-matrix-container') as HTMLElement | null,
+        titles: [title],
+        filename: `${symbol}_vector_N${parameters.N}`,
+        command,
+        version: __APP_VERSION__
+      })
+      if (!n) alert('The chart is not on screen yet. Wait for it to draw and try again.')
+      return
+    }
+
     const result = buildMatrixSvg({
       data,
       title,
