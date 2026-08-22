@@ -150,6 +150,36 @@ CASES: list[tuple[str, list[str], dict[str, tuple[str, str]]]] = [
         #
         # F_est and the whole T_seg family are UNCHANGED: the post-establishment
         # start state (c*+1) is Ivan's convention and is deliberately frozen.
+        #
+        # SECOND CORRECTION, 2026-08-21 (injection-weight renormalization). The
+        # three establishment values above were recorded while the mutational
+        # injection weights were renormalized by 1 - q0, a subtraction that
+        # cancels catastrophically because q0 = 1 - O(2Nv). At these parameters
+        # (N=5, v=1e-9, so 2Nv = 1e-8) that put a UNIFORM relative error
+        # delta = +1.5774722e-9 on every weight, hence the same common factor on
+        # every weight-integrated quantity (delta/2 on a standard deviation).
+        # delta was measured in exact rational arithmetic on the exact double
+        # inputs, against a bit-exact replication of the binary's log-domain
+        # binom_row pipeline. Because the independent dense reference
+        # (ref_est_full.py) necessarily replicated that same double-precision
+        # 1 - q0 renormalization, its literals inherited the factor.
+        #
+        # The values below are the recorded reference literals with that
+        # exactly-measured factor divided out -- recorded/(1+delta), and
+        # recorded/(1+delta/2) for the standard deviation -- so they retain the
+        # thesis reference's provenance and are NOT read back out of the binary
+        # under test. They agree to all 11 recorded digits with the binary that
+        # renormalizes by the tail's own sum, which is the corroboration, not
+        # the source:
+        #
+        #   quantity     was (carried delta)   now (delta divided out)
+        #   P_est        2.2413131056e-01      2.2413131021e-01
+        #   T_est        5.8389788174e+00      5.8389788082e+00
+        #   T_est_std    3.6052357888e+00      3.6052357860e+00
+        #
+        # F_est and the whole T_seg family are again unchanged, and measurably
+        # so: they are bit-identical across the renormalizer fix because they do
+        # not depend on the injection weights.
         "N=5 ESTABLISHMENT [thesis reference; diverges from wfes2, see notes]",
         # Spelling only: --odds-ratio is long form only since the short-flag
         # canonicalization, because -k is --n-moments (a moment COUNT) in
@@ -159,15 +189,15 @@ CASES: list[tuple[str, list[str], dict[str, tuple[str, str]]]] = [
         ["--establishment", "--odds-ratio", "1.5"],
         {
             "F_est":         ("est_freq", "5.0000000000e-01"),
-            "P_est":         ("P_est", "2.2413131056e-01"),
+            "P_est":         ("P_est", "2.2413131021e-01"),  # was 2.2413131056e-01
             "T_seg":         ("T_seg", "1.1701964839e+01"),
             "T_seg_std":     ("T_seg_std", "9.3571022200e+00"),
             "T_seg_ext":     ("T_seg_ext", "1.3789854846e+01"),
             "T_seg_ext_std": ("T_seg_ext_std", "9.6783118254e+00"),
             "T_seg_fix":     ("T_seg_fix", "1.0843481736e+01"),
             "T_seg_fix_std": ("T_seg_fix_std", "9.0836057920e+00"),
-            "T_est":         ("T_est", "5.8389788174e+00"),
-            "T_est_std":     ("T_est_std", "3.6052357888e+00"),
+            "T_est":         ("T_est", "5.8389788082e+00"),      # was 5.8389788174e+00
+            "T_est_std":     ("T_est_std", "3.6052357860e+00"),  # was 3.6052357888e+00
         },
     ),
 ]

@@ -13,7 +13,10 @@ Contract under test — "refuse, don't substitute":
   * `-v 0` omits N_ext (undefined without recurrent forward mutation) with a
     stderr diagnostic; everything else is still reported;
   * numerical non-regression: for parameter sets the shipped binary handles
-    correctly, every value present in both outputs agrees to 1e-10 relative;
+    correctly, every value present in both outputs agrees to 1e-10 relative --
+    except quantities integrated over the mutational injection distribution,
+    where the shipped reference itself carries a known common-factor error and
+    the documented INTEGRATED_REL_TOL applies instead;
   * independent verification: for two `-p 1` cases the absorption quantities
     are recomputed here from scratch (dense LU with partial pivoting on the
     Wright-Fisher matrix built from the published model definitions) and must
@@ -57,6 +60,31 @@ ABS_FIELDS = ["P_ext", "P_fix", "T_abs", "T_abs_std", "T_ext", "T_ext_std",
 FIX_FIELDS = ["T_fix", "T_std", "rate"]
 PROB_FIELDS = {"P_ext", "P_fix"}
 REL_TOL = 1e-10
+
+# Non-regression tolerance for quantities INTEGRATED over the mutational
+# injection distribution -- i.e. every case that does not pin a starting count
+# with -p.
+#
+# The shipped reference binary renormalizes those injection weights by
+# 1 - q0, where q0 = 1 - O(2Nv) is the count-0 entry. That subtraction cancels
+# catastrophically, so the whole weight vector carries a common relative error
+# bounded by ~eps/(2 * 2Nv) -- and therefore so does every integrated output it
+# produces (P_ext, P_fix, T_abs, T_ext, T_fix, N_ext, rate, ...), which all move
+# together by that one factor (standard deviations by half of it). At this
+# suite's parameters the bound is <= 1.2e-9; the divergences actually measured
+# against the shipped binary are 3.913e-10 at 2N = 200 and 1.238e-10 at
+# 2N = 100 (opposite signs -- the cancelled digits are a rounding die-roll, not
+# a drift). That is the reference's error, not a regression here: this binary
+# renormalizes by the retained tail's own sum, which sums small same-sign
+# numbers and loses nothing.
+#
+# 5e-9 sits above the ~1.2e-9 bound with headroom while staying far below any
+# difference that would signal a real change in the model or the solve. It
+# applies ONLY to the injection-integrated rows: -p-anchored cases and the
+# -v 0 section (no forward mutation, hence no injection to integrate) keep the
+# 1e-10 tolerance below. When a fixed binary becomes the shipped reference,
+# this constant collapses back to REL_TOL.
+INTEGRATED_REL_TOL = 5e-9
 
 # Bare non-finite tokens as C++ iostreams print them (json.load rejects them,
 # but scan the raw text as well so the diagnosis is explicit).
@@ -312,17 +340,22 @@ def section_nonregression(new_bin: Path, shipped: Path, new_outputs):
             check(set(old_res) == set(new_res),
                   f"{label}: healthy case keeps the full field set",
                   f"shipped={sorted(old_res)} new={sorted(new_res)}")
+        # A case that pins its starting count with -p integrates over nothing,
+        # so the shipped binary's injection-weight error cannot reach it and
+        # the tight tolerance applies. Everything else is integrated over the
+        # injection distribution -- see INTEGRATED_REL_TOL.
+        tol = REL_TOL if "-p" in extra else INTEGRATED_REL_TOL
         for f in [f for f in (ABS_FIELDS if mode == "absorption" else FIX_FIELDS)
                   if f in old_res and f in new_res]:
             d = rel_diff(old_res[f], new_res[f])
             if healthy:
-                verdict = "OK" if d <= REL_TOL else "FAIL"
+                verdict = "OK" if d <= tol else "FAIL"
             else:
                 verdict = "n/a (defective shipped baseline)"
             print(f"{label:<24} {f:<10} {old_res[f]:>24.17g} {new_res[f]:>24.17g} "
                   f"{d:>10.2e}  {verdict}")
             if healthy:
-                check(d <= REL_TOL, f"{label}.{f} agrees with shipped to {REL_TOL:g}",
+                check(d <= tol, f"{label}.{f} agrees with shipped to {tol:g}",
                       f"rel diff {d:.3e}")
 
 
