@@ -195,9 +195,23 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
   }
   
   const handleExecute = async () => {
+    // "Fixed p" needs a usable count BEFORE anything is sent: with a blank
+    // or invalid count, commonParams.p resolves to undefined below and --
+    // since initialMode isn't 'integrate' either -- integrationCutoff is
+    // ALSO undefined, so wfafs_stochastic gets neither --initial-count nor
+    // --integration-cutoff and falls back to its own internal
+    // integration-cutoff default, silently integrating over the starting
+    // distribution while the UI still says "Fixed p". Same gate as the
+    // other fixed-count views (WfesSingleViewMantine2, WfesSequentialViewMantine,
+    // WfesSweepViewMantine), using this view's own validatePositiveInteger
+    // (already used for this field's own error state below).
+    if (initialMode === 'fixed' && !validatePositiveInteger(commonParams.p)) {
+      setError('Fixed p needs a valid starting count. Enter one, or switch the initial state to "Integrate over p".')
+      return
+    }
     setIsExecuting(true)
     clearResults()
-    
+
     try {
       // Convert to unscaled values if currently in scaled mode
       let execComponents = components
