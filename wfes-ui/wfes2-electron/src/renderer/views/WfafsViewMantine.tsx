@@ -32,7 +32,8 @@ import {
   validateProbability,
   generateFilename
 } from '../components/shared'
-import { WfafsParams, WfesResultItem } from '../types/wfes'
+import { WfesResultItem } from '../types/wfes'
+import { numOrUndefined, intOrUndefined } from '../utils/numeric'
 import { SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import SwitchingStateDiagram from '../components/shared/SwitchingStateDiagram'
@@ -227,9 +228,19 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
         // Exactly one of the three starting modes reaches the CLI: a fixed
         // count (-p), the mutation-injection integration (-c), or a file
         // (--initial, passed through executionParams below).
+        //
+        // numOrUndefined/intOrUndefined, not the raw strings: buildWfafsArgs
+        // guards both with `!== undefined && !== null`, which a blank string
+        // passes straight through -- the run then sent '--alpha ' and
+        // '--initial-count ' with an empty value token (invisible in the
+        // logged command line, since a joined empty element just leaves an
+        // adjacent flag looking like it follows immediately, but a real,
+        // distinct empty argv element reaches the CLI's parser). Omitting the
+        // flag when blank matches every other view's discipline.
         commonParams: {
           ...commonParams,
-          p: initialMode === 'fixed' ? commonParams.p : undefined
+          a: numOrUndefined(commonParams.a),
+          p: initialMode === 'fixed' ? intOrUndefined(commonParams.p) : undefined
         },
         integrationCutoff: initialMode === 'integrate' ? integrationCutoff : undefined,
         // The write* keys the builder reads, outputDirectory included. The
@@ -366,8 +377,14 @@ const WfafsViewMantine: React.FC<WfafsViewProps> = ({ onBack, hideBackButton = f
     parts.push(`--dominance ${components.map(cp => parseFloat(cp.h) || 0.5).join(',')}`)
     parts.push(`--backward-mu ${components.map((cp, i) => raw(cp.u, 4, Ns[i])).join(',')}`)
     parts.push(`--forward-mu ${components.map((cp, i) => raw(cp.v, 4, Ns[i])).join(',')}`)
-    parts.push(`--alpha ${commonParams.a}`)
-    if (initialMode === 'fixed') parts.push(`--initial-count ${commonParams.p}`)
+    // Omitted when blank, matching the run's numOrUndefined/intOrUndefined --
+    // see the comment in handleExecute.
+    const aNum = numOrUndefined(commonParams.a)
+    if (aNum !== undefined) parts.push(`--alpha ${aNum}`)
+    if (initialMode === 'fixed') {
+      const p = intOrUndefined(commonParams.p)
+      if (p !== undefined) parts.push(`--initial-count ${p}`)
+    }
     if (initialMode === 'integrate') parts.push(`--integration-cutoff ${integrationCutoff}`)
     if (commonParams.noProj) parts.push('--no-project')
     // Order below mirrors buildWfafsArgs exactly: threads and library, then

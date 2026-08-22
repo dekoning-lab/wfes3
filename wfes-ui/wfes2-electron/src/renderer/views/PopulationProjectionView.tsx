@@ -33,6 +33,7 @@ import InitialStateSelector, { InitialMode } from '../components/shared/InitialS
 import { AboutContentPanel, SolverWarnings } from '../components/shared'
 import { saveTextFile } from '../utils/saveFile'
 import { formatQuantity } from '../utils/quantityLabels'
+import { intOrUndefined } from '../utils/numeric'
 
 interface PopulationProjectionViewProps {
   onBack: () => void
@@ -143,7 +144,15 @@ const PopulationProjectionView: React.FC<PopulationProjectionViewProps> = ({
     const parts = ['wfafs_deterministic']
     if (initialMode === 'file' && initialFile) parts.push(`--initial ${initialFile}`)
     else if (initialMode === 'integrate') parts.push(`-c ${integrationCutoff}`)
-    else parts.push(`-p ${parseInt(startingCopies) || 1}`)
+    else {
+      // Omit -p when blank rather than silently substituting 1: countError
+      // above already tells the user to enter a count (a red border, not a
+      // gate -- this view still lets the harness call Execute directly), but
+      // the run and this preview must at least agree on what "blank" means
+      // instead of both quietly claiming p=1.
+      const p = intOrUndefined(startingCopies)
+      if (p !== undefined) parts.push(`-p ${p}`)
+    }
     parts.push(`--pop-sizes ${N1},${N2}`)
     parts.push('--generations 0,0')
     parts.push(`--selection ${sr},${sr}`)

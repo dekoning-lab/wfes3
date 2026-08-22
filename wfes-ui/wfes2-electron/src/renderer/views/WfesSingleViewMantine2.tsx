@@ -287,6 +287,19 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   ]
 
   const executeModel = async () => {
+    // Fixed-p mode needs a usable count BEFORE anything is sent: with a blank
+    // or invalid p, startingCopies below resolves to undefined, but
+    // integration_cutoff is still sent for every non-fundamental mode (the
+    // CLI's own starting-state precedence normally makes that harmless) -- so
+    // a blank count here would carry only --integration-cutoff and the CLI
+    // would silently integrate over starting copies while the UI still says
+    // "Fixed p". Same gate as WfesSequentialViewMantine, using this view's own
+    // mode-aware validity (validateStartingCopies, not validatePositiveInteger:
+    // p = 0 is legal under the Substitution Model).
+    if (canUseStartingState && initialMode === 'fixed' && !validateStartingCopies()) {
+      alert('Fixed p needs a valid starting count. Enter one, or switch the initial state to "Integrate over p".')
+      return
+    }
     setIsExecuting(true)
     clearResults()
     const startTime = Date.now()
@@ -1268,28 +1281,30 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                 </Text>
               </div>
               <div>
-                <Checkbox 
-                  label="Write E" 
-                  checked={writeE} 
+                <Checkbox
+                  label="Write E"
+                  checked={writeE}
                   disabled={!canWriteE}
-                  onChange={(e) => setWriteE(e.currentTarget.checked)} 
+                  // The reason lives in the Checkbox's own description prop,
+                  // not a sibling <Text>, so the preview-harness's control
+                  // recorder (which reads props.description) can see it --
+                  // see verify-previews.mjs's disabledControls check.
+                  description={canWriteE
+                    ? 'Equilibrium allele frequency distribution'
+                    : 'Equilibrium allele frequency distribution \u2014 requires the Equilibrium model'}
+                  onChange={(e) => setWriteE(e.currentTarget.checked)}
                 />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Equilibrium allele frequency distribution
-                  {!canWriteE && ' \u2014 requires the Equilibrium model'}
-                </Text>
               </div>
               <div>
-                <Checkbox 
-                  label="Write V" 
-                  checked={writeV} 
+                <Checkbox
+                  label="Write V"
+                  checked={writeV}
                   disabled={!canWriteV}
-                  onChange={(e) => setWriteV(e.currentTarget.checked)} 
+                  description={canWriteV
+                    ? 'Variance of sojourn times: V = N(2N_dg - I) - N_sq'
+                    : 'Variance of sojourn times: V = N(2N_dg - I) - N_sq \u2014 requires the Fundamental model'}
+                  onChange={(e) => setWriteV(e.currentTarget.checked)}
                 />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Variance of sojourn times: V = N(2N_dg - I) - N_sq
-                  {!canWriteV && ' \u2014 requires the Fundamental model'}
-                </Text>
               </div>
               {/* No "Write Res" here any more: wfes_single (like every WFES
                   binary) declares no results-summary flag, so that checkbox

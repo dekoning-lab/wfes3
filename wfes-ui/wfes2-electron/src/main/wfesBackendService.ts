@@ -448,7 +448,12 @@ export class WfesBackendService {
     } else if (params.initialMode === 'integrate') {
       args.push('-c', String(params.integrationCutoff ?? 1e-10))
     } else {
-      args.push('-p', String(parseInt(params.startingCopies) || 1))
+      // Omit -p when blank/non-numeric rather than silently substituting 1
+      // -- the view's preview mirrors this (see its buildCommandLine), so
+      // the two agree on what a blank count means instead of both quietly
+      // claiming p=1.
+      const p = parseInt(params.startingCopies)
+      if (Number.isFinite(p)) args.push('-p', String(p))
     }
 
     // The parameters apply to the source population, whose matrix supplies the
@@ -506,7 +511,6 @@ export class WfesBackendService {
   private outputPath(params: any, tool: string, label: string): string {
     const dir =
       params.output_options?.outputDirectory ||
-      params.output_directory ||
       app.getPath('downloads')
     const ext = label === 'Q' ? 'mtx' : 'csv'
     return join(dir, `${tool}_${label}.${ext}`)

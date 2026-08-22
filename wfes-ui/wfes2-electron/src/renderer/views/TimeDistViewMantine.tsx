@@ -32,6 +32,7 @@ import {
 } from '../components/shared'
 import { TimeDistParams, WfesResultItem } from '../types/wfes'
 import { qtyRow, sdRow } from '../utils/quantityLabels'
+import { numOrUndefined } from '../utils/numeric'
 import { wfesService } from '../services/wfesService'
 import TimeDistChartModal from '../components/TimeDistChartModal'
 import { SolverWarnings } from '../components/shared'
@@ -197,8 +198,12 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
       
         initial: initialMode === 'file' ? (initialDistFile || undefined) : undefined,
         mode,
+        // a (alpha) through numOrUndefined: buildTimeDistArgs's guard is
+        // `!== undefined`, which a blank STRING passes (it is defined, just
+        // empty), so a cleared field used to reach the CLI as a bare
+        // '--alpha' with an empty value token instead of omitting the flag.
         populationParams: {
-          N: populationSize, a, l, c, m
+          N: populationSize, a: numOrUndefined(a), l, c, m
         },
         mutationParams: processedMutationParams,
         selectionParams: processedSelectionParams,
@@ -410,7 +415,9 @@ const TimeDistViewMantine: React.FC<TimeDistViewProps> = ({ onBack, hideBackButt
     const rawV = populationScaled ? (parseFloat(v) || 0) / (4 * N) : (parseFloat(v) || 0)
     if (initialMode === 'file' && initialDistFile) parts.push(`--initial ${initialDistFile}`)
     parts.push(`--pop-size ${N}`)
-    parts.push(`--alpha ${a}`)
+    // Omitted when blank, matching the run's numOrUndefined(a) above.
+    const aNum = numOrUndefined(a)
+    if (aNum !== undefined) parts.push(`--alpha ${aNum}`)
     parts.push(`--block-size ${l}`)
     parts.push(`--distribution-cutoff ${c}`)
     parts.push(`--max-t ${m}`)

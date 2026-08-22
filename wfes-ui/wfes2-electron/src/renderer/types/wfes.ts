@@ -111,32 +111,10 @@ export interface WfesSequentialParams {
   }>
 }
 
-export interface PhaseTypeParams {
-  mode: 'distribution' | 'moments'
-  populationSize: number
-  selectionCoefficient: number
-  dominanceCoefficient: number
-  mutationRateForward: number
-  mutationRateBackward: number
-}
-
 export interface TimeDistParams extends WfesBaseParams {
   generations: number
   startingCopies?: number
   conditional?: boolean
-}
-
-export interface WfafsParams {
-  populationSize: number
-  sampleSize: number
-  selectionCoefficient?: number
-  dominanceCoefficient?: number
-  mutationRateForward?: number
-  mutationRateBackward?: number
-}
-
-export interface WfafdParams extends WfafsParams {
-  // Deterministic version has same params as stochastic
 }
 
 // Validation types

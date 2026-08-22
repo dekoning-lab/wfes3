@@ -37,6 +37,7 @@ import {
 } from '../components/shared'
 import { WfesSwitchingParams, WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
+import { numOrUndefined } from '../utils/numeric'
 import { SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import SwitchingRatesMatrix from '../components/SwitchingRatesMatrix'
@@ -378,10 +379,16 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
         // (-c) is not applicable to --fixation", exit 1), so the flag is not
         // sent there; the field below is disabled in that mode for the same
         // reason.
-        integration_cutoff: modelType === 'absorption' ? parseFloat(integrationCutoff) : undefined,
+        //
+        // numOrUndefined, not parseFloat: a blank field must OMIT the flag
+        // (letting the CLI's own default apply) rather than send the literal
+        // string "NaN" -- validateScientificNotation treats '' as valid (see
+        // its own comment), so a blank field triggers no error above and this
+        // was reaching the CLI unchanged.
+        integration_cutoff: modelType === 'absorption' ? numOrUndefined(integrationCutoff) : undefined,
 
         // Model parameters
-        alpha: parseFloat(alpha),
+        alpha: numOrUndefined(alpha),
         model_type: modelType,
         
         // Output options
@@ -660,13 +667,17 @@ const WfesSwitchingViewMantine: React.FC<WfesSwitchingViewProps> = ({ onBack, hi
     const matrixStr = matrix.map(row => row.join(',')).join(';')
     parts.push(`--switching "${matrixStr}"`)
 
-    // Alpha
-    parts.push(`--alpha ${alpha}`)
+    // Alpha -- omitted when blank, matching the run: numOrUndefined(alpha)
+    // is undefined there, and buildWfesSwitchingArgs sends nothing.
+    const alphaNum = numOrUndefined(alpha)
+    if (alphaNum !== undefined) parts.push(`--alpha ${alphaNum}`)
 
     // Integration cutoff -- absorption only, same gate as the run: under
-    // --fixation the CLI refuses a non-default -c (exit 1).
+    // --fixation the CLI refuses a non-default -c (exit 1). Omitted when
+    // blank for the same reason as alpha above.
     if (modelType === 'absorption') {
-      parts.push(`--integration-cutoff ${integrationCutoff}`)
+      const cutoffNum = numOrUndefined(integrationCutoff)
+      if (cutoffNum !== undefined) parts.push(`--integration-cutoff ${cutoffNum}`)
     }
 
     // Execution options -- ordered as buildWfesSwitchingArgs emits them

@@ -473,7 +473,12 @@ function setupIpcHandlers(): void {
         initial: params.initial,
         mode: params.mode, // 'dist' or 'moments'
         population_size: parseInt(params.populationParams.N),
-        starting_frequency: parseFloat(params.populationParams.a),
+        // firstFinite, not a bare parseFloat: a blank field is a defined but
+        // empty string, which passed buildPhaseTypeArgs's `!== undefined`
+        // guard unchanged and sent the literal "--alpha NaN" -- see the
+        // comment on firstFinite. 1e-20 matches the CLI's own default, the
+        // same fallback used for alpha in the Single and Sweep handlers above.
+        starting_frequency: firstFinite(params.populationParams.a, 1e-20),
         // Mode-specific population parameters
         ...(params.mode === 'dist' ? {
           distribution_cutoff: parseFloat(params.populationParams.c),

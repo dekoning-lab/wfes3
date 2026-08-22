@@ -34,8 +34,9 @@ import {
   validateProbability,
   generateFilename
 } from '../components/shared'
-import { WfafdParams, WfesResultItem } from '../types/wfes'
+import { WfesResultItem } from '../types/wfes'
 import { wfesService } from '../services/wfesService'
+import { numOrUndefined, intOrUndefined } from '../utils/numeric'
 import { SolverWarnings } from '../components/shared'
 import AboutContentPanel from '../components/AboutContentPanel'
 import SwitchingStateDiagram from '../components/shared/SwitchingStateDiagram'
@@ -180,7 +181,14 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
       const N = parseInt(components[0].N)
       // buildWfafdArgs passes this straight to -p, an allele COUNT. Only the
       // fixed mode sends it; integrate sends the cutoff instead.
-      const startingFreq = initialMode === 'fixed' ? parseInt(startingCopies) : undefined
+      // intOrUndefined, not a bare parseInt: buildWfafdArgs's guard is
+      // `!== undefined && !== null`, which a bare NaN (blank field) passes
+      // straight through -- the run then sent the literal "-p NaN" while the
+      // preview, using `parseInt(startingCopies) || 0`, showed "-p 0"; the
+      // two disagreed on what blank meant. Omitting the flag when blank
+      // matches every other view's discipline and lets the CLI's own default
+      // apply, so preview and argv agree again.
+      const startingFreq = initialMode === 'fixed' ? intOrUndefined(startingCopies) : undefined
 
       // Prepare parameters for backend. The epoch list is the state.
       const params = {
@@ -190,7 +198,10 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
         startingFrequency: startingFreq,
         integrationCutoff: initialMode === 'integrate' ? integrationCutoff : undefined,
         components,
-        alpha,
+        // numOrUndefined, not the raw string: buildWfafdArgs's guard is
+        // `!== undefined`, which a blank field passes unchanged (defined,
+        // just empty) and sends a bare '--alpha' with no value token.
+        alpha: numOrUndefined(alpha),
         executionParams: {
           // No force: wfafs_deterministic does not declare --force, and the
           // drawer disables the checkbox with that reason.
@@ -333,7 +344,12 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
     // under the preview was unkeepable. Verified against the spawned command.
     const parts = ['wfafs_deterministic']
     const N = parseInt(components[0]?.N) || 100
-    if (initialMode === 'fixed') parts.push(`-p ${parseInt(startingCopies) || 0}`)
+    // Mirrors the run's intOrUndefined(startingCopies): omit -p when blank
+    // rather than inventing a value the run does not send.
+    if (initialMode === 'fixed') {
+      const p = intOrUndefined(startingCopies)
+      if (p !== undefined) parts.push(`-p ${p}`)
+    }
     if (initialMode === 'integrate') parts.push(`-c ${integrationCutoff}`)
     parts.push(`--pop-sizes ${components.map(c => parseInt(c.N) || 100).join(',')}`)
     parts.push(`--generations ${components.map(c => parseInt(c.G) || 0).join(',')}`)
@@ -346,7 +362,9 @@ const WfafdViewMantine: React.FC<WfafdViewProps> = ({ onBack, hideBackButton = f
     parts.push(`--dominance ${components.map(c => parseFloat(c.h) || 0.5).join(',')}`)
     parts.push(`--backward-mu ${per('u', 4)}`)
     parts.push(`--forward-mu ${per('v', 4)}`)
-    parts.push(`--alpha ${alpha}`)
+    // Omitted when blank, matching the run's numOrUndefined(alpha) above.
+    const alphaNum = numOrUndefined(alpha)
+    if (alphaNum !== undefined) parts.push(`--alpha ${alphaNum}`)
     // No --force line: wfafs_deterministic does not declare the flag, and
     // the previewed command used to exit 1 when pasted into a terminal.
     parts.push(`--num-threads ${executionOptions.threads}`)

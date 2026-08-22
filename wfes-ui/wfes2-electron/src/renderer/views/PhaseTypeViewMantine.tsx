@@ -35,6 +35,7 @@ import {
 } from '../components/shared'
 import { WfesOutputOptions, WfesResultItem } from '../types/wfes'
 import { qtyRow, sdRow } from '../utils/quantityLabels'
+import { numOrUndefined } from '../utils/numeric'
 import { wfesService } from '../services/wfesService'
 import TimeToSubstitutionChartModal from '../components/TimeToSubstitutionChartModal'
 import { SolverWarnings } from '../components/shared'
@@ -311,7 +312,12 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
             v: comp.v
           })),
           populationParams: {
-            a: a,
+            // numOrUndefined: buildTimeDistArgs's SGV branch guards with
+            // `!== undefined`, which a blank STRING passes unchanged (it is
+            // defined, just empty) -- a cleared field used to reach the CLI
+            // as a bare '--alpha' with no value token instead of omitting
+            // the flag, exactly the bug this view's non-SGV path also had.
+            a: numOrUndefined(a),
             l: (1 / parseFloat(oneOverLambda)).toString(),
             c: c,
             m: m,
@@ -553,7 +559,10 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
       parts.push(`--backward-mu ${comp.map(x => x.u).join(',')}`)
       parts.push(`--forward-mu ${comp.map(x => x.v).join(',')}`)
       parts.push(`--lambda ${1 / (parseFloat(oneOverLambda) || 1000)}`)
-      parts.push(`--alpha ${a}`)
+      // Omitted when blank, matching the run's numOrUndefined(a) above --
+      // buildTimeDistArgs's SGV branch omits --alpha entirely when undefined.
+      const aNumSgv = numOrUndefined(a)
+      if (aNumSgv !== undefined) parts.push(`--alpha ${aNumSgv}`)
       parts.push(`--distribution-cutoff ${c}`)
       parts.push(`--max-t ${m}`)
       parts.push(`--num-threads ${executionOptions.threads}`)
@@ -583,7 +592,10 @@ const PhaseTypeViewMantine: React.FC<PhaseTypeViewProps> = ({ onBack, hideBackBu
     parts.push(`--forward-mu ${rawV}`)
     // Excluding recurrent mutation is a real choice on phase_type_moments (-m).
     if (momentsOnly && !r) parts.push('--no-recurrent-mu')
-    parts.push(`--alpha ${a}`)
+    // Matches the run's firstFinite(params.populationParams.a, 1e-20) in the
+    // wfes:phaseType:execute handler: a blank field runs (and previews) as
+    // the CLI's own default rather than the literal string "NaN".
+    parts.push(`--alpha ${numOrUndefined(a) ?? 1e-20}`)
     parts.push(`--num-threads ${executionOptions.threads}`)
     // Only phase_type_moments declares --force; phase_type_dist exits 1 on it.
     if (momentsOnly && executionOptions.force) parts.push('--force')

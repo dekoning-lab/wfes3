@@ -198,6 +198,19 @@ const WfesSweepViewMantine: React.FC<WfesSweepViewProps> = ({ onBack, hideBackBu
   }
   
   const handleExecute = async () => {
+    // Fixed-p mode needs a usable count BEFORE anything is sent: with a blank
+    // or non-numeric p, starting_copies below resolves to undefined, but
+    // integration_cutoff is sent unconditionally in every mode (the CLI's own
+    // fixed-vs-integrate precedence normally makes that harmless) -- so a
+    // blank count here would carry only --integration-cutoff and the CLI
+    // would silently integrate over starting copies while the UI still says
+    // "Fixed p". Same gate as WfesSequentialViewMantine, using this view's
+    // own p=0..2N validity (unlike that view, 0 is a legal starting count
+    // here -- phase 1 keeps count 0 transient).
+    if (initialMode === 'fixed' && !validateStartingCopiesSweep(startingCopies)) {
+      setError('Fixed p needs a whole number of starting copies (0 to 2N). Enter one, or switch the initial state to "Integrate over p".')
+      return
+    }
     setIsExecuting(true)
     clearResults()
 
