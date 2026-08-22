@@ -50,17 +50,22 @@ PASSED 41/41 checks
 — a clean pass, six checks lighter. The runner reports:
 
 ```
-test_degenerate_wfafs_sweep.py      47     41     0    0.5s  CHECKS LOST (6 fewer than recorded)
+test_degenerate_wfafs_sweep.py      47     41     0    1.2s  CHECKS LOST (6 fewer ran than recorded)
 ```
 
 Both directions fail:
 
 | Condition | Status | Meaning |
 |---|---|---|
-| fewer checks than recorded | `CHECKS LOST` | the dangerous direction — a section stopped running, or checks were deleted |
-| more checks than recorded | `COUNT ROSE` | coverage was added; record it in `EXPECTED` in the same commit |
+| fewer checks **ran** than recorded | `CHECKS LOST` | the dangerous direction — a section stopped running, or checks were deleted |
+| more checks ran than recorded | `COUNT ROSE` | coverage was added; record it in `EXPECTED` in the same commit |
+| a check ran and failed | `N FAILING CHECKS` | an ordinary regression — reported on its own, *not* as a lost check |
 | summary line unparseable | `UNPARSEABLE SUMMARY` | a suite changed its final line; teach the runner, don't let it contribute zero |
 | exit code 2 | `COULD NOT RUN` | missing binary or missing required reference — not a pass |
+
+The comparison is against checks **run** (passed + failed), not checks passed,
+so a suite with one genuine failure is not also accused of having lost a check
+— that would point the reader at the wrong problem.
 
 Exact match rather than "at least N" is deliberate: an at-least rule lets you
 delete five real checks and add five trivial ones and see nothing.

@@ -196,12 +196,23 @@ def run(tool: str, args: list[str]) -> subprocess.CompletedProcess:
                           text=True, timeout=600)
 
 
-def results(tool: str, args: list[str], label: str):
-    """Parse a healthy run's results object, or None (having failed a check)."""
+def results(tool: str, args: list[str], label: str, want_stderr=None):
+    """Parse a healthy run's results object, or None (having failed a check).
+
+    `want_stderr="empty"` additionally asserts the run said nothing at all --
+    see the module docstring's note on why every case here is expected silent.
+    The assertion is made on THIS process's stderr rather than by re-running
+    the tool: a second invocation would be a second measurement, and asserting
+    a property of run A against the output of run B is exactly the kind of
+    seam that makes a suite quietly stop meaning what it says.
+    """
     proc = run(tool, args + ["--json"])
     if not check(f"{label}: exits 0", proc.returncode == 0,
                  f"exit {proc.returncode}; stderr: {proc.stderr.strip()[:300]}"):
         return None
+    if want_stderr == "empty":
+        check(f"{label}: healthy run writes nothing to stderr",
+              proc.stderr.strip() == "", proc.stderr.strip()[:300])
     # stdout only -- see the stderr-scope convention in the module docstring.
     if not check(f"{label}: no bare nan/inf token on stdout",
                  BAD_TOKEN.search(proc.stdout) is None,
@@ -532,13 +543,9 @@ def test_recorded_values() -> None:
     print(f"[3] recorded values ({len(RECORDED)} cases, "
           f"{REL_TOL:.0e} relative)")
     for name, tool, args, expected in RECORDED:
-        res = results(tool, args, name)
+        res = results(tool, args, name, want_stderr="empty")
         if res is None:
             continue
-        # A healthy case says nothing on stderr; see the docstring's note.
-        proc = run(tool, args + ["--json"])
-        check(f"{name}: healthy run writes nothing to stderr",
-              proc.stderr.strip() == "", proc.stderr.strip()[:300])
         # Every recorded field must still be published...
         missing = [k for k in expected if k not in res]
         if not check(f"{name}: publishes all {len(expected)} recorded fields",

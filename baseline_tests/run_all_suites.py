@@ -28,11 +28,15 @@ did yesterday. Green stays green while coverage quietly falls.
 So EXPECTED below records each suite's check count, and a mismatch is a
 failure:
 
-  * FEWER checks than recorded is the dangerous direction and is reported as
-    CHECKS LOST. Nothing legitimate silently removes checks. Either a section
-    stopped running (look for an early return, a skipped optional reference,
-    or a `continue` in a loop that used to complete) or checks were deleted;
-    in both cases the suite is no longer testing what the table says.
+  * FEWER checks RAN than recorded is the dangerous direction and is reported
+    as CHECKS LOST. Nothing legitimate silently removes checks. Either a
+    section stopped running (look for an early return, a skipped optional
+    reference, or a `continue` in a loop that used to complete) or checks were
+    deleted; in both cases the suite is no longer testing what the table says.
+    Note that the comparison is against checks RUN (passed + failed), not
+    checks passed -- a suite with one genuine failure has not lost anything,
+    and reporting it as though it had would point the reader at the wrong
+    problem.
 
   * MORE checks than recorded also fails, as COUNT ROSE. That is not a bug --
     someone added coverage, which is good -- but it must be recorded here
@@ -114,7 +118,7 @@ def _pass_fail(text: str):
 
 def _checks_failed(text: str):
     """`294 checks, 0 failed` / `37 checks, 0 failure(s)`."""
-    m = re.search(r"^(\d+) checks, (\d+) (?:failed|failures?\(s\)|failure\(s\))\s*$",
+    m = re.search(r"^(\d+) checks, (\d+) (?:failed|failure\(s\))\s*$",
                   text, re.M)
     if not m:
         return None
@@ -155,7 +159,8 @@ def _n_passed_m_failed(text: str):
 # --------------------------------------------------------------------------
 # THE CONTRACT.
 #
-# (script, parser, expected passing checks)
+# (script, parser, expected number of checks RUN -- passed + failed, so a
+#  genuine failure does not read as a lost check)
 #
 # Recorded 2026-08-21 from commit 28cd2e4 (branch integrity-fixes) built
 # Release into wfes-cli/build-c6, with /Applications/WFES3.app v3.0.0-beta.3
@@ -247,12 +252,19 @@ def run_suite(script: str, parser, expected: int, bin_dir: Path,
         res.problems.append(f"nonzero exit ({res.returncode}) with no failing "
                             f"check reported")
 
-    if res.passed < res.expected:
+    # The count contract is about checks that RAN, not checks that passed.
+    # Comparing res.passed against the target would report a suite with one
+    # genuine failure as having "lost" a check, which is a different and much
+    # more alarming diagnosis than the truth. Total = passed + failed isolates
+    # the two: a failing check is a FAILING CHECK, and only a check that never
+    # ran at all is a lost one.
+    ran = res.passed + res.failed
+    if ran < res.expected:
         res.problems.append(
-            f"CHECKS LOST ({res.expected - res.passed} fewer than recorded)")
-    elif res.passed > res.expected:
+            f"CHECKS LOST ({res.expected - ran} fewer ran than recorded)")
+    elif ran > res.expected:
         res.problems.append(
-            f"COUNT ROSE (+{res.passed - res.expected}); record it in EXPECTED")
+            f"COUNT ROSE (+{ran - res.expected}); record it in EXPECTED")
 
     return res
 
