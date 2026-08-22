@@ -428,18 +428,23 @@ int main(int argc, char const *argv[]) {
         // rescaled ones, which is what makes this site easy to miss:
         // `-N 1000 -G 10 -f 100 -u 1e-17` writes a completely CLEAN Q
         // (u*f = 1e-15 passes (A)) and produced nan in the spectrum anyway.
-        // The factor test gates it so that an f == 1 run is not refused for a
-        // matrix it never builds -- it must match the condition on the
-        // projection block itself, at the bottom of main().
-        {
+        //
+        // The guard must fire on exactly the runs that build that second
+        // matrix and no others: an f == 1 run must not be refused for a matrix
+        // it never builds, and an f != 1 run must not slip past. Whether the
+        // matrix gets built is decided ~160 lines below, at the projection
+        // block near the bottom of main(). Two independently written `!= 1.0`
+        // tests would state that agreement in a comment and rely on both being
+        // edited together; one shared predicate makes it structural. Both
+        // sites read projects_up -- do not reintroduce a second test.
+        const bool projects_up = (factors(n_models - 1) != 1.0);
+        if (projects_up) {
             const llong lt = n_models - 1;
-            if (factors(lt) != 1.0) {
-                require_usable_matrix(population_sizes(lt), s_unsc(lt), h(lt),
-                                      u_unsc(lt), v_unsc(lt),
-                                      "up-projection (model " +
-                                      std::to_string(lt + 1) +
-                                      ", rates as typed, NOT -f-rescaled)");
-            }
+            require_usable_matrix(population_sizes(lt), s_unsc(lt), h(lt),
+                                  u_unsc(lt), v_unsc(lt),
+                                  "up-projection (model " +
+                                  std::to_string(lt + 1) +
+                                  ", rates as typed, NOT -f-rescaled)");
         }
 
         // Set thread count
@@ -611,8 +616,13 @@ int main(int argc, char const *argv[]) {
         // scaled-size spectrum rather than the full-resolution one its help
         // promises. The Qt-era wfafs.cpp gates only on the factor; that is the
         // behaviour restored here. Runs without the flag are unaffected.
+        //
+        // projects_up is the same predicate the psi guard (B) above is gated
+        // on, computed once near that guard. The two must agree exactly -- the
+        // guard exists to keep this block from building a nan-bearing matrix
+        // -- so they read one bool rather than each testing the factor.
         llong lt = n_models - 1;
-        if (factors[lt] != 1.0) {
+        if (projects_up) {
             llong n = 2 * population_sizes[lt] + 1;
             llong m = 2 * static_cast<llong>(population_sizes[lt] * factors[lt]) + 1;
             
