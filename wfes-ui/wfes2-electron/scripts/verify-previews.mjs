@@ -10,10 +10,11 @@
  *      absolute paths);
  *   2. toggling a control changes the spawned argv in exactly the declared
  *      way (or the control is rendered disabled with a reason);
- *   3. every flag in both the preview and the argv exists in the spawned
- *      binary's --help, and none is on that binary's runtime-refusal list
- *      (flags the parser accepts and the tool then rejects, e.g.
- *      wfafs_stochastic --output-R, or wfes_switching -c under --fixation).
+ *   3. every flag in the spawned argv exists in that binary's --help, and
+ *      none is on its runtime-refusal list (flags the parser accepts and the
+ *      tool then rejects, e.g. wfafs_stochastic --output-R, or
+ *      wfes_switching -c under --fixation) -- checked on the argv alone; the
+ *      string-equality in (1) is what covers the preview.
  *
  * Two modes:
  *
@@ -184,6 +185,60 @@ function checkFlags(label, bin, cmdTokens) {
 }
 
 // ---------------------------------------------------------------------------
+// T5c item 2: control -> state assertion.
+//
+// Every probe above proves the STATE it patches reaches the argv. That is
+// not the same claim as "the control the user sees is the one wired to that
+// state" -- a deleted drawer row, a relabelled checkbox, or a checkbox that
+// reads/writes the WRONG key can all still pass the argv check, because the
+// override patches the state directly rather than going through the
+// control. assertControlWired closes that gap: it requires a control
+// rendered under the expected label, enabled, and showing the toggled
+// value -- checked/value, whichever the control kind has.
+// ---------------------------------------------------------------------------
+
+/**
+ * For a stateProbes probe, the {label, key, target} the rendered control
+ * must show after the probe's own overrides are applied. Only the LAST
+ * override carrying a `.patch` is used -- the others (if any) are mode
+ * selectors like `{ str: 'phase-type-dist', to: 'phase-type-dist-sgv' }`
+ * that pick which binary runs, not the control under test.
+ */
+function controlTargetFromOverrides(overrides) {
+  const patchOverride = [...(overrides ?? [])].reverse().find((o) => o.patch)
+  if (!patchOverride) return null
+  const entries = Object.entries(patchOverride.patch)
+  if (entries.length === 0) return null
+  const [key, target] = entries[entries.length - 1]
+  return { key, target }
+}
+
+/**
+ * label: the control's rendered label (probe.controlLabel ?? probe.control).
+ * target: the value the control should show post-toggle -- a boolean checks
+ *   against the control's `checked` (Checkbox/Switch), anything else against
+ *   its `value` (Select/SegmentedControl).
+ */
+function assertControlWired(where, label, target, controls) {
+  const ctrl = controls.find((c) => c.label === label)
+  if (!ctrl) {
+    fail(`${where}: no control labelled ${JSON.stringify(label)} is rendered (deleted row, or relabelled?)`)
+    return
+  }
+  if (ctrl.disabled) {
+    fail(`${where}: control ${JSON.stringify(label)} is rendered disabled, not toggled`)
+    return
+  }
+  const field = typeof target === 'boolean' ? 'checked' : 'value'
+  const actual = ctrl[field]
+  if (actual !== target) {
+    fail(`${where}: control ${JSON.stringify(label)} renders ${field}=${JSON.stringify(actual)}, expected ${JSON.stringify(target)} (bound to the wrong key?)`)
+    return
+  }
+  ok(`${where}: control ${JSON.stringify(label)} renders the toggled state`)
+}
+
+// ---------------------------------------------------------------------------
 // Fixture mode
 // ---------------------------------------------------------------------------
 
@@ -287,6 +342,16 @@ async function fixtureMode() {
       spawned.push(first.slice('Executing: '.length))
     }
   }
+  // The stubbed spawn (above) closes with empty stdout, so every probe's own
+  // IPC handler fails to parse a JSON result and logs that failure via
+  // console.error before returning success:false -- expected here, and
+  // reported nowhere the harness reads from, but it drowns the OK/FAIL
+  // lines in ~1 line of "Failed to parse JSON output" noise per check.
+  // Silenced for the duration of fixture mode only; esbuild's own stderr
+  // (a real build failure) goes straight to the inherited fd above and
+  // never passes through this.
+  const realError = console.error
+  console.error = () => {}
   const say = (...a) => realLog(...a)
 
   require_(mainBundle)
@@ -338,6 +403,10 @@ async function fixtureMode() {
    *   { str: from, to }                   -- a distinctive string initializer
    *   { objKey: k, patch: {...} }         -- an object initializer carrying k
    *   { boolNth: v, occurrence: n, to }   -- the n-th `v`-valued initializer
+   *   { strNth: v, occurrence: n, to }    -- the n-th `v`-valued STRING
+   *                                          initializer, for a default (e.g.
+   *                                          '0') shared by more than one
+   *                                          field in the same view
    */
   const makeUseState = (overrides) => {
     const counters = new Map()
@@ -348,6 +417,10 @@ async function fixtureMode() {
         else if (o.objKey && value && typeof value === 'object' && !Array.isArray(value) && o.objKey in value) {
           value = { ...value, ...o.patch }
         } else if (o.boolNth !== undefined && value === o.boolNth) {
+          const seen = counters.get(o) ?? 0
+          counters.set(o, seen + 1)
+          if (seen === o.occurrence) value = o.to
+        } else if (o.strNth !== undefined && value === o.strNth) {
           const seen = counters.get(o) ?? 0
           counters.set(o, seen + 1)
           if (seen === o.occurrence) value = o.to
@@ -459,7 +532,21 @@ async function fixtureMode() {
         { name: 'establishment (initialMode stuck on file)',
           overrides: [{ str: 'absorption', to: 'establishment' }, { str: 'fixed', to: 'file' }] },
         { name: 'library ParU', overrides: [{ str: 'Accelerate', to: 'ParU' }],
-          base: 'absorption/fixed (default)', adds: ['ParU'] }
+          base: 'absorption/fixed (default)', adds: ['ParU'] },
+        // T5c item 3: alpha omitted at its own CLI default is already this
+        // state's behaviour (see buildCommandLine's `alphaVal !== 1e-20`
+        // gate and buildWfesSingleArgs's matching one) -- a blank field
+        // resolves to the same 1e-20 and so must produce the SAME argv as
+        // the default state, preview included. Guards against a blank
+        // field instead reaching the CLI as the literal string "NaN".
+        { name: 'blank alpha', overrides: [{ str: '1e-20', to: '' }] }
+      ],
+      // T5c item 1: the same silent-model-swap gate as WfesSequentialViewMantine
+      // (and, as of this task, WfesSweepViewMantine) -- "Fixed p" with a blank
+      // count must refuse to run rather than send --integration-cutoff alone
+      // while the UI still says "Fixed p".
+      refusalProbes: [
+        { name: 'fixed p with blank count refuses to run', overrides: [{ str: '1', to: '' }] }
       ],
       paramsProbes: [
         { control: 'Write Q', path: 'outputOptions.writeQ', value: true, adds: ['--output-Q'] },
@@ -469,8 +556,8 @@ async function fixtureMode() {
         { control: 'Write N_Ext', path: 'outputOptions.writeNExt', value: true, adds: ['--output-N-ext'] },
         { control: 'Write N_Fix', path: 'outputOptions.writeNFix', value: true, adds: ['--output-N-fix'] },
         { control: 'Write I', path: 'outputOptions.writeI', value: true, adds: ['--output-I'] },
-        { control: 'Write E (equilibrium)', state: 'equilibrium', path: 'outputOptions.writeE', value: true, adds: ['--output-E'] },
-        { control: 'Write V (fundamental)', state: 'fundamental', path: 'outputOptions.writeV', value: true, adds: ['--output-V'] },
+        { control: 'Write E (equilibrium)', controlLabel: 'Write E', state: 'equilibrium', path: 'outputOptions.writeE', value: true, adds: ['--output-E'] },
+        { control: 'Write V (fundamental)', controlLabel: 'Write V', state: 'fundamental', path: 'outputOptions.writeV', value: true, adds: ['--output-V'] },
         { control: 'Force', path: 'executionOptions.force', value: true, adds: ['--force'] },
         { control: 'Disable recurrent mutation', path: 'noRecurrentMutation', value: true, adds: ['--no-recurrent-mu'] }
       ],
@@ -494,6 +581,18 @@ async function fixtureMode() {
           why: 'Write N_Fix must say why it is disabled in Establishment Properties' },
         { state: 'fundamental', contains: 'requires a single starting count',
           why: 'Write I must say why it is disabled in Sojourn Times without a single starting count' }
+      ],
+      // T5c item 7: Write E and Write V now carry their disabled-reason in
+      // the Checkbox's own `description` prop (previously a sibling <Text>
+      // the shim's control recorder never saw), so -- unlike Write R/B/N/
+      // N_Ext/N_Fix/I above, which stay on the htmlExpect/raw-markup check --
+      // these two can use the same description-regex check every other
+      // view's disabled Force checkbox uses. Both are disabled in the
+      // default (absorption/fixed) state, so no disabledControlStates
+      // override is needed.
+      disabledControls: [
+        { label: 'Write E', reason: /requires the Equilibrium model/ },
+        { label: 'Write V', reason: /requires the Fundamental model/ }
       ]
     },
     {
@@ -502,7 +601,25 @@ async function fixtureMode() {
         { name: 'fixed p (default)' },
         { name: 'integrate over p', overrides: [{ str: 'fixed', to: 'integrate' }],
           base: 'fixed p (default)', removes: ['--starting-copies'] },
-        { name: 'file mode (no file chosen)', overrides: [{ str: 'fixed', to: 'file' }] }
+        { name: 'file mode (no file chosen)', overrides: [{ str: 'fixed', to: 'file' }] },
+        // T5c item 3: alpha is always sent with a fallback default (see
+        // buildCommandLine's `numOrUndefined(alpha) ?? 1e-20`, matched by
+        // the run's firstFinite(params.alpha, 1e-20) in the IPC handler), so
+        // a blank field must produce the SAME argv as the default state --
+        // guards against a blank field instead silently dropping --alpha
+        // from the argv while the preview still shows it (or vice versa).
+        { name: 'blank alpha', overrides: [{ str: '1e-20', to: '' }] }
+      ],
+      // T5c item 1 (the Important from the T5 review): "Fixed p" with a
+      // blank/non-numeric count must refuse to run. Unlike Sequential, this
+      // view already defaults to 'fixed', so no initialMode override is
+      // needed -- only the count. startingCopies' own default ('0') is
+      // shared with both components' selection coefficients (also '0'), so
+      // a plain `str` override would blank all three; strNth's occurrence
+      // count (0-indexed, in render/useState order) targets startingCopies
+      // alone -- it is the FIRST '0'-initialized field in this view.
+      refusalProbes: [
+        { name: 'fixed p with blank count refuses to run', overrides: [{ strNth: '0', occurrence: 0, to: '' }] }
       ],
       stateProbes: [
         { control: 'Write Q', overrides: [{ objKey: 'writeQ', patch: { writeQ: true } }], adds: ['--output-Q'] },
@@ -519,7 +636,12 @@ async function fixtureMode() {
         { name: 'integrate (default)' },
         { name: 'fixed p', overrides: [{ str: 'integrate', to: 'fixed' }],
           base: 'integrate (default)', adds: ['--starting-copies'], removes: ['--integration-cutoff'] },
-        { name: 'file mode (no file chosen)', overrides: [{ str: 'integrate', to: 'file' }] }
+        { name: 'file mode (no file chosen)', overrides: [{ str: 'integrate', to: 'file' }] },
+        // T5c item 3: alpha is always sent with a fallback default (see
+        // buildCommandLine's `parseFloat(alpha) || 1e-20`, matched by the
+        // run's own `parseFloat(alpha) || 1e-20`), so a blank field must
+        // produce the SAME argv as the default state.
+        { name: 'blank alpha', overrides: [{ str: '1e-20', to: '' }] }
       ],
       stateProbes: [
         { control: 'Write Q', overrides: [{ objKey: 'writeQ', patch: { writeQ: true } }], adds: ['--output-Q'] },
@@ -545,7 +667,17 @@ async function fixtureMode() {
         { name: 'absorption (default)' },
         { name: 'fixation', overrides: [{ str: 'absorption', to: 'fixation' }],
           base: 'absorption (default)', removes: ['--integration-cutoff'] },
-        { name: 'file mode (no file chosen)', overrides: [{ str: 'integrate', to: 'file' }] }
+        { name: 'file mode (no file chosen)', overrides: [{ str: 'integrate', to: 'file' }] },
+        // T5c item 3 (the Important from the T5 review): alpha and the
+        // absorption-only integration cutoff both used to reach the CLI as
+        // the literal string "NaN" when blank (parseFloat('') with no
+        // numOrUndefined discipline -- validateScientificNotation treats ''
+        // as valid, so the blank triggered no validation error above and was
+        // never caught before execute). Both are now omitted when blank, so
+        // this state's argv drops the two flags relative to the default.
+        { name: 'blank alpha and integration cutoff',
+          overrides: [{ str: '1e-20', to: '' }, { str: '1e-10', to: '' }],
+          base: 'absorption (default)', removes: ['--alpha', '--integration-cutoff'] }
       ],
       stateProbes: [
         { control: 'Write Q', overrides: [{ objKey: 'writeQ', patch: { writeQ: true } }], adds: ['--output-Q'] },
@@ -568,7 +700,18 @@ async function fixtureMode() {
         { name: 'fixed count (default)' },
         { name: 'integrate', overrides: [{ str: 'fixed', to: 'integrate' }],
           base: 'fixed count (default)', adds: ['--integration-cutoff'], removes: ['--initial-count'] },
-        { name: 'file mode (no file chosen)', overrides: [{ str: 'fixed', to: 'file' }] }
+        { name: 'file mode (no file chosen)', overrides: [{ str: 'fixed', to: 'file' }] },
+        // T5c item 3: --initial-count (commonParams.p) used to reach the run
+        // as a bare flag with an empty value token when blank (the joined
+        // "Executing:" log and the preview both collapse an empty argv
+        // element into adjacent whitespace, so the naive preview==argv
+        // string check alone did not catch it -- see the `removes` check
+        // below, which looks at the actual token instead). commonParams.a
+        // (--alpha) had the identical bug. Both flags are omitted when
+        // blank now.
+        { name: 'blank alpha and initial count',
+          overrides: [{ objKey: 'p', patch: { p: '', a: '' } }],
+          base: 'fixed count (default)', removes: ['--alpha', '--initial-count'] }
       ],
       stateProbes: [
         { control: 'Write Q', overrides: [{ objKey: 'writeQ', patch: { writeQ: true } }], adds: ['--output-Q'] },
@@ -586,10 +729,26 @@ async function fixtureMode() {
         // buildWfafdArgs emits the short -c (and -p) forms; the preview does too.
         { name: 'integrate', overrides: [{ str: 'fixed', to: 'integrate' }],
           base: 'fixed count (default)', adds: ['-c'], removes: ['-p'] },
-        { name: 'file mode (no file chosen)', overrides: [{ str: 'fixed', to: 'file' }] }
+        { name: 'file mode (no file chosen)', overrides: [{ str: 'fixed', to: 'file' }] },
+        // T5c item 3 (the Important from the T5 review): -p used to reach
+        // the run as "-p NaN" (a bare parseInt with no fallback) while the
+        // preview showed "-p 0" (parseInt(...) || 0) -- the two disagreed on
+        // what a blank count meant. --alpha had the same blank-token bug as
+        // wfafs_stochastic's commonParams.a. Both are omitted when blank now.
+        { name: 'blank alpha and starting copies',
+          overrides: [{ str: '1e-20', to: '' }, { str: '1', to: '' }],
+          base: 'fixed count (default)', removes: ['--alpha', '-p'] }
       ],
       stateProbes: [
         { control: 'Library', overrides: [{ objKey: 'force', patch: { library: 'ParU' } }], adds: ['ParU'] }
+      ],
+      // T5c item 4: a smuggled force must be proven absent from argv, as
+      // phase_type_dist already is above -- wfafs_deterministic does not
+      // declare --force (that is why the Force checkbox is disabled below),
+      // and buildWfafdArgs must silently drop one that arrives anyway rather
+      // than passing it through to a binary that exits 1 on it.
+      paramsProbes: [
+        { control: 'Force is inert by design for wfafs_deterministic', path: 'executionParams.force', value: true, adds: [], removes: [], expectNoChange: true }
       ],
       disabledControls: [
         { label: 'Force', reason: /does not declare --force/ }
@@ -600,7 +759,13 @@ async function fixtureMode() {
       states: [
         { name: 'time_dist (default)' },
         { name: 'time_dist_dual', props: { initialTool: 'time-dist-dual' }, bin: 'time_dist_dual' },
-        { name: 'file mode (no file chosen)', overrides: [{ str: 'integrate', to: 'file' }] }
+        { name: 'file mode (no file chosen)', overrides: [{ str: 'integrate', to: 'file' }] },
+        // T5c item 3: --alpha used to reach the run as a bare flag with an
+        // empty value token when blank (buildTimeDistArgs's guard is
+        // `!== undefined`, which a blank STRING passes unchanged). Omitted
+        // when blank now.
+        { name: 'blank alpha', overrides: [{ str: '1e-20', to: '' }],
+          base: 'time_dist (default)', removes: ['--alpha'] }
       ],
       stateProbes: [
         { control: 'Write Q', overrides: [{ objKey: 'writeQ', patch: { writeQ: true } }], adds: ['--output-Q'] },
@@ -609,7 +774,13 @@ async function fixtureMode() {
         { control: 'Library', overrides: [{ objKey: 'force', patch: { library: 'ParU' } }], adds: ['ParU'] }
       ],
       paramsProbes: [
-        { control: 'No recurrent mutation', path: 'noRecurrentMutation', value: true, adds: ['--no-recurrent-mu'] }
+        { control: 'No recurrent mutation', path: 'noRecurrentMutation', value: true, adds: ['--no-recurrent-mu'] },
+        // T5c item 4: a smuggled force must be proven absent from argv, as
+        // phase_type_dist already is above -- neither time_dist nor
+        // time_dist_dual declares --force (that is why the Force checkbox is
+        // disabled below), and buildTimeDistArgs's non-SGV branch must never
+        // emit it even if one arrives in executionParams.
+        { control: 'Force is inert by design for time_dist/time_dist_dual', path: 'executionParams.force', value: true, adds: [], removes: [], expectNoChange: true }
       ],
       disabledControls: [
         { label: 'Force', reason: /time_dist and time_dist_dual do not declare --force/ }
@@ -622,26 +793,41 @@ async function fixtureMode() {
         { name: 'moments', props: { initialMomentsOnly: true }, bin: 'phase_type_moments' },
         { name: 'SGV', overrides: [{ str: 'phase-type-dist', to: 'phase-type-dist-sgv' }],
           bin: 'time_dist_sgv', channel: 'wfes:timeDist:execute' },
-        { name: 'file mode (no file chosen)', overrides: [{ str: 'integrate', to: 'file' }] }
+        { name: 'file mode (no file chosen)', overrides: [{ str: 'integrate', to: 'file' }] },
+        // T5c item 3: dist mode's alpha (starting_frequency in the
+        // wfes:phaseType:execute handler) is always sent with a fallback
+        // default (see buildCommandLine's `numOrUndefined(a) ?? 1e-20`,
+        // matched by the handler's firstFinite(params.populationParams.a,
+        // 1e-20)), so a blank field must produce the SAME argv as the
+        // default state -- guards against it instead reaching the CLI as
+        // the literal string "NaN".
+        { name: 'blank alpha', overrides: [{ str: '1e-20', to: '' }] }
       ],
+      // controlLabel: the parenthetical in `control` (dist/moments/SGV)
+      // disambiguates this SPEC's own report lines -- the same rendered
+      // label ("Write Q", "Force", ...) appears in more than one mode -- but
+      // it is not the literal label React renders, so assertControlWired
+      // needs the real one. 'Write moments (N)' needs no override: that
+      // parenthetical IS the label (see the outputFlags entry in
+      // PhaseTypeViewMantine.tsx).
       stateProbes: [
-        { control: 'Write Q (dist)', overrides: [{ objKey: 'writeQ', patch: { writeQ: true } }], adds: ['--output-Q'] },
-        { control: 'Write R (dist)', overrides: [{ objKey: 'writeQ', patch: { writeR: true } }], adds: ['--output-R'] },
-        { control: 'Write P (dist)', overrides: [{ objKey: 'writeQ', patch: { writeP: true } }], adds: ['--output-P'] },
-        { control: 'Write Q (moments)', props: { initialMomentsOnly: true }, bin: 'phase_type_moments',
+        { control: 'Write Q (dist)', controlLabel: 'Write Q', overrides: [{ objKey: 'writeQ', patch: { writeQ: true } }], adds: ['--output-Q'] },
+        { control: 'Write R (dist)', controlLabel: 'Write R', overrides: [{ objKey: 'writeQ', patch: { writeR: true } }], adds: ['--output-R'] },
+        { control: 'Write P (dist)', controlLabel: 'Write P', overrides: [{ objKey: 'writeQ', patch: { writeP: true } }], adds: ['--output-P'] },
+        { control: 'Write Q (moments)', controlLabel: 'Write Q', props: { initialMomentsOnly: true }, bin: 'phase_type_moments',
           overrides: [{ objKey: 'writeQ', patch: { writeQ: true } }], adds: ['--output-Q'], base: 'moments' },
         { control: 'Write moments (N)', props: { initialMomentsOnly: true }, bin: 'phase_type_moments',
           overrides: [{ objKey: 'writeQ', patch: { writeN: true } }], adds: ['--output-N'], base: 'moments' },
-        { control: 'Force (moments)', props: { initialMomentsOnly: true }, bin: 'phase_type_moments',
+        { control: 'Force (moments)', controlLabel: 'Force', props: { initialMomentsOnly: true }, bin: 'phase_type_moments',
           overrides: [{ objKey: 'force', patch: { force: true } }], adds: ['--force'], base: 'moments' },
-        { control: 'Force (SGV)', overrides: [{ str: 'phase-type-dist', to: 'phase-type-dist-sgv' }, { objKey: 'force', patch: { force: true } }],
+        { control: 'Force (SGV)', controlLabel: 'Force', overrides: [{ str: 'phase-type-dist', to: 'phase-type-dist-sgv' }, { objKey: 'force', patch: { force: true } }],
           bin: 'time_dist_sgv', channel: 'wfes:timeDist:execute', adds: ['--force'], base: 'SGV' },
-        { control: 'Write P (SGV)', overrides: [{ str: 'phase-type-dist', to: 'phase-type-dist-sgv' }, { objKey: 'writeQ', patch: { writeP: true } }],
+        { control: 'Write P (SGV)', controlLabel: 'Write P', overrides: [{ str: 'phase-type-dist', to: 'phase-type-dist-sgv' }, { objKey: 'writeQ', patch: { writeP: true } }],
           bin: 'time_dist_sgv', channel: 'wfes:timeDist:execute', adds: ['--output-P'], base: 'SGV' },
         { control: 'Library', overrides: [{ objKey: 'force', patch: { library: 'ParU' } }], adds: ['ParU'] }
       ],
       paramsProbes: [
-        { control: 'r (recurrent mutation, moments)', state: 'moments', bin: 'phase_type_moments',
+        { control: 'r (recurrent mutation, moments)', controlLabel: 'r', state: 'moments', bin: 'phase_type_moments',
           path: 'mutationParams.r', value: false, adds: ['--no-recurrent-mu'] },
         // In dist mode Force is disabled AND, defensively, the builder must
         // drop a force that arrives anyway: phase_type_dist exits 1 on it.
@@ -657,7 +843,14 @@ async function fixtureMode() {
       states: [
         { name: 'fixed count (default)' },
         { name: 'integrate', overrides: [{ str: 'fixed', to: 'integrate' }],
-          base: 'fixed count (default)', adds: ['-c'], removes: ['-p'] }
+          base: 'fixed count (default)', adds: ['-c'], removes: ['-p'] },
+        // T5c item 3: -p used to be silently substituted with 1 when blank
+        // (`parseInt(startingCopies) || 1`, identically in the preview and
+        // in buildProjectionArgs), so both sides agreed on a fabricated
+        // model instead of on the truth. Omitted when blank now, like every
+        // other view's starting-count field.
+        { name: 'blank starting count', overrides: [{ str: '1', to: '' }],
+          base: 'fixed count (default)', removes: ['-p'] }
       ]
     }
   ]
@@ -726,6 +919,15 @@ async function fixtureMode() {
       if (good && checkFlags(`${spec.view} probe ${probe.control}`, bin, run.args)) {
         ok(`${spec.view} probe ${probe.control}: control reaches argv (${(probe.adds ?? []).join(' ')})`)
       }
+      // T5c item 2: the argv assertion above is satisfied by patching the
+      // STATE directly (that is what `overrides` does); it says nothing
+      // about the CONTROL the user actually sees. Assert one exists under
+      // the probe's label, is enabled, and renders the toggled value.
+      const ct = controlTargetFromOverrides(probe.overrides)
+      if (ct) {
+        checks++
+        assertControlWired(`${spec.view} probe ${probe.control}`, probe.controlLabel ?? probe.control, ct.target, r.controls)
+      }
     }
 
     for (const probe of spec.paramsProbes ?? []) {
@@ -757,6 +959,21 @@ async function fixtureMode() {
         fail(`${spec.view} params-probe ${probe.control}: argv did not gain ${missing.join(' ')}`)
       } else if (checkFlags(`${spec.view} params-probe ${probe.control}`, bin, run.args)) {
         ok(`${spec.view} params-probe ${probe.control}: key reaches argv (${(probe.adds ?? []).join(' ')})`)
+      }
+      // T5c item 2 (existence/disabled half): paramsProbes patch the
+      // captured params object directly and never re-render, so there is no
+      // toggled render here to check checked/value against -- see
+      // assertControlWired's use in the stateProbes loop above for the full
+      // three-part check. This still catches a deleted drawer row or a
+      // relabelled control, using the render already captured in `r` (the
+      // named/default state, not toggled).
+      checks++
+      {
+        const label = probe.controlLabel ?? probe.control
+        const ctrl = r.controls.find((c) => c.label === label)
+        if (!ctrl) fail(`${spec.view} params-probe ${probe.control}: no control labelled ${JSON.stringify(label)} is rendered`)
+        else if (ctrl.disabled) fail(`${spec.view} params-probe ${probe.control}: control ${JSON.stringify(label)} is rendered disabled`)
+        else ok(`${spec.view} params-probe ${probe.control}: control ${JSON.stringify(label)} is rendered and enabled`)
       }
     }
 
@@ -795,6 +1012,7 @@ async function fixtureMode() {
   }
 
   console.log = realLog
+  console.error = realError
   say(`\n${checks} checks, ${failures} failure(s)`)
   process.exit(failures === 0 ? 0 : 1)
 }
