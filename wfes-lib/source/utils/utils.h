@@ -11,22 +11,10 @@
 
 #include <limits>
 
-// Conditionally include Qt components based on build type
-#ifndef WFES_CLI
-// Qt includes for GUI version
-#include <QDebug>
-#include <QThread>
-#include <QtGui/QImage>
-#include <QDirIterator>
-#include <QStandardPaths>
-#include <QDir>
-#else
-// Standard library includes for CLI version
 #include <iostream>
 #include <fstream>
 #include <iomanip>
 #include <filesystem>
-#endif
 
 namespace wfes{
     namespace utils{
@@ -173,39 +161,6 @@ namespace wfes{
          */
         ivec closedRangeInt(int start, int stop);
 
-#ifndef WFES_CLI
-        /**
-         * @brief Generate an image representation of the matrix as a heatmap.
-         * @param a Matrix to be represented.
-         */
-        QImage* generateImage(const dmat& a);
-
-        /**
-         * @brief Save image on disk, in the specified path.
-         * @param image Image to be saved, as a QImage.
-         * @param path Path of the image.
-         * @return True if the image has been saved sucesfully.
-         */
-        bool saveImage(QImage* image, std::string path);
-
-        /**
-         * @brief Get number of elements of which a string is a preffix.
-         * @param preffix Preffix of the elements.
-         * @param list List of string we want to count.
-         * @return Number of elements of which a string is a preffix.
-         */
-        int numPreffix(QString preffix, QStringList list);
-
-        /**
-         * @brief Get a list of files in a directory whose name follow a pattern.
-         * @param filePath Path to search files.
-         * @param pattern Pattern in file names.
-         * @return List of files in the directory following a pattern.
-         */
-        QStringList listFiles(QString filePath, QString pattern);
-#else
-        // CLI-specific utility functions for sequential models
-        
         /**
          * @brief Calculate start indices for a given vector of population sizes.
          * @param n Vector of population sizes.
@@ -221,7 +176,6 @@ namespace wfes{
          * @return Vector containing the range.
          */
         lvec range_step(llong a, llong b, llong s);
-#endif // WFES_CLI
     }
 }
 
