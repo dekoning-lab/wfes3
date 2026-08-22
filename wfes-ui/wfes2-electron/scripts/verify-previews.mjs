@@ -163,10 +163,31 @@ const RUNTIME_REFUSALS = [
     note: 'with no -p, --fundamental computes the whole matrix and uses no starting distribution' }
 ]
 
+/**
+ * The dual of RUNTIME_REFUSALS: flags each binary's parser still ACCEPTS
+ * though its --help no longer advertises them. The canonical-flag-table
+ * commit ("Give every WFES short flag exactly one meaning") renamed the
+ * advertised spellings (--pop-sizes became -N/--pop-size; wfafs_stochastic's
+ * --initial-count became -p/--starting-copies) and kept each old long form
+ * as a deliberately hidden alias -- "stays accepted (the GUI emits it) but
+ * unadvertised" (args_parser.cpp, at every AliasedValueFlag site) -- which
+ * the --help parse above cannot see. AliasedValueFlag binds every spelling
+ * to the same option, so an emitted alias cannot be silently dropped.
+ * Measured against the built binaries: given the hidden spelling, each bin
+ * below parses past the flag and fails on the NEXT missing required
+ * argument; given an unknown flag it fails at the flag itself. These two
+ * entries cover all four hidden-alias sites the parser declares.
+ */
+const HIDDEN_ALIASES = [
+  { bins: ['wfes_sequential', 'wfes_switching', 'wfafs_stochastic', 'wfafs_deterministic'],
+    flag: '--pop-sizes' },
+  { bins: ['wfafs_stochastic'], flag: '--initial-count' }
+]
+
 function checkFlags(label, bin, cmdTokens) {
   const declared = declaredFlags(bin)
   for (const f of flagsIn(cmdTokens)) {
-    if (!declared.has(f)) {
+    if (!declared.has(f) && !HIDDEN_ALIASES.some((r) => r.bins.includes(bin) && r.flag === f)) {
       fail(`${label}: flag ${f} does not exist in ${bin} --help`)
       return false
     }
@@ -205,12 +226,22 @@ function checkFlags(label, bin, cmdTokens) {
  * that pick which binary runs, not the control under test.
  */
 function controlTargetFromOverrides(overrides) {
-  const patchOverride = [...(overrides ?? [])].reverse().find((o) => o.patch)
-  if (!patchOverride) return null
-  const entries = Object.entries(patchOverride.patch)
-  if (entries.length === 0) return null
-  const [key, target] = entries[entries.length - 1]
-  return { key, target }
+  const reversed = [...(overrides ?? [])].reverse()
+  const patchOverride = reversed.find((o) => o.patch)
+  if (patchOverride) {
+    const entries = Object.entries(patchOverride.patch)
+    if (entries.length === 0) return null
+    const [key, target] = entries[entries.length - 1]
+    return { key, target }
+  }
+  // The single view's write-flag probes (T5c item 2) target a boolean
+  // useState initializer directly -- there is no `outputOptions` object to
+  // patch a key on -- so the control-under-test carries a `boolNth`/`strNth`
+  // override instead of a `patch` one. Same "last one wins, earlier ones are
+  // mode selectors" rule as above.
+  const nthOverride = reversed.find((o) => o.boolNth !== undefined || o.strNth !== undefined)
+  if (nthOverride) return { key: null, target: nthOverride.to }
+  return null
 }
 
 /**
@@ -220,11 +251,21 @@ function controlTargetFromOverrides(overrides) {
  *   its `value` (Select/SegmentedControl).
  */
 function assertControlWired(where, label, target, controls) {
-  const ctrl = controls.find((c) => c.label === label)
-  if (!ctrl) {
+  // T5c item 4: bind by label through a uniqueness assertion, not .find's
+  // first-match -- .find would silently pass this check against the WRONG
+  // control if a relabel or a copy-paste ever left two controls sharing one
+  // label, since the toggled one might not be the one it happens to find
+  // first.
+  const matches = controls.filter((c) => c.label === label)
+  if (matches.length === 0) {
     fail(`${where}: no control labelled ${JSON.stringify(label)} is rendered (deleted row, or relabelled?)`)
     return
   }
+  if (matches.length > 1) {
+    fail(`${where}: expected exactly one control labelled ${JSON.stringify(label)}, found ${matches.length}`)
+    return
+  }
+  const ctrl = matches[0]
   if (ctrl.disabled) {
     fail(`${where}: control ${JSON.stringify(label)} is rendered disabled, not toggled`)
     return
@@ -546,30 +587,64 @@ async function fixtureMode() {
       // count must refuse to run rather than send --integration-cutoff alone
       // while the UI still says "Fixed p".
       refusalProbes: [
-        { name: 'fixed p with blank count refuses to run', overrides: [{ str: '1', to: '' }] }
+        { name: 'fixed p with blank count refuses to run', overrides: [{ str: '1', to: '' }] },
+        // The same defect class through the Sojourn Times scope control,
+        // which the gate above never reaches (modeHasStartingState excludes
+        // 'fundamental'): --fundamental sends no --integration-cutoff either
+        // way, so a blank count under "One starting count" would not carry a
+        // stray flag -- it would silently compute the FULL fundamental
+        // matrix (all starting states, 2N-1 solves) while the UI still says
+        // one count. 'all' is sojournScope's initializer, unique in this
+        // view; '1' is startingCopies', as in the probe above.
+        { name: 'sojourn single count with blank count refuses to run',
+          overrides: [{ str: 'absorption', to: 'fundamental' }, { str: 'all', to: 'single' }, { str: '1', to: '' }] }
+      ],
+      // T5c item 2 (the Important from this review round): assertControlWired's
+      // three-part exists+enabled+checked check runs only for stateProbes --
+      // paramsProbes never re-renders after patching, so it cannot show what
+      // the CONTROL displays, only that captured params reached argv. All
+      // nine write-flag checkboxes below used to be paramsProbes, leaving the
+      // mis-binding class (a checkbox reading/writing the wrong key) unguarded
+      // on exactly the view CX1b just rewired. boolNth:false targets each
+      // one's own `useState(false)` initializer directly, in the order they
+      // are declared (occurrence 0 = optionsDrawerOpen, 1 = mutationOnly, so
+      // the nine writeX fields start at 2); verified against the source by
+      // counting every `useState(false)` call from the top of the component.
+      stateProbes: [
+        { control: 'Write Q', overrides: [{ boolNth: false, occurrence: 2, to: true }], adds: ['--output-Q'] },
+        { control: 'Write R', overrides: [{ boolNth: false, occurrence: 3, to: true }], adds: ['--output-R'] },
+        { control: 'Write B', overrides: [{ boolNth: false, occurrence: 4, to: true }], adds: ['--output-B'] },
+        { control: 'Write N', overrides: [{ boolNth: false, occurrence: 5, to: true }], adds: ['--output-N'] },
+        { control: 'Write N_Ext', overrides: [{ boolNth: false, occurrence: 6, to: true }], adds: ['--output-N-ext'] },
+        { control: 'Write N_Fix', overrides: [{ boolNth: false, occurrence: 7, to: true }], adds: ['--output-N-fix'] },
+        { control: 'Write I', overrides: [{ boolNth: false, occurrence: 8, to: true }], adds: ['--output-I'] },
+        // base: 'equilibrium'/'fundamental' -- these two ALSO need the mode
+        // switch (the flag is refused outside its own mode), so the diff is
+        // taken against that mode's own argv, not the default state's.
+        { control: 'Write E (equilibrium)', controlLabel: 'Write E',
+          overrides: [{ str: 'absorption', to: 'equilibrium' }, { boolNth: false, occurrence: 9, to: true }],
+          adds: ['--output-E'], base: 'equilibrium' },
+        { control: 'Write V (fundamental)', controlLabel: 'Write V',
+          overrides: [{ str: 'absorption', to: 'fundamental' }, { boolNth: false, occurrence: 10, to: true }],
+          adds: ['--output-V'], base: 'fundamental' }
       ],
       paramsProbes: [
-        { control: 'Write Q', path: 'outputOptions.writeQ', value: true, adds: ['--output-Q'] },
-        { control: 'Write R', path: 'outputOptions.writeR', value: true, adds: ['--output-R'] },
-        { control: 'Write B', path: 'outputOptions.writeB', value: true, adds: ['--output-B'] },
-        { control: 'Write N', path: 'outputOptions.writeN', value: true, adds: ['--output-N'] },
-        { control: 'Write N_Ext', path: 'outputOptions.writeNExt', value: true, adds: ['--output-N-ext'] },
-        { control: 'Write N_Fix', path: 'outputOptions.writeNFix', value: true, adds: ['--output-N-fix'] },
-        { control: 'Write I', path: 'outputOptions.writeI', value: true, adds: ['--output-I'] },
-        { control: 'Write E (equilibrium)', controlLabel: 'Write E', state: 'equilibrium', path: 'outputOptions.writeE', value: true, adds: ['--output-E'] },
-        { control: 'Write V (fundamental)', controlLabel: 'Write V', state: 'fundamental', path: 'outputOptions.writeV', value: true, adds: ['--output-V'] },
         { control: 'Force', path: 'executionOptions.force', value: true, adds: ['--force'] },
         { control: 'Disable recurrent mutation', path: 'noRecurrentMutation', value: true, adds: ['--no-recurrent-mu'] }
       ],
       // T5b: every checkbox the CX1b mode x flag matrix newly restricts must
-      // render disabled with a stated reason in a mode that refuses it. The
-      // single view puts the reason in a sibling <Text>, not a `description`
-      // prop Checkbox forwards to the harness's control recorder, so this
-      // checks the rendered HTML directly -- the same technique the
-      // wfes_switching spec above uses for its one gated field. Each
-      // substring is quote-free so it survives react-dom/server's text
-      // escaping unmodified (see decode() above, needed only for the
-      // preview text, not this check).
+      // render disabled with a stated reason in a mode that refuses it. As of
+      // T5c item 6 the reason lives in the Checkbox's own `description` prop
+      // for these six too (the sibling <Text> is gone, matching Write E/V's
+      // pattern above) -- but disabledControls' single shared
+      // disabledControlStates render can't exercise six controls that are
+      // disabled in mutually exclusive modes (Write E needs a NON-equilibrium
+      // mode to be disabled at all, while these six need equilibrium/
+      // fixation/establishment/fundamental instead), so this still checks the
+      // rendered HTML directly rather than moving to that per-control
+      // mechanism. Each substring is quote-free so it survives
+      // react-dom/server's text escaping unmodified (see decode() above,
+      // needed only for the preview text, not this check).
       htmlExpect: [
         { state: 'equilibrium', contains: 'requires a model with an absorbing state',
           why: 'Write R/B/N must say why they are disabled in Equilibrium Distribution' },
@@ -580,7 +655,23 @@ async function fixtureMode() {
         { state: 'establishment', contains: 'requires Standard Wright-Fisher, Substitution Model, Sojourn Times, or Allele Age',
           why: 'Write N_Fix must say why it is disabled in Establishment Properties' },
         { state: 'fundamental', contains: 'requires a single starting count',
-          why: 'Write I must say why it is disabled in Sojourn Times without a single starting count' }
+          why: 'Write I must say why it is disabled in Sojourn Times without a single starting count' },
+        // T5c/T5b Important 1: canWriteI's --fundamental clause used to check
+        // only sojournScope === 'single', so a blank/invalid count under "One
+        // starting count" left Write I ENABLED (canWriteI wrongly true) --
+        // this state never appears via a NAMED spec.states entry because
+        // executeModel's own gate (T5c Important 1b) already refuses to run
+        // it, which would make the ordinary states-loop's "no argv spawned"
+        // check fail regardless of canWriteI; overrides here render the
+        // SAME state inline instead, and this check is decoupled from
+        // execution entirely -- it only inspects the static markup canWriteI
+        // controls. RED against the pre-fix canWriteI (Write I renders
+        // enabled, so this text never appears); GREEN once the fundamental
+        // clause also requires validateStartingCopies().
+        { state: 'fundamental, single scope, blank count',
+          overrides: [{ str: 'absorption', to: 'fundamental' }, { str: 'all', to: 'single' }, { str: '1', to: '' }],
+          contains: 'requires a single starting count',
+          why: 'Write I must say why it is disabled when Sojourn Times/"One starting count" is left blank (canWriteI must require a SET count)' }
       ],
       // T5c item 7: Write E and Write V now carry their disabled-reason in
       // the Checkbox's own `description` prop (previously a sibling <Text>
@@ -701,17 +792,34 @@ async function fixtureMode() {
         { name: 'integrate', overrides: [{ str: 'fixed', to: 'integrate' }],
           base: 'fixed count (default)', adds: ['--integration-cutoff'], removes: ['--initial-count'] },
         { name: 'file mode (no file chosen)', overrides: [{ str: 'fixed', to: 'file' }] },
-        // T5c item 3: --initial-count (commonParams.p) used to reach the run
-        // as a bare flag with an empty value token when blank (the joined
+        // T5c item 3: --alpha (commonParams.a) used to reach the run as a
+        // bare flag with an empty value token when blank (the joined
         // "Executing:" log and the preview both collapse an empty argv
         // element into adjacent whitespace, so the naive preview==argv
         // string check alone did not catch it -- see the `removes` check
-        // below, which looks at the actual token instead). commonParams.a
-        // (--alpha) had the identical bug. Both flags are omitted when
-        // blank now.
-        { name: 'blank alpha and initial count',
-          overrides: [{ objKey: 'p', patch: { p: '', a: '' } }],
-          base: 'fixed count (default)', removes: ['--alpha', '--initial-count'] }
+        // below, which looks at the actual token instead). Omitted when
+        // blank now. commonParams.p (--initial-count) had the identical
+        // blank-token bug and used to be tested here too, alongside alpha --
+        // but T5c item 7 (this review round) now gates execution entirely on
+        // a blank p in 'fixed' mode (see the refusalProbes entry below), so
+        // blank p no longer reaches argv-building to omit a flag from; it
+        // refuses to run before that, a strictly stronger guarantee than "ran
+        // and omitted the flag". Testing it here too would now conflict with
+        // that gate (the state would refuse to execute, failing this loop's
+        // "no argv spawned" check) rather than confirm anything further.
+        { name: 'blank alpha', overrides: [{ objKey: 'p', patch: { a: '' } }],
+          base: 'fixed count (default)', removes: ['--alpha'] }
+      ],
+      // T5c item 7: "Fixed p" with a blank count used to run anyway and
+      // silently integrate (wfafs_stochastic falls back to its own internal
+      // integration-cutoff default when it gets neither --initial-count nor
+      // --integration-cutoff) -- the same silent-model-swap gate every other
+      // fixed-count view already refuses. This view already defaults to
+      // 'fixed' (see 'fixed count (default)' above), so no initialMode
+      // override is needed, only the count; objKey/patch, not `str`, because
+      // commonParams.p lives on an object initializer, not a bare string one.
+      refusalProbes: [
+        { name: 'fixed p with blank count refuses to run', overrides: [{ objKey: 'p', patch: { p: '' } }] }
       ],
       stateProbes: [
         { control: 'Write Q', overrides: [{ objKey: 'writeQ', patch: { writeQ: true } }], adds: ['--output-Q'] },
@@ -933,10 +1041,13 @@ async function fixtureMode() {
     for (const probe of spec.paramsProbes ?? []) {
       checks++
       const bin = probe.bin ?? spec.bin
-      const stateName = probe.state
-        ? spec.states.find((s) => s.name.startsWith(probe.state))?.name ?? defaultState.name
-        : defaultState.name
-      const stateSpec = spec.states.find((s) => s.name === stateName) ?? defaultState
+      // T5c item 5: exact match, not startsWith -- a prefix match risks
+      // picking the WRONG state when one state name prefixes another (single
+      // spec's 'equilibrium' vs 'equilibrium (initialMode stuck on file)'
+      // used to rely on 'equilibrium' simply appearing first in the array).
+      const stateSpec = probe.state
+        ? (spec.states.find((s) => s.name === probe.state) ?? defaultState)
+        : defaultState
       const r = await drive(spec, stateSpec)
       if (!r.params) { fail(`${spec.view} params-probe ${probe.control}: no params captured`); continue }
       const base = argTokens(r.argvLine)
@@ -990,10 +1101,16 @@ async function fixtureMode() {
 
     for (const exp of spec.htmlExpect ?? []) {
       checks++
-      const state = spec.states.find((s) => s.name === exp.state)
+      // Most entries name a state already declared in spec.states (looked up
+      // by exact name, as everywhere else). An entry can instead carry its
+      // own inline `overrides` -- needed for a state that must NOT also be a
+      // spec.states entry, because rendering it there would demand a
+      // successful execution (the states-loop requires argvLine); this
+      // check only reads static markup and never depends on argv at all.
+      const state = exp.overrides ? { name: exp.state ?? 'inline', overrides: exp.overrides } : spec.states.find((s) => s.name === exp.state)
       const r = await drive(spec, state)
-      if (r.html.includes(exp.contains)) ok(`${spec.view} [${exp.state}]: ${exp.why}`)
-      else fail(`${spec.view} [${exp.state}]: markup lacks ${JSON.stringify(exp.contains)} (${exp.why})`)
+      if (r.html.includes(exp.contains)) ok(`${spec.view} [${state.name}]: ${exp.why}`)
+      else fail(`${spec.view} [${state.name}]: markup lacks ${JSON.stringify(exp.contains)} (${exp.why})`)
     }
 
     for (const dc of spec.disabledControls ?? []) {
