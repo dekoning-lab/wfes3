@@ -531,6 +531,158 @@ def section_refusal_leaves_nothing(new_bin: Path):
           f"exit={proc.returncode} {proc.stderr.strip()[:90]}")
 
 
+def section_injection_range_guards(new_bin: Path):
+    """--fixation and --allele-age integrate over an injection distribution
+    that can run past their state space; neither loop was bounded.
+
+    --absorption has carried the guard all along (`z > size`, "integration
+    range exceeds the transient state space"), and --establishment got one in
+    task CX1a (the section above). The two remaining injection loops did not:
+
+      * --fixation writes id(starting_copies_start + i) for i = 0..z-1 into a
+        vector of length 2N. The OFFSET is what distinguishes it from
+        --absorption, where the index is i itself.
+      * --allele-age writes e_p(i) for i = 0..z-1 into a vector of length
+        2N-1.
+
+    With 4Nu > 1 the injection distribution is broad enough to overrun both,
+    and --force does not stop it -- --force gates the Wright-Fisher
+    advisories, not indexing.
+
+    Measured on the pre-fix build (Release, -DNDEBUG, the shipping
+    configuration, so the Eigen bounds assert is compiled out):
+
+      $ wfes_single --fixation -N 2 -s 0 -u 1e-9 -v 0.5 --force   # six runs
+        exit 0   T_fix,T_std,rate = 2.2187952772104333,1.4435191573701525,...
+        exit 133 (SIGTRAP)
+        exit 0   (same numbers)
+        exit 138 (SIGBUS)
+        exit 133 (SIGTRAP)
+        exit 0   (same numbers)
+
+    Three outcomes from one command line, which is the worst shape in this
+    audit: a number a rerun replaces with a crash. And the number was not the
+    requested integral either. The out-of-range start's `id` never received
+    its 1, so its solve returned the zero vector and that state contributed 0
+    -- making T_fix the answer to the `-c 0.2` question (three starting states
+    instead of four), which prints the identical 2.2187952772104333. A silent
+    substitution of a different question's answer.
+
+    --allele-age's overrun is quieter still. It does not crash here; it
+    poisons the solve and comes out as nan, and the nan is then caught by the
+    downstream finiteness gate, which reports:
+
+        Error: computed E_T is not finite (nan) ... not resolvable in double
+        precision for these parameters
+
+    That blames double precision for an indexing error. The model is
+    perfectly well conditioned: the SAME run with -c 1e-8, which changes
+    nothing but shrink z below the state-space size, returns
+    E[T] = 1.9897638598472314. The check below pins that, because a
+    misattributed diagnostic sends the user to change the wrong thing.
+
+    Both guards now run before WF::Single, so a refusal leaves no --output-Q
+    or --output-R behind -- the same placement rule the --establishment
+    section above established.
+    """
+    print("\n== injection range guards: --fixation and --allele-age ==")
+    n_repeat = 6
+
+    # ---- --fixation ------------------------------------------------------
+    fix_args = ["--fixation", "-N", "2", "-s", "0", "-u", "1e-9",
+                "-v", "0.5", "--force"]
+    procs = [run(new_bin, fix_args) for _ in range(n_repeat)]
+    codes = [p.returncode for p in procs]
+    check(all(c == 1 for c in codes),
+          f"fixation overrun exits 1 on all {n_repeat} identical runs",
+          f"exits={codes} (pre-fix: 0/133/138 from the same command line)")
+    errs = {p.stderr.strip() for p in procs}
+    check(len(errs) == 1,
+          f"the {n_repeat} runs give one identical diagnostic",
+          f"{len(errs)} distinct stderr texts")
+    err = procs[0].stderr
+    check("integration range exceeds the transient state space" in err,
+          "fixation diagnostic names the state-space overrun",
+          err.strip()[:130])
+    check("starting copies 1..4" in err and "2N-1 = 3" in err,
+          "fixation diagnostic names the offending range and the bound",
+          err.strip()[:130])
+    check(all('"results"' not in p.stdout for p in procs),
+          "no fabricated T_fix is published",
+          procs[0].stdout.strip()[:120])
+    with tempfile.TemporaryDirectory() as td:
+        paths = {f: Path(td) / f"fix_{f}" for f in ("Q", "R", "N", "B", "I")}
+        args = list(fix_args)
+        for flag, p in paths.items():
+            args += [f"--output-{flag}", str(p)]
+        run(new_bin, args)
+        left = sorted(f for f, p in paths.items() if p.exists())
+        check(not left,
+              "the fixation refusal writes NO output file, --output-Q included",
+              f"left behind: {left or 'nothing'}")
+    # The healthy neighbour: same model, a cutoff that brings the range inside
+    # the state space. A blanket refusal of --fixation integration would fail
+    # here, so this is what makes the guard a RANGE check.
+    proc = run(new_bin, fix_args + ["-c", "0.2"])
+    res, _ = parse_results(proc)
+    check(proc.returncode == 0 and res is not None
+          and math.isfinite(res.get("T_fix", float("nan"))),
+          "fixation with the range inside the state space still computes",
+          f"exit={proc.returncode} {proc.stderr.strip()[:90]}")
+
+    # ---- --allele-age ----------------------------------------------------
+    aa_args = ["--allele-age", "-N", "6", "-s", "0", "-u", "1e-9",
+               "-v", "0.2", "-x", "1", "--force"]
+    procs = [run(new_bin, aa_args) for _ in range(n_repeat)]
+    codes = [p.returncode for p in procs]
+    check(all(c == 1 for c in codes),
+          f"allele-age overrun exits 1 on all {n_repeat} identical runs",
+          f"exits={codes}")
+    errs = {p.stderr.strip() for p in procs}
+    check(len(errs) == 1,
+          f"the {n_repeat} allele-age runs give one identical diagnostic",
+          f"{len(errs)} distinct stderr texts")
+    err = procs[0].stderr
+    check("integration range exceeds the transient state space" in err,
+          "allele-age diagnostic names the state-space overrun",
+          err.strip()[:130])
+    check("z = 12" in err and "2N-1 = 11" in err,
+          "allele-age diagnostic names z and the bound",
+          err.strip()[:130])
+    check(all('"results"' not in p.stdout for p in procs),
+          "no fabricated allele age is published",
+          procs[0].stdout.strip()[:120])
+    # The pre-fix diagnostic blamed double precision for an indexing error.
+    check("resolvable in double precision" not in err,
+          "the overrun is not misreported as a double-precision failure",
+          err.strip()[:130])
+    with tempfile.TemporaryDirectory() as td:
+        paths = {f: Path(td) / f"aa_{f}" for f in ("Q", "R", "N")}
+        args = list(aa_args)
+        for flag, p in paths.items():
+            args += [f"--output-{flag}", str(p)]
+        run(new_bin, args)
+        left = sorted(f for f, p in paths.items() if p.exists())
+        check(not left,
+              "the allele-age refusal writes NO output file, "
+              "--output-Q included",
+              f"left behind: {left or 'nothing'}")
+    # Same model, z shrunk below the state-space size: the value the pre-fix
+    # binary called "not resolvable in double precision".
+    proc = run(new_bin, aa_args + ["-c", "1e-8"])
+    res, err_txt = parse_results(proc)
+    if check(proc.returncode == 0 and res is not None,
+             "allele-age with the range inside the state space still computes",
+             f"exit={proc.returncode} {err_txt} {proc.stderr.strip()[:90]}"):
+        got = res.get("E_T", res.get("E[T]"))
+        check(got is not None and rel_diff(got, 1.9897638598472314) <= 1e-12,
+              "and returns the recorded E[T] = 1.9897638598472314, so the "
+              "model was never the problem", f"got {got!r}")
+    else:
+        check(False, "and returns the recorded E[T] = 1.9897638598472314, so "
+                     "the model was never the problem", "run was refused")
+
+
 def section_csv(new_bin: Path, shipped: Path):
     print("\n== --csv output: healthy case and degenerate refusal ==")
     # The suite above exercises --json exclusively; --csv is a separate
@@ -616,6 +768,7 @@ def main() -> int:
     section_v0(new_bin, opts.shipped)
     section_underflow(new_bin)
     section_refusal_leaves_nothing(new_bin)
+    section_injection_range_guards(new_bin)
     section_csv(new_bin, opts.shipped)
     if opts.skip_dense:
         print("\n(dense reference section skipped on request)")

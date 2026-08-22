@@ -1134,6 +1134,50 @@ int main(int argc, char const *argv[]) {
         // Dispatch based on model type
         switch (options.model_type) {
             case CLI::ModelType::FIXATION: {
+                // Size of the problem - for FIXATION_ONLY we exclude the last
+                // row/column. Declared HERE, above the matrix build, so the
+                // range guard below can use the same expression the solve
+                // does rather than a second copy of `2 * population_size`.
+                llong size = (2 * options.population_size);
+
+                // The integration loop far below writes
+                // id(starting_copies_start + i) for i = 0..z-1 into a vector
+                // of length `size`, and nothing bounded the top of that range
+                // -- the same guard --absorption carries (its `z > size`
+                // refusal) was simply missing here. The offset is what makes
+                // this branch's arithmetic differ from --absorption's: there
+                // the index IS i.
+                //
+                // With 4Nu > 1 the injection distribution is broad enough to
+                // run past the state space, and --force does not stop it,
+                // because --force gates the Wright-Fisher advisories and not
+                // indexing. Measured on the pre-fix binary,
+                // `--fixation -N 2 -s 0 -u 1e-9 -v 0.5 --force`
+                // (starting_copies_start = 1, z = 4, size = 4) gave three
+                // different outcomes across six identical runs: exit 0 with
+                // T_fix = 2.2187952772104333 printed as a result, exit 133
+                // (SIGTRAP), and exit 138 (SIGBUS). A number a rerun replaces
+                // with a crash is not a result -- and that number was not the
+                // requested integral either: the out-of-range start's solve
+                // returned the zero vector, so its state contributed 0 and
+                // T_fix silently became the answer to the `-c 0.2` question
+                // (three starting states), which prints the identical value.
+                //
+                // Placed BEFORE WF::Single, not just before the loop: a check
+                // after the matrix is built leaves --output-Q and --output-R
+                // on disk at a nonzero exit, which is the "refuse but litter"
+                // shape section_refusal_leaves_nothing already fixed in
+                // --establishment.
+                if (options.starting_copies < 0 &&
+                    starting_copies_start + z > size) {
+                    std::ostringstream os;
+                    os << "integration range exceeds the transient state "
+                          "space (starting copies " << starting_copies_start
+                       << ".." << (starting_copies_start + z - 1)
+                       << ", 2N-1 = " << (size - 1) << "); raise -c";
+                    throw std::runtime_error(os.str());
+                }
+
                 if (options.verbose) {
                     std::cout << "Creating Wright-Fisher matrix:" << std::endl;
                     std::cout << "  Population size: " << options.population_size << std::endl;
@@ -1169,10 +1213,7 @@ int main(int argc, char const *argv[]) {
                 
                 // Subtract identity for solving
                 W.Q->subtractIdentity();
-                
-                // Size of the problem - for FIXATION_ONLY we exclude the last row/column
-                llong size = (2 * options.population_size);
-                
+
                 // Create solver
                 solver::Solver* solver = solver::SolverFactory::createSolver(
                     options.library, *W.Q, MKL_PARDISO_MATRIX_TYPE_REAL_UNSYMMETRIC, msg_level
@@ -1390,6 +1431,10 @@ int main(int argc, char const *argv[]) {
                     
                     dvec id(size);
                     std::vector<llong> starts;
+
+                    // The range guard for this loop runs at the top of the
+                    // FIXATION case, before WF::Single, so a refusal leaves no
+                    // --output-Q behind. See the note there.
 
                     // Integrate over starting number of copies
                     for (llong i = 0; i < z; i++) {
@@ -2159,8 +2204,37 @@ int main(int argc, char const *argv[]) {
 
                 llong x = options.observed_copies; // Already 0-based from args parser
                 llong size = (2 * options.population_size) - 1;
-                
-                
+
+                // Same guard --absorption carries (its `z > size` refusal),
+                // which this branch was missing. The integration loop far
+                // below writes e_p(i) for i = 0..z-1 into a vector of length
+                // `size`, so z must not exceed it -- identical arithmetic to
+                // --absorption's, because the index here is i as well.
+                //
+                // With 4Nu > 1 the injection distribution runs past the 2N-1
+                // transient states, and --force does not stop it. What made
+                // this one easy to miss is that the out-of-range access does
+                // not announce itself: measured on the pre-fix binary,
+                // `--allele-age -N 6 -s 0 -u 1e-9 -v 0.2 -x 1 --force`
+                // (z = 12, size = 11) exited 1 with "computed E_T is not
+                // finite (nan) ... not resolvable in double precision", which
+                // blames the model. The model is fine -- the same run with
+                // -c 1e-8, which only shrinks z below size, returns
+                // E[T] = 1.9897638598472314. The nan was the indexing, and the
+                // diagnostic pointed at the wrong thing entirely.
+                //
+                // Placed BEFORE WF::Single: a check after the matrix is built
+                // leaves --output-Q and --output-R on disk at a nonzero exit,
+                // the "refuse but litter" shape section_refusal_leaves_nothing
+                // already fixed in --establishment.
+                if (options.starting_copies < 0 && z > size) {
+                    std::ostringstream os;
+                    os << "integration range exceeds the transient state "
+                          "space (z = " << z << ", 2N-1 = " << size
+                       << "); raise -c";
+                    throw std::runtime_error(os.str());
+                }
+
                 // Create Wright-Fisher matrix with both absorbing states
                 WF::Matrix W = WF::Single(
                     options.population_size, options.population_size, 
@@ -2263,6 +2337,10 @@ int main(int argc, char const *argv[]) {
                 dmat aa_N;
 
                 if (options.starting_copies < 0) { // Use integration (starting_copies is set to -1 when no -p flag)
+
+                    // The range guard for this loop runs above, before
+                    // WF::Single, so a refusal leaves no --output-Q behind.
+                    // See the note there.
 
                     aa_N.resize(z, size);
                     // Integrate over starting distribution

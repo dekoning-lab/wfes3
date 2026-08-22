@@ -169,7 +169,21 @@ def _n_passed_m_failed(text: str):
 # --------------------------------------------------------------------------
 EXPECTED = [
     ("validate_baselines.py",                  _pass_fail,           54),
-    ("test_invalid_output_single.py",          _pass_fail,          162),
+    # 162 -> 178 (2026-08-21, task FINAL): +16 for the two missing injection
+    # range guards, in section_injection_range_guards. --absorption has always
+    # refused an integration range that overruns its state space, and
+    # --establishment got the same guard in CX1a; --fixation's and
+    # --allele-age's injection loops had none, so with 4Nu > 1 they indexed
+    # outside their vectors under --force. Eight checks per mode: the six
+    # repeated runs exit 1 with one identical diagnostic (the pre-fix fixation
+    # repro returned 0, 133 and 138 from the same command line -- three
+    # outcomes, one of them a printed number), the diagnostic names the range
+    # and the bound, nothing is published, no --output-Q survives the refusal,
+    # and the in-range neighbour of each still computes. The allele-age pair
+    # also pins that the overrun is no longer reported as a double-precision
+    # failure, and that the neighbour returns the E[T] the pre-fix binary
+    # called unresolvable.
+    ("test_invalid_output_single.py",          _pass_fail,          178),
     ("test_single_output_matrix.py",           _pass_fail,          343),
     # 294 -> 306 (2026-08-21, task CX8): +12. Not new test code -- the same
     # per-field loop in check_csv_header, run over two new columns. Both --csv
