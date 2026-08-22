@@ -6,7 +6,9 @@
 
 <p align="center"><em>Why simulate when you can solve?</em></p>
 
-<p align="center"><strong>Initial beta release</strong></p>
+<p align="center"><strong>Version 3: Initial beta release</strong></p>
+
+The Wright Fisher Exact Solver, `WFES` ['double-u fez'] is a toolbox for making **fast, scalable matrix computations** in population genetics and molecular evolution **without diffusion theory approximations or simulation**. 
 
 WFES computes exact quantities under Wright-Fisher models of population
 genetics: fixation and absorption probabilities, sojourn and absorption times
