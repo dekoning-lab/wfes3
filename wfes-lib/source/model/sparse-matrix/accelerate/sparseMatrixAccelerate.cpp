@@ -242,30 +242,28 @@ SparseMatrix* SparseMatrixAccelerate::multiply(SparseMatrix& B, bool transpose) 
     #endif
 }
 
-void SparseMatrixAccelerate::saveMarket(std::string filename) {
+void SparseMatrixAccelerate::saveSparseCsv(std::string filename) {
     std::ofstream file(filename);
     if (!file.is_open()) {
         throw std::runtime_error("Cannot open file for writing: " + filename);
     }
-    
-    // Write Matrix Market header.
-    // Use values.size() rather than the nnz member: matrices are commonly
-    // exported (--output-Q/--output-R) before the solver calls
-    // finalizeConstruction(), which is where nnz was historically first set.
-    // Emitting a stale nnz produced headers declaring 0 non-zeros above
-    // thousands of coordinate entries, which strict readers such as
-    // scipy.io.mmread reject outright.
-    file << "%%MatrixMarket matrix coordinate real general\n";
-    file << rows << " " << cols << " " << values.size() << "\n";
-    
-    // Write matrix entries
+
+    // A header row, then one stored entry per line with 1-based indices.
+    // No non-zero count is declared: the old Matrix Market header needed one,
+    // and getting it right meant counting values.size() rather than the nnz
+    // member, because matrices are commonly exported (--output-Q/--output-R)
+    // before the solver calls finalizeConstruction() where nnz was first set.
+    // A stale count produced headers declaring 0 non-zeros above thousands of
+    // entries, which strict readers rejected. Nothing declares a count now.
+    file << "row,col,value\n";
+
     for (llong i = 0; i < rows; ++i) {
         for (llong j = row_pointers[i]; j < row_pointers[i + 1]; ++j) {
-            file << (i + 1) << " " << (column_indices[j] + 1) << " " 
+            file << (i + 1) << "," << (column_indices[j] + 1) << ","
                  << std::scientific << std::setprecision(16) << values[j] << "\n";
         }
     }
-    
+
     file.close();
 }
 

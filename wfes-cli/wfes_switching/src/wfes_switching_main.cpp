@@ -503,7 +503,7 @@ int main(int argc, char const *argv[]) {
             
             // Output matrices if requested
             if (!options.output_Q_path.empty()) {
-                W.Q->saveMarket(options.output_Q_path);
+                W.Q->saveSparseCsv(options.output_Q_path);
             }
             if (!options.output_R_path.empty()) {
                 CLI::OutputFormatter::write_matrix_to_file(W.R, options.output_R_path);

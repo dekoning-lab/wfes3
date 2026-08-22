@@ -117,7 +117,7 @@ MODE_ARGS = {
 }
 
 # The specification. Per mode, per flag:
-#   ("mtx", rows, cols)  MatrixMarket file with those dimensions
+#   ("coo", rows, cols)  sparse `row,col,value` CSV spanning those dimensions
 #   ("csv", rows, cols)  comma-separated rows; None means "any positive count"
 #   ("vec", n)           one value per line
 #   ("refuse",)          nonzero exit naming the flag and the mode, no file
@@ -131,7 +131,7 @@ MODE_ARGS = {
 # --output-E/--output-V keep their documented single-mode scope.
 SPEC = {
     "absorption": {
-        "Q": ("mtx", SIZE_TRANSIENT, SIZE_TRANSIENT),
+        "Q": ("coo", SIZE_TRANSIENT, SIZE_TRANSIENT),
         "R": ("csv", SIZE_TRANSIENT, 2),
         "N": ("csv", None, SIZE_TRANSIENT),
         "N-ext": ("csv", None, SIZE_TRANSIENT),
@@ -142,7 +142,7 @@ SPEC = {
         "V": ("refuse",),
     },
     "fixation": {
-        "Q": ("mtx", SIZE_FIXATION, SIZE_FIXATION),
+        "Q": ("coo", SIZE_FIXATION, SIZE_FIXATION),
         "R": ("csv", SIZE_FIXATION, 1),
         "N": ("csv", None, SIZE_FIXATION),
         "N-ext": ("refuse",),
@@ -153,7 +153,7 @@ SPEC = {
         "V": ("refuse",),
     },
     "fundamental": {
-        "Q": ("mtx", SIZE_TRANSIENT, SIZE_TRANSIENT),
+        "Q": ("coo", SIZE_TRANSIENT, SIZE_TRANSIENT),
         "R": ("csv", SIZE_TRANSIENT, 2),
         "N": ("csv", 1, SIZE_TRANSIENT),
         "N-ext": ("csv", 1, SIZE_TRANSIENT),
@@ -164,7 +164,7 @@ SPEC = {
         "V": ("csv", SIZE_TRANSIENT, SIZE_TRANSIENT),
     },
     "equilibrium": {
-        "Q": ("mtx", SIZE_FULL, SIZE_FULL),
+        "Q": ("coo", SIZE_FULL, SIZE_FULL),
         "R": ("refuse",),
         "N": ("refuse",),
         "N-ext": ("refuse",),
@@ -175,7 +175,7 @@ SPEC = {
         "V": ("refuse",),
     },
     "establishment": {
-        "Q": ("mtx", EST_DIM, EST_DIM),
+        "Q": ("coo", EST_DIM, EST_DIM),
         "R": ("csv", EST_DIM, 2),
         "N": ("csv", None, EST_DIM),
         "N-ext": ("refuse",),
@@ -186,7 +186,7 @@ SPEC = {
         "V": ("refuse",),
     },
     "allele-age": {
-        "Q": ("mtx", SIZE_TRANSIENT, SIZE_TRANSIENT),
+        "Q": ("coo", SIZE_TRANSIENT, SIZE_TRANSIENT),
         "R": ("csv", SIZE_TRANSIENT, 2),
         "N": ("csv", None, SIZE_TRANSIENT),
         "N-ext": ("csv", None, SIZE_TRANSIENT),
@@ -197,7 +197,7 @@ SPEC = {
         "V": ("refuse",),
     },
     "non-absorbing": {
-        "Q": ("mtx", SIZE_FULL, SIZE_FULL),
+        "Q": ("coo", SIZE_FULL, SIZE_FULL),
         "R": ("refuse",),
         "N": ("refuse",),
         "N-ext": ("refuse",),
@@ -233,15 +233,37 @@ def read_csv_shape(path: Path) -> tuple[int, int]:
     return len(rows), (widths.pop() if len(widths) == 1 else -1)
 
 
-def read_mtx_shape(path: Path) -> tuple[int, int]:
-    for line in path.read_text().splitlines():
-        if line.startswith("%"):
-            continue
-        parts = line.split()
-        if len(parts) >= 2:
-            return int(parts[0]), int(parts[1])
-        break
-    return 0, 0
+def read_coo_shape(path: Path) -> tuple[int, int, str]:
+    """Shape of a sparse `row,col,value` CSV, plus a reason string when unusable.
+
+    These files carry no declared dimension line -- that went away with Matrix
+    Market format -- so the shape is the largest stored index in each axis. That
+    is exact only when the last row and the last column each hold at least one
+    stored entry. Every Wright-Fisher matrix here does, because every row sums
+    to 1, and the dimension assertions in the caller are what keep that honest:
+    if a trailing row or column were ever entirely truncated away, the expected
+    dimensions below would stop matching rather than silently shrinking.
+    """
+    lines = [ln for ln in path.read_text().splitlines() if ln.strip()]
+    if not lines:
+        return 0, 0, "file is empty"
+    if lines[0].strip() != "row,col,value":
+        return 0, 0, f"first line is not the CSV header: {lines[0][:40]!r}"
+    max_r = max_c = 0
+    for ln in lines[1:]:
+        parts = ln.split(",")
+        if len(parts) != 3:
+            return 0, 0, f"expected 3 comma-separated fields, got {len(parts)}: {ln[:40]!r}"
+        try:
+            r, c, v = int(parts[0]), int(parts[1]), float(parts[2])
+        except ValueError:
+            return 0, 0, f"unparseable entry: {ln[:40]!r}"
+        if r < 1 or c < 1:
+            return 0, 0, f"indices are 1-based; got row={r} col={c}"
+        if not math.isfinite(v):
+            return 0, 0, f"non-finite value at ({r},{c}): {parts[2]}"
+        max_r, max_c = max(max_r, r), max(max_c, c)
+    return max_r, max_c, ""
 
 
 def read_vector(path: Path) -> list[float]:
@@ -284,10 +306,11 @@ def section_matrix(binary: Path) -> None:
                              "missing" if not out.exists() else "zero bytes"):
                     continue
                 kind = spec[0]
-                if kind == "mtx":
-                    r, c = read_mtx_shape(out)
-                    check((r, c) == (spec[1], spec[2]),
-                          f"{label}: MatrixMarket dims {spec[1]}x{spec[2]}", f"got {r}x{c}")
+                if kind == "coo":
+                    r, c, why = read_coo_shape(out)
+                    check((r, c) == (spec[1], spec[2]) and not why,
+                          f"{label}: sparse CSV spans {spec[1]}x{spec[2]}",
+                          why or f"got {r}x{c}")
                 elif kind == "csv":
                     r, c = read_csv_shape(out)
                     check(c == spec[2], f"{label}: {spec[2]} columns", f"got {c}")

@@ -112,7 +112,7 @@ int main(int argc, char const *argv[]) {
         // --output-Q / --output-R. Both were offered by the GUI and accepted by
         // nothing; the matrices they name are right here.
         if (!options.output_Q_path.empty()) {
-            wf.Q->saveMarket(options.output_Q_path);
+            wf.Q->saveSparseCsv(options.output_Q_path);
         }
         if (!options.output_R_path.empty()) {
             CLI::OutputFormatter::write_matrix_to_file(wf.R, options.output_R_path);

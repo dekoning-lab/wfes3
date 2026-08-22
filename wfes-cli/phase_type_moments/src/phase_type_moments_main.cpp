@@ -101,7 +101,7 @@ int main(int argc, char const *argv[]) {
         // --output-Q / --output-R; see the note in the args parser. Written
         // before subtractIdentity() below so the file holds Q itself, not (Q-I).
         if (!options.output_Q_path.empty()) {
-            wf_mat.Q->saveMarket(options.output_Q_path);
+            wf_mat.Q->saveSparseCsv(options.output_Q_path);
         }
         if (!options.output_R_path.empty()) {
             CLI::OutputFormatter::write_matrix_to_file(wf_mat.R, options.output_R_path);

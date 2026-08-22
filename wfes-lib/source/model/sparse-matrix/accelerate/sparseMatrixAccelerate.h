@@ -68,7 +68,7 @@ public:
     virtual void subtractIdentity() override;
     virtual double search(int i, int j) override;
     virtual void setValue(double x, int i, int j) override;
-    virtual void saveMarket(std::string path) override;
+    virtual void saveSparseCsv(std::string path) override;
     
     // Additional helper methods for Accelerate-specific operations
     SparseMatrix_Double getAccelerateMatrix() const { return matrix; }

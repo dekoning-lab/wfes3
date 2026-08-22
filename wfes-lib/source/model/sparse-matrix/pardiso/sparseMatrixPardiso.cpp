@@ -3,19 +3,19 @@
 #include <stdexcept>
 #include <string>
 
-#ifdef WFES_CLI
 #include <iostream>
 #include <fstream>
 #include <iomanip>
-#endif
 
-// NOT COMPILE-VERIFIED ON macOS: this translation unit is in the build only on
-// non-Apple platforms (see the platform branch in wfes-cli/CMakeLists.txt), so
-// the assert() -> throw conversion below was made mechanically and checked by
-// inspection only. It must be compiled once on Linux/MKL before the next Linux
-// release. The conversion matters because wfes-cli defaults to Release
-// (-DNDEBUG): the four realloc() checks became NULL-pointer dereferences the
-// moment assertions stopped being compiled in.
+// This translation unit is in the build only on non-Apple platforms (see the
+// platform branch in wfes-cli/CMakeLists.txt), so nothing here is exercised by
+// a macOS build and every change to it needs a Linux/MKL compile before it
+// ships. The assert() -> throw conversions below matter because wfes-cli
+// defaults to Release (-DNDEBUG): the four realloc() checks would otherwise
+// have become NULL-pointer dereferences the moment assertions stopped being
+// compiled in. Compiled and run against MKL/Pardiso on Linux 2026-08-22
+// (full baseline suite green), which is what retired the earlier
+// "not compile-verified" warning that stood here.
 
 using namespace wfes::pardiso;
 using namespace wfes::utils;
@@ -419,53 +419,24 @@ void SparseMatrixPardiso::resizeVectors(){
     data = data_new;
 }
 
-void SparseMatrixPardiso::saveMarket(std::string name) {
-#ifndef WFES_CLI
-    QString outputPath(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Wfes/");
-    QDir dir;
-
-    if (!dir.exists(outputPath))
-        dir.mkpath(outputPath);
-
-    QFile file(outputPath + QString::fromStdString(name));
-    file.open(QIODevice::WriteOnly);
-
-    if(!file.isOpen()) {
-        qDebug() << "The file is not open.";
-    }
-
-    QTextStream outStream(&file);
-    outStream << "%%%%MatrixMarket matrix coordinate real general\n";
-
-    llong num_rows_l = (llong)num_rows;
-    llong num_cols_l = (llong)num_cols;
-    llong num_non_zeros_l = (llong)num_non_zeros;
-
-    outStream << num_rows_l << "\t" << num_cols_l << "\t" << num_non_zeros_l << "\n";
-
-    for (llong i = 0; i < num_rows; ++i) {
-        for (llong j = row_index[i]; j < row_index[i + 1]; ++j) {
-            outStream << i+1 << "\t" << cols[j] + 1 << "\t" << data[j] << "\n";
-        }
-    }
-    file.close();
-#else
-    // CLI version - write directly to current directory
+void SparseMatrixPardiso::saveSparseCsv(std::string name) {
     std::ofstream file(name);
     if (!file.is_open()) {
         throw std::runtime_error(
-            "SparseMatrixPardiso::saveMarket(): Cannot open file for writing: " + name);
+            "SparseMatrixPardiso::saveSparseCsv(): Cannot open file for writing: " + name);
     }
 
-    file << "%%MatrixMarket matrix coordinate real general\n";
-    file << num_rows << "\t" << num_cols << "\t" << num_non_zeros << "\n";
+    // Header row, then one stored entry per line, 1-based. The old Matrix
+    // Market header declared a non-zero count taken from num_non_zeros, which
+    // is only set at finalizeConstruction() -- exporting before then wrote a
+    // header disagreeing with the body. A CSV header declares no count.
+    file << "row,col,value\n";
 
     for (llong i = 0; i < num_rows; ++i) {
         for (llong j = row_index[i]; j < row_index[i + 1]; ++j) {
-            file << i+1 << "\t" << cols[j] + 1 << "\t"
+            file << i+1 << "," << cols[j] + 1 << ","
                  << std::scientific << std::setprecision(16) << data[j] << "\n";
         }
     }
     file.close();
-#endif
 }

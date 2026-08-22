@@ -361,7 +361,7 @@ int main(int argc, char const *argv[]) {
         
         // Output matrices if requested
         if (output_Q_f) {
-            wf.Q->saveMarket(args::get(output_Q_f));
+            wf.Q->saveSparseCsv(args::get(output_Q_f));
         }
         if (output_R_f) {
             CLI::OutputFormatter::write_matrix_to_file(wf.R, args::get(output_R_f));

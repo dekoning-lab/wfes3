@@ -522,7 +522,7 @@ int main(int argc, char const *argv[]) {
         
         // Output Q matrix if requested
         if (!options.output_Q_path.empty()) {
-            W.Q->saveMarket(options.output_Q_path);
+            W.Q->saveSparseCsv(options.output_Q_path);
         }
         
         // Subtract identity

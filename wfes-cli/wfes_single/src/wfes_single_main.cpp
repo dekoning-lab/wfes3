@@ -1205,7 +1205,7 @@ int main(int argc, char const *argv[]) {
                 
                 // Output matrices if requested
                 if (!options.output_Q_path.empty()) {
-                    W.Q->saveMarket(options.output_Q_path);
+                    W.Q->saveSparseCsv(options.output_Q_path);
                 }
                 if (!options.output_R_path.empty()) {
                     CLI::OutputFormatter::write_matrix_to_file(W.R, options.output_R_path);
@@ -1517,7 +1517,7 @@ int main(int argc, char const *argv[]) {
                 
                 // Output matrices if requested
                 if (!options.output_Q_path.empty()) {
-                    W.Q->saveMarket(options.output_Q_path);
+                    W.Q->saveSparseCsv(options.output_Q_path);
                 }
                 if (!options.output_R_path.empty()) {
                     CLI::OutputFormatter::write_matrix_to_file(W.R, options.output_R_path);
@@ -1909,7 +1909,7 @@ int main(int argc, char const *argv[]) {
                 // point of use rather than leaving the file to be
                 // misinterpreted later.
                 if (!options.output_Q_path.empty()) {
-                    W.Q->saveMarket(options.output_Q_path);
+                    W.Q->saveSparseCsv(options.output_Q_path);
                     std::cerr << "Note: --output-Q in --equilibrium writes the "
                                  "equilibrium SOLVING matrix over counts 0..2N "
                                  "(I - P with its last column replaced by the "
@@ -1970,7 +1970,7 @@ int main(int argc, char const *argv[]) {
                 
                 // Output matrix if requested
                 if (!options.output_Q_path.empty()) {
-                    W.Q->saveMarket(options.output_Q_path);
+                    W.Q->saveSparseCsv(options.output_Q_path);
                 }
 
                 // Output results. This mode's entire product is the matrix, so
@@ -2006,7 +2006,7 @@ int main(int argc, char const *argv[]) {
                 
                 // Output matrices if requested
                 if (!options.output_Q_path.empty()) {
-                    W.Q->saveMarket(options.output_Q_path);
+                    W.Q->saveSparseCsv(options.output_Q_path);
                 }
                 if (!options.output_R_path.empty()) {
                     CLI::OutputFormatter::write_matrix_to_file(W.R, options.output_R_path);
@@ -2247,7 +2247,7 @@ int main(int argc, char const *argv[]) {
                 
                 // Output matrices if requested
                 if (!options.output_Q_path.empty()) {
-                    W.Q->saveMarket(options.output_Q_path);
+                    W.Q->saveSparseCsv(options.output_Q_path);
                 }
                 if (!options.output_R_path.empty()) {
                     CLI::OutputFormatter::write_matrix_to_file(W.R, options.output_R_path);
@@ -2806,7 +2806,7 @@ int main(int argc, char const *argv[]) {
                               << " transient states." << std::endl;
                 }
                 if (!options.output_Q_path.empty()) {
-                    W_tr.Q->saveMarket(options.output_Q_path);
+                    W_tr.Q->saveSparseCsv(options.output_Q_path);
                 }
                 if (!options.output_R_path.empty()) {
                     CLI::OutputFormatter::write_matrix_to_file(W_tr.R, options.output_R_path);

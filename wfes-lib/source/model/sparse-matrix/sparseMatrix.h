@@ -277,14 +277,27 @@ namespace wfes {
                 /**
                  * @brief Save matrix in Matrix Market format
                  * 
-                 * Writes the sparse matrix to a file in the standard Matrix
-                 * Market exchange format (.mtx). This format is readable by
-                 * many scientific computing tools.
-                 * 
+                 * Writes the sparse matrix as CSV coordinate triples: a
+                 * `row,col,value` header followed by one stored entry per
+                 * line, with 1-based indices.
+                 *
+                 * Coordinate rather than a dense grid because these matrices
+                 * are banded and the band narrows as N grows -- a dense export
+                 * is O(N^2) and mostly zeros (12% density at N = 2000, where a
+                 * dense CSV would be ~400 MB against 64 MB here, and worse
+                 * above that). Entries absent from the file are zero.
+                 *
+                 * This replaced Matrix Market format, whose header had to
+                 * declare a non-zero count up front; that count was read from
+                 * different members by the two backends and could be stale
+                 * when a matrix was exported before finalizeConstruction(),
+                 * producing headers that strict readers rejected. A CSV header
+                 * row states no count, so there is none to get wrong.
+                 *
                  * @param path Output file path
                  * @throws std::runtime_error if file cannot be written
                  */
-                virtual void saveMarket(std::string path) = 0;
+                virtual void saveSparseCsv(std::string path) = 0;
 
         };
 

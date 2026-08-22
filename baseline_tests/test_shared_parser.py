@@ -617,7 +617,7 @@ def section_file_writer_guard(bindir: Path):
     #    run (a pre-existing, unrelated "matrix is singular" guard). What is
     #    deliberately NOT asserted is that the Q file itself comes out clean
     #    -- --output-Q on every tool that offers it writes Q via
-    #    SparseMatrix::saveMarket, a path that does not go through
+    #    SparseMatrix::saveSparseCsv, a path that does not go through
     #    OutputFormatter at all (wfes_switching's --absorption mode is the
     #    one exception, and does not reproduce this case). That
     #    Q-construction defect is real, pre-existing and confirmed on this

@@ -9,12 +9,6 @@
 
 #include <boost/math/special_functions/fpclassify.hpp>
 
-#ifndef WFES_CLI
-#include <qstandardpaths.h>
-#include <QFile>
-#include <QDir>
-#endif
-
 using namespace wfes::sparsematrix;
 
 namespace wfes{
@@ -229,7 +223,7 @@ namespace wfes{
                  * @brief Save matrix into a file.
                  * @param name Name of the file.
                  */
-                void saveMarket(std::string name) override;
+                void saveSparseCsv(std::string name) override;
         };
 
     }
