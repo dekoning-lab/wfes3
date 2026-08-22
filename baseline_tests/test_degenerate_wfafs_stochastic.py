@@ -124,27 +124,64 @@ Note on the recorded md5s
 -------------------------
 LEGIT_CASES below locks the stdout of fifteen healthy models byte for byte, so
 that a guard added to the degenerate paths cannot quietly move a healthy one
-with it. The digests were recorded from a build of the PRE-FIX code on
-macOS/arm64 with the platform-default solver backend. Seven of them
+with it. The digests were originally recorded from a build of the PRE-FIX code
+on macOS/arm64 with the platform-default solver backend. Seven of them
 (2a401eaf..., cc34451c..., 8412ae9e..., 851ca08f..., c8162ef5..., 57115501...,
 e46d55da...) were recorded independently during the investigation that found
-these defects and are reproduced here unchanged; 2a401eaf... is additionally
-the value already locked by test_degenerate_wfafs_sweep.py.
+these defects.
 
-Thirteen of the fifteen are also byte-identical to the shipped
-/Applications/WFES3.app binary. Two are not, for reasons that predate this work
-and are unrelated to it:
+SEVEN OF THE FIFTEEN WERE RE-RECORDED IN TASK CX-PROJ (2026-08-21), on this
+commit, from a Release build in wfes-cli/build-proj. They are the seven whose
+model actually COMPRESSES in the down-projection, and they moved because that
+step now SUMS the states in each output bin instead of averaging them:
 
-  * the single --no-project case, because the --no-project semantics fix (it
-    now keeps the up-projected spectrum, as its help says) landed after that
-    app was built;
-  * the --csv case, because csv output moved from the stream default of 6
-    significant figures to round-trip precision.
+    f = 2,2                       2a401eaf... -> 272ee5c8...
+    f = 3,2                       cc34451c... -> 3b494d26...
+    f = 4,2                       8412ae9e... -> 1fac2610...
+    3 epochs, f = 10,10,10        c8162ef5... -> 99796d63...
+    f = 25,25                     8d743300... -> 58930637...
+    selection/dominance, f = 2,2  2a81fbb2... -> 846bf278...
+    csv output, f = 2,2           57115501... -> d1bf3d1d...
 
-Those two carry ship_match=False and are skipped by the --reference comparison
-rather than being asserted against a stale binary. Count them from the list
-itself, not from this paragraph: it said "twelve"/"three"/"the two --no-project
-cases" through one review cycle while the list held 13 True and 2 False.
+The old values published a spectrum missing about (1 - 1/bin-count) of its
+SEGREGATING mass -- 54% of it at f = 2,2, 90% at the 3-epoch f = 10,10,10 --
+and the change was approved by the PI on exactly that basis, knowing that
+default f != 1 outputs move. The rationale, the measurements and the mechanism
+are in test_down_projection_conserves_mass below, which asserts the property
+the new digests encode rather than merely locking them.
+
+The other EIGHT are byte-identical across the change, and which eight is itself
+the evidence that the change is the binning and nothing else:
+
+  * six are f == 1 runs, which never enter the projection block at all;
+  * one is the --no-project run, which takes the branch that skips the
+    down-projection;
+  * one is `-f 0.5`, which does enter it. That model EXPANDS (19 interior
+    states into 39 bins), so no bin receives more than one state, and there
+    the average and the sum are the same number. Its digest not moving is a
+    direct check that only multi-state bins were ever affected.
+
+Reference-binary comparison. Nine of the fifteen are byte-identical to the
+shipped /Applications/WFES3.app binary; the reference mode of each case is the
+fourth field of its tuple:
+
+  * True -- assert byte-identical.
+  * "cx-proj" -- the six JSON cases re-recorded above. The shipped binary was
+    verified (task CX-proj) to still produce the pre-fix AVERAGED spectrum, so
+    these are not skipped: the reference is asserted to diverge in exactly the
+    intended way -- same two boundary classes to the bit, a total short of 1,
+    while ours sums to 1. A divergence of any other shape fails.
+  * False -- skipped, for a divergence that predates this work: the
+    --no-project case, because the --no-project semantics fix (it now keeps
+    the up-projected spectrum, as its help says) landed after that app was
+    built; and the --csv case, because csv output moved from the stream
+    default of 6 significant figures to round-trip precision. The csv case is
+    ALSO a CX-proj case, but it has no --json to compare structurally, so it
+    stays a plain skip.
+
+Count the modes from the list itself, not from this paragraph: it said
+"twelve"/"three"/"the two --no-project cases" through one review cycle while
+the list held 13 True and 2 False.
 
 A mismatch on any recorded md5 means either a regression in the healthy path or
 an unrelated change to how this tool formats output; check which before
@@ -335,7 +372,11 @@ STARTING_COPIES_ACCEPTED = [
 FAULTS = LENGTH_FAULTS + PSI_FAULTS + STARTING_COPIES_FAULTS
 
 # ---------------------------------------------------------------------------
-# Legitimate models: (label, argv, md5-of-stdout, matches-shipped-binary)
+# Legitimate models: (label, argv, md5-of-stdout, reference-mode)
+#
+# reference-mode is True (byte-identical to the shipped binary), False (skip
+# the comparison) or "cx-proj" (assert the intended divergence). See the
+# module docstring's "Note on the recorded md5s".
 # ---------------------------------------------------------------------------
 LEGIT_CASES = [
     ("defaults, 1 model",
@@ -344,24 +385,36 @@ LEGIT_CASES = [
     ("defaults, 2 models",
      ["-N", "10,10", "-G", "10,10", "-f", "1,1", "--json"],
      "721955ba8a014165d760bc3590d11e3e", True),
+    # CX-proj re-record: was 2a401eaf33ea2e3b175d77940d3c0071 (averaged bins).
+    # This is additionally the value locked by test_degenerate_wfafs_sweep.py,
+    # which was re-recorded in the same commit.
     ("f = 2,2 (projection runs)",
      ["-N", "20,10", "-G", "10,5", "-f", "2,2", "--json"],
-     "2a401eaf33ea2e3b175d77940d3c0071", True),
+     "272ee5c8af127c7035fdcb76628f788b", "cx-proj"),
+    # CX-proj re-record: was cc34451c483e2f97e5e72b163a2cdf58.
     ("f = 3,2 (unequal factors)",
      ["-N", "30,20", "-G", "20,10", "-f", "3,2", "--json"],
-     "cc34451c483e2f97e5e72b163a2cdf58", True),
+     "3b494d2621d2c695e24d0c31cabfbf8e", "cx-proj"),
+    # CX-proj re-record: was 8412ae9ed556480bccdf46a096791e22.
     ("f = 4,2 (unequal factors)",
      ["-N", "200,100", "-G", "100,50", "-f", "4,2", "--json"],
-     "8412ae9ed556480bccdf46a096791e22", True),
+     "1fac26102f1d52760e8c4b20949722f3", "cx-proj"),
+    # CX-proj re-record: was c8162ef5cdf434de634197532fbd9c4d. The worst of the
+    # measured cases -- 1999 interior states into 199 bins, so the averaged
+    # spectrum kept a tenth of its segregating mass.
     ("3 epochs with projection",
      ["-N", "2000,200,1000", "-G", "400,40,200", "-f", "10,10,10", "--json"],
-     "c8162ef5cdf434de634197532fbd9c4d", True),
+     "99796d63fadc5b152b52a33fec60349d", "cx-proj"),
+    # NOT re-recorded, and deliberately kept in the list for that reason: this
+    # model expands rather than compresses, so every bin takes at most one
+    # state and averaging and summing coincide. See the module docstring.
     ("f = 0.5 (factor below 1)",
      ["-N", "10", "-G", "10", "-f", "0.5", "--json"],
      "8c8014d7c05d8cebaf62d4edfd2b9da9", True),
+    # CX-proj re-record: was 8d7433000e81729092406593e53e4406.
     ("f = 25,25 on a large model",
      ["-N", "5000,500", "-G", "1000,100", "-f", "25,25", "--json"],
-     "8d7433000e81729092406593e53e4406", True),
+     "589306378bc0b3a16882b5e1884903a9", "cx-proj"),
     # The false-positive case the -f rescaling creates. u = 1e-17 as TYPED
     # would make 1 - u round to 1, but WF::Switching is handed u * f = 1e-15
     # for model 1 and the last factor is 1, so the up-projection never runs.
@@ -381,15 +434,20 @@ LEGIT_CASES = [
      ["-N", "100", "-G", "100", "-f", "1", "-s", "0", "-h", "0.5",
       "-u", "2.5e-6", "-v", "2.5e-6", "--json"],
      "d67ab18d0643f6a6a4e8badca203d377", True),
+    # CX-proj re-record: was 2a81fbb2ec474eec8b27378b63996c6d.
     ("selection and dominance, 2 models",
      ["-N", "200,100", "-G", "100,50", "-f", "2,2", "-s", "0.01,0.01",
       "-h", "0.5,0.5", "--json"],
-     "2a81fbb2ec474eec8b27378b63996c6d", True),
+     "846bf27800ce7271c64c6d1398555cd1", "cx-proj"),
     # csv and --no-project: see the module docstring for why these two do not
-    # match the shipped binary.
+    # match the shipped binary. CX-proj re-record: was
+    # 571155019e595eda5cc394b8bc888754 -- the same f = 2,2 model as above, so
+    # its numbers moved for the CX-proj reason too, but its reference mode
+    # stays False because csv precision already diverged and there is no
+    # --json here to compare structurally.
     ("csv output, f = 2,2",
      ["-N", "20,10", "-G", "10,5", "-f", "2,2", "--csv"],
-     "571155019e595eda5cc394b8bc888754", False),
+     "d1bf3d1d9e9ffc264d83e8e899b669d8", False),
     ("--no-project, f = 2,2",
      ["-N", "20,10", "-G", "10,5", "-f", "2,2", "--no-project"],
      "e46d55da4752add66eb229dd4d6b8768", False),
@@ -564,6 +622,44 @@ def test_starting_copies_range(binary: Path, tmp: Path) -> None:
               "signature")
 
 
+def _cx_proj_divergence(label: str, ours: bytes, ref: subprocess.CompletedProcess,
+                        got: str) -> None:
+    """One check: the shipped binary diverges exactly as CX-proj intends.
+
+    The alternative was to drop these six comparisons to a SKIP, which would
+    have retired six byte-for-byte assertions in the same commit that moved the
+    numbers -- precisely when the reference is most worth consulting. The
+    shipped /Applications/WFES3.app binary still runs the AVERAGING
+    down-projection, so the divergence has a known shape and can be asserted
+    positively instead: the two boundary classes are bit-identical (the
+    down-projection copies them either way), the reference total falls short of
+    1 (the segregating mass it dropped), and ours does not. Anything else --
+    including the reference agreeing with us, which would mean this suite is
+    pointed at a rebuilt app -- fails.
+    """
+    ours_doc = parse_json(ours.decode("utf-8", "replace"))
+    ref_doc = parse_json(ref.stdout.decode("utf-8", "replace"))
+    if ref.returncode != 0 or ours_doc is None or ref_doc is None:
+        check(f"[{label}] diverges from the reference binary as CX-proj "
+              f"intends", False,
+              f"reference exit {ref.returncode}; parsed ours="
+              f"{ours_doc is not None}, reference={ref_doc is not None}")
+        return
+    a = [e["probability"] for e in ours_doc["results"]["distribution"]]
+    b = [e["probability"] for e in ref_doc["results"]["distribution"]]
+    same_shape = len(a) == len(b)
+    boundaries = same_shape and a[0] == b[0] and a[-1] == b[-1]
+    ours_sums = abs(sum(a) - 1.0) < 1e-12
+    ref_short = sum(b) < 1.0 - 1e-9
+    ref_md5 = hashlib.md5(strip_provenance(ref.stdout)).hexdigest()
+    check(f"[{label}] diverges from the reference binary as CX-proj intends",
+          same_shape and boundaries and ours_sums and ref_short,
+          f"reference md5 {ref_md5} vs {got}; same length {same_shape}, "
+          f"boundary classes identical {boundaries}, ours sums to "
+          f"{sum(a)!r}, reference sums to {sum(b)!r} (must be short of 1: "
+          f"the segregating mass the averaging dropped)")
+
+
 def test_legitimate_models(binary: Path, reference: Path | None) -> None:
     print("wfafs_stochastic: legitimate models are untouched")
     for label, args, digest, ship_match in LEGIT_CASES:
@@ -572,7 +668,7 @@ def test_legitimate_models(binary: Path, reference: Path | None) -> None:
                      f"exit {proc.returncode}: {text(proc).strip()[:400]}"):
             continue
         got = hashlib.md5(strip_provenance(proc.stdout)).hexdigest()
-        check(f"[{label}] stdout matches the recorded pre-fix md5",
+        check(f"[{label}] stdout matches the recorded md5",
               got == digest, f"recorded {digest}, got {got}")
         # stdout only, per the stderr-scope convention in the module docstring.
         # This site used to sweep both streams, on the argument that a healthy
@@ -587,7 +683,7 @@ def test_legitimate_models(binary: Path, reference: Path | None) -> None:
         check(f"[{label}] no inf/nan token on stdout", not hits,
               f"found {sorted(set(hits))} in: {text(proc).strip()[:300]}")
         if reference is not None:
-            if ship_match:
+            if ship_match is True:
                 ref = run(reference, args)
                 check(f"[{label}] byte-identical to the reference binary",
                       ref.returncode == 0 and strip_provenance(ref.stdout)
@@ -596,6 +692,9 @@ def test_legitimate_models(binary: Path, reference: Path | None) -> None:
                       f"md5 "
                       f"{hashlib.md5(strip_provenance(ref.stdout)).hexdigest()}"
                       f" vs {got}")
+            elif ship_match == "cx-proj":
+                _cx_proj_divergence(label, proc.stdout, run(reference, args),
+                                    got)
             else:
                 print(f"  SKIP  [{label}] reference comparison "
                       "(known pre-existing divergence -- see module docstring)")
@@ -604,21 +703,21 @@ def test_legitimate_models(binary: Path, reference: Path | None) -> None:
 def test_healthy_distribution_is_a_distribution(binary: Path) -> None:
     """The guards must not perturb the numbers they let through.
 
-    The two tolerances differ for a reason that is a property of the tool, not
-    of these guards. The UP-projected spectrum (--no-project) is the raw
-    Q-transpose product and conserves mass to roundoff -- measured 1.1e-15. The
-    DOWN-projected spectrum bins the m-2 interior states into n-2 output bins
-    with equal weights 1/row_integral_counts, i.e. it AVERAGES within each bin
-    rather than summing, so mass conservation is only approximate and the
-    deviation grows with the compression ratio: measured 1.2e-07 for
-    -f 2,2 on -N 20,10, and 3.1e-05 for the 3-epoch -f 10,10,10 model. 1e-3 is
-    therefore the honest bound to assert here; it is still four orders of
-    magnitude tighter than the nan this suite exists to catch.
+    Both spectra now conserve mass to roundoff and both are asserted at 1e-12.
+    That was not always true of the first of them. Until task CX-proj the
+    DOWN-projection AVERAGED the m-2 interior states into the n-2 output bins
+    (`prj_u[i+1] / row_integral_counts[j+1]`) instead of summing them, so it
+    threw away about (1 - 1/bin-count) of the SEGREGATING mass and the total
+    came back short: measured 1.2e-07 for -f 2,2 on -N 20,10 and 3.1e-05 for
+    the 3-epoch -f 10,10,10 model, which is why this check used to be asserted
+    at the honest-but-loose bound of 1e-3. The bins are summed as of CX-proj
+    and the deficit is gone; test_down_projection_conserves_mass below asserts
+    the stronger, tolerance-free property that motivates it.
     """
     print("wfafs_stochastic: a healthy spectrum is still a distribution")
     for label, args, tol in (
             ("f = 2,2 down-projected",
-             ["-N", "20,10", "-G", "10,5", "-f", "2,2", "--json"], 1e-3),
+             ["-N", "20,10", "-G", "10,5", "-f", "2,2", "--json"], 1e-12),
             ("f = 2,2 up-projected",
              ["-N", "20,10", "-G", "10,5", "-f", "2,2", "--no-project",
               "--json"], 1e-9)):
@@ -638,6 +737,96 @@ def test_healthy_distribution_is_a_distribution(binary: Path) -> None:
               f"min {min(probs)}, max {max(probs)}")
         check(f"[{label}] sums to 1 within {tol:g}",
               abs(sum(probs) - 1.0) < tol, f"sum {sum(probs)!r}")
+
+
+# The two halves of the projection, run as a pair. --no-project returns
+# prj_u -- the exact vector the down-projection consumes -- so the two runs
+# straddle the binning step and nothing else, and the comparison needs no
+# reference values from outside this file.
+MASS_CONSERVATION_CASES = [
+    ("f = 2,2", ["-N", "20,10", "-G", "10,5", "-f", "2,2"]),
+    ("3 epochs, f = 10,10,10",
+     ["-N", "2000,200,1000", "-G", "400,40,200", "-f", "10,10,10"]),
+]
+
+
+def test_down_projection_conserves_mass(binary: Path) -> None:
+    """The down-projection must SUM its bins, not average them (task CX-proj).
+
+    THE BUG THIS EXISTS TO CATCH. The down-projection maps the m-2 interior
+    states of the up-projected spectrum onto the n-2 interior states of the
+    model's own space. Every fine state belongs to exactly one output bin, so
+    the operation that preserves probability is a SUM. It divided by
+    row_integral_counts instead -- averaging the states in each bin -- and so
+    published a spectrum missing about (1 - 1/bin-count) of its SEGREGATING
+    mass. Measured on the pre-fix binary:
+
+        -f 2,2 on -N 20,10        segregating 2.1798e-07 -> 1.0059e-07  (-54%)
+        3 epochs, -f 10,10,10     segregating 3.4641e-05 -> 3.4327e-06  (-90%)
+
+    It was easy to miss for one reason: the two BOUNDARY classes are copied
+    across verbatim (prj_d[0] = prj_u[0], prj_d[n-1] = prj_u[m-1]) and under
+    the mutation-drift models this tool solves they carry ~0.5 each, so the
+    total still came back as 0.99999988 and 0.99996879 -- close enough to 1 to
+    look like roundoff in any check written with a loose tolerance. The
+    segregating part, which is the part an allele-frequency spectrum is FOR,
+    had lost half to nine tenths of itself.
+
+    So the assertion is on the segregating mass specifically, at rtol 1e-9,
+    and not only on the total. A total-only check at 1e-12 would also fail
+    today, but it would go on passing for any future model whose boundary
+    classes happen to dominate even harder. --no-project returns prj_u, the
+    input to the binning step, so BEFORE and AFTER come from the same binary
+    on the same model and the check carries no recorded constants to go stale.
+
+    Six checks per case, fixed, so a regression cannot read as CHECKS LOST.
+    """
+    print("wfafs_stochastic: the down-projection conserves mass (CX-proj)")
+    for label, args in MASS_CONSERVATION_CASES:
+        up_proc = run(binary, args + ["--no-project", "--json"])
+        dn_proc = run(binary, args + ["--json"])
+        up_doc = parse_json(up_proc.stdout.decode("utf-8", "replace"))
+        dn_doc = parse_json(dn_proc.stdout.decode("utf-8", "replace"))
+        ok = (up_proc.returncode == 0 and dn_proc.returncode == 0
+              and up_doc is not None and dn_doc is not None)
+        if not check(f"[{label}] both projections exit 0 and parse", ok,
+                     f"--no-project exit {up_proc.returncode}, default exit "
+                     f"{dn_proc.returncode}: "
+                     f"{text(dn_proc).strip()[:300]}"):
+            for tail in ("up-projected spectrum sums to 1 within 1e-9",
+                         "down-projected spectrum sums to 1 within 1e-12",
+                         "segregating mass survives the down-projection "
+                         "(rtol 1e-9)",
+                         "the 0-copy class is carried over unchanged",
+                         "the 2N-copy class is carried over unchanged"):
+                check(f"[{label}] {tail}", False, "a run was refused")
+            continue
+
+        up = [e["probability"] for e in up_doc["results"]["distribution"]]
+        dn = [e["probability"] for e in dn_doc["results"]["distribution"]]
+
+        check(f"[{label}] up-projected spectrum sums to 1 within 1e-9",
+              abs(sum(up) - 1.0) < 1e-9, f"sum {sum(up)!r}")
+        check(f"[{label}] down-projected spectrum sums to 1 within 1e-12",
+              abs(sum(dn) - 1.0) < 1e-12, f"sum {sum(dn)!r}")
+
+        # The whole point. Interior = every state that is neither 0 copies nor
+        # 2N copies, i.e. the segregating part of the spectrum.
+        seg_up, seg_dn = sum(up[1:-1]), sum(dn[1:-1])
+        check(f"[{label}] segregating mass survives the down-projection "
+              f"(rtol 1e-9)",
+              abs(seg_dn - seg_up) <= 1e-9 * abs(seg_up),
+              f"before {seg_up!r} ({len(up) - 2} states) -> "
+              f"after {seg_dn!r} ({len(dn) - 2} bins); "
+              f"relative change {(seg_dn - seg_up) / seg_up:+.3e}. A ratio "
+              f"near 1/bin-count is the averaging bug (CX-proj) returning.")
+
+        # These two are copied, not binned. If they ever stop matching, the
+        # segregating comparison above is measuring the wrong difference.
+        check(f"[{label}] the 0-copy class is carried over unchanged",
+              dn[0] == up[0], f"{up[0]!r} -> {dn[0]!r}")
+        check(f"[{label}] the 2N-copy class is carried over unchanged",
+              dn[-1] == up[-1], f"{up[-1]!r} -> {dn[-1]!r}")
 
 
 def main() -> int:
@@ -671,6 +860,7 @@ def main() -> int:
         test_starting_copies_range(binary, tmp)
         test_legitimate_models(binary, reference)
         test_healthy_distribution_is_a_distribution(binary)
+        test_down_projection_conserves_mass(binary)
 
     print()
     if failures:

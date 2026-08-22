@@ -54,10 +54,20 @@ Note on the recorded md5
 -----------------------
 WFAFS_DEFAULT_MD5 below locks the DEFAULT (no --no-project) output of
 wfafs_stochastic byte for byte, so that a change to the --no-project branch
-cannot quietly move the default path with it. It was recorded from a build of
-the pre-fix code on macOS/arm64 with the platform-default solver backend. A
-mismatch means either that regression, or an unrelated change to how
+cannot quietly move the default path with it. It was originally recorded from a
+build of the pre-fix code on macOS/arm64 with the platform-default solver
+backend. A mismatch means either that regression, or an unrelated change to how
 wfafs_stochastic formats its output -- check which before assuming the worst.
+
+RE-RECORDED IN TASK CX-PROJ (2026-08-21), on this commit, from a Release build
+in wfes-cli/build-proj: 2a401eaf33ea2e3b175d77940d3c0071 ->
+272ee5c8af127c7035fdcb76628f788b. The down-projection now SUMS the fine states
+into each output bin instead of averaging them, which is a PI-approved change
+that moves every f != 1 default spectrum -- this model's segregating mass goes
+from 1.0059e-07 back to the 2.1798e-07 the up-projection actually produced. The
+--no-project half of this suite is unaffected byte for byte, which is what makes
+the pairing here still meaningful. The same digest is locked, and the mechanism
+documented at length, in test_degenerate_wfafs_stochastic.py.
 """
 from __future__ import annotations
 
@@ -86,9 +96,10 @@ WFAFS_MODEL = ["-N", "20,10", "-G", "10,5", "-f", "2,2"]
 WFAFS_N_PROJECTED = 11
 WFAFS_N_UPPROJECTED = 21
 
-# md5 of the raw stdout of `wfafs_stochastic -N 20,10 -G 10,5 -f 2,2 --json`,
-# recorded from the pre-fix build (see module docstring).
-WFAFS_DEFAULT_MD5 = "2a401eaf33ea2e3b175d77940d3c0071"
+# md5 of the raw stdout of `wfafs_stochastic -N 20,10 -G 10,5 -f 2,2 --json`.
+# Re-recorded in task CX-proj; was 2a401eaf33ea2e3b175d77940d3c0071 before the
+# down-projection was made mass-conserving (see module docstring).
+WFAFS_DEFAULT_MD5 = "272ee5c8af127c7035fdcb76628f788b"
 
 # ---------------------------------------------------------------------------
 # Solver-backend provenance lines (task CX8, integrity audit section 2.3)
@@ -348,7 +359,7 @@ def test_wfafs_default_unchanged(wfafs: Path) -> str:
     if not check("exits 0", proc.returncode == 0, f"exit {proc.returncode}: {text(proc)[:400]}"):
         return ""
     digest = hashlib.md5(strip_provenance(proc.stdout)).hexdigest()
-    check("md5 of stdout matches the recorded pre-fix value",
+    check("md5 of stdout matches the recorded value",
           digest == WFAFS_DEFAULT_MD5,
           f"recorded {WFAFS_DEFAULT_MD5}, got {digest}")
     doc = parse_json(proc.stdout.decode())

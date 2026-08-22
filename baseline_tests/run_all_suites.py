@@ -212,7 +212,23 @@ EXPECTED = [
     # typed-value check would falsely refuse. The accepted half is not
     # optional: the pre-fix failure was an all-zero spectrum at exit 0, so an
     # over-refusing guard would look identical in the fault list alone.
-    ("test_degenerate_wfafs_stochastic.py",    _passed_slash,       242),
+    # 242 -> 254 (2026-08-21, task CX-proj): +12 for the down-projection's mass
+    # conservation, in test_down_projection_conserves_mass. The step that maps
+    # the up-projected spectrum back onto the model's own states AVERAGED the
+    # fine states in each output bin instead of summing them, and so published
+    # a spectrum missing about (1 - 1/bin-count) of its SEGREGATING mass: 54%
+    # of it at -f 2,2, 90% at the 3-epoch -f 10,10,10 model. It read as
+    # roundoff because the two boundary classes are copied across verbatim and
+    # carry ~0.5 each, so the total still printed as 0.99999988. Two models x
+    # six checks: both runs parse, each spectrum's total (the up-projected one
+    # at 1e-9, the down-projected one now at 1e-12), the segregating mass
+    # across the binning step at rtol 1e-9, and the two boundary classes bit
+    # for bit. The segregating check is the one that matters -- a total-only
+    # check goes on passing for any model whose boundaries dominate harder.
+    # Measured against the pre-fix binary: 18 of this suite's checks fail on
+    # it (these 5 plus the 13 re-recorded f != 1 digests and reference-mode
+    # assertions), at the same total of 254.
+    ("test_degenerate_wfafs_stochastic.py",    _passed_slash,       254),
     ("test_degenerate_wfafs_sweep.py",         _passed_slash,        47),
     # 189 -> 309 (2026-08-21, task CX8): +120 checks for solver-backend
     # provenance. The eleven tools now publish library_requested and
