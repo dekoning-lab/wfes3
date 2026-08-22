@@ -71,6 +71,42 @@ namespace wfes {
                  * @note Caller is responsible for deleting the returned pointer
                  */
                 static Solver* createSolver(std::string solver, SparseMatrix& A, llong matrix_type = 11LL, llong message_level = 0LL, std::string vienna_solver = "GMRes", std::string preconditioner = "", llong n_rhs = 1LL);
+
+                /**
+                 * @brief The backend createSolver ACTUALLY builds for a request
+                 *
+                 * createSolver does not always serve what was asked for: a
+                 * "--library Accelerate" request is served by SuiteSparse
+                 * whenever this build has SuiteSparse, which is every shipped
+                 * macOS build. Echoing the REQUESTED name into a run's
+                 * provenance record therefore names a backend that never
+                 * executed. This function answers the other half of the
+                 * question, so no caller has to re-derive the substitution
+                 * rule for itself.
+                 *
+                 * Pure: it inspects nothing but @p requested and this build's
+                 * WFES_USE_* macros, so it can be called by a mode that never
+                 * constructs a solver at all.
+                 *
+                 * @param requested The --library value, e.g. "Accelerate"
+                 * @return The name of the backend that would actually run, as
+                 *         spelled by Args_Parser::supported_libraries() (the
+                 *         naming authority): "Pardiso", "Accelerate",
+                 *         "SuiteSparse" or "ParU". Empty when this build has no
+                 *         backend for @p requested -- exactly the cases
+                 *         createSolver throws on. Callers must publish nothing
+                 *         rather than guess; from the CLI this cannot happen,
+                 *         because Args_Parser::validate_library() refuses those
+                 *         values before any of this runs.
+                 *
+                 * @note This function and createSolver encode the same
+                 *       decision and MUST be edited together. They are kept
+                 *       adjacent in solverFactory_with_accelerate.cpp, with the
+                 *       same #ifdef ladder in the same order, so that a new
+                 *       backend or a new substitution is visibly missing from
+                 *       one if it is added only to the other.
+                 */
+                static std::string effectiveLibrary(const std::string& requested);
         };
     }
 }

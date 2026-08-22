@@ -106,3 +106,76 @@ Solver* SolverFactory::createSolver(std::string solver, SparseMatrix& A, llong m
         #endif
     }
 }
+
+// The same decision as createSolver above, reported instead of performed.
+//
+// Every branch below mirrors the identically-guarded branch above, in the same
+// order, and answers with the name Args_Parser::supported_libraries() uses for
+// the class createSolver would have constructed. Keeping the two ladders side
+// by side is deliberate: a backend added to one and not the other is visible in
+// a single screen of code, and no caller anywhere else in the tree gets to
+// re-implement the "Accelerate really means SuiteSparse" rule from memory.
+//
+// The unavailable cases return "" where createSolver throws. A provenance
+// record must never contain a guess, and "" is the caller's signal that there
+// is nothing true to record; from the CLI it is unreachable, since
+// Args_Parser::validate_library() refuses those values at parse time.
+std::string SolverFactory::effectiveLibrary(const std::string& requested) {
+    if(requested.compare("Pardiso") == 0) {
+        #ifdef WFES_USE_MKL
+            return "Pardiso";
+        #else
+            return "";
+        #endif
+    }
+    else if(requested.compare("Accelerate") == 0) {
+        #ifdef WFES_USE_ACCELERATE
+            #ifdef WFES_USE_SUITESPARSE
+                // THE SUBSTITUTION. createSolver hands back a SuiteSparseSolver
+                // here, so this is what actually factorises the matrix.
+                return "SuiteSparse";
+            #else
+                return "Accelerate";
+            #endif
+        #else
+            return "";
+        #endif
+    }
+    else if(requested.compare("ViennaCL") == 0) {
+        #ifdef WFES_USE_VIENNACL
+            return "ViennaCL";
+        #else
+            return "";
+        #endif
+    }
+    else if(requested.compare("SuiteSparse") == 0) {
+        #ifdef WFES_USE_SUITESPARSE
+            return "SuiteSparse";
+        #else
+            return "";
+        #endif
+    }
+    else if(requested.compare("ParU") == 0) {
+        #ifdef WFES_USE_PARU
+            return "ParU";
+        #else
+            return "";
+        #endif
+    }
+    // Default based on platform -- the `else` createSolver falls through to.
+    // Note that it does NOT apply the Accelerate -> SuiteSparse substitution:
+    // an unrecognised string builds a real AccelerateSolver on macOS. That
+    // asymmetry is preserved here rather than tidied away, because tidying it
+    // would make this function disagree with the code it is describing.
+    else {
+        #ifdef WFES_USE_ACCELERATE
+            return "Accelerate";
+        #elif defined(WFES_USE_MKL)
+            return "Pardiso";
+        #elif defined(WFES_USE_VIENNACL)
+            return "ViennaCL";
+        #else
+            return "";
+        #endif
+    }
+}
