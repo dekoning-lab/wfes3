@@ -6,6 +6,7 @@
 #ifdef WFES_CLI
 #include <iostream>
 #include <fstream>
+#include <iomanip>
 #endif
 
 // NOT COMPILE-VERIFIED ON macOS: this translation unit is in the build only on
@@ -476,24 +477,17 @@ void SparseMatrixPardiso::saveMarket(std::string name) {
     // CLI version - write directly to current directory
     std::ofstream file(name);
     if (!file.is_open()) {
-        std::cerr << "Error: Cannot open file " << name << " for writing" << std::endl;
-        return;
+        throw std::runtime_error(
+            "SparseMatrixPardiso::saveMarket(): Cannot open file for writing: " + name);
     }
-    
+
     file << "%%MatrixMarket matrix coordinate real general\n";
     file << num_rows << "\t" << num_cols << "\t" << num_non_zeros << "\n";
-    
-    // Debug: Print row_index array for small matrices
-    if (num_rows <= 10) {
-        std::cerr << "DEBUG saveMarket: row_index array:" << std::endl;
-        for (llong i = 0; i <= num_rows; ++i) {
-            std::cerr << "row_index[" << i << "] = " << row_index[i] << std::endl;
-        }
-    }
-    
+
     for (llong i = 0; i < num_rows; ++i) {
         for (llong j = row_index[i]; j < row_index[i + 1]; ++j) {
-            file << i+1 << "\t" << cols[j] + 1 << "\t" << data[j] << "\n";
+            file << i+1 << "\t" << cols[j] + 1 << "\t"
+                 << std::scientific << std::setprecision(16) << data[j] << "\n";
         }
     }
     file.close();
