@@ -57,7 +57,10 @@ The scaling factors fᵢ allow efficient computation:
 The allele frequency distribution at the final time point is extracted from the
 solution vector and projected up to the real population's 2N+1 states; unless
 `--no-project` is given, it is then binned back down onto this model's own
-scaled 2(N/f)+1 states for output.
+scaled 2(N/f)+1 states for output. The down-projection is mass-conserving: each
+output bin is the SUM of the states that map into it, so the binned spectrum
+carries the same total and the same segregating probability as the
+up-projected one.
 
 ## Input Parameters
 

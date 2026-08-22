@@ -682,23 +682,55 @@ int main(int argc, char const *argv[]) {
             dvec prj_u = sw_up.Q->multiply(d, true);
             
             if (!options.no_project) {
-                // Project down
+                // Project down: SUM the fine states into each coarse bin.
+                //
+                // The map is a partition. Every one of the m-2 interior states
+                // of prj_u lands in exactly one of the n-2 interior bins
+                // (j = floor(i / diag_f) is monotone and ranges over 0 ..
+                // n-3), and the two boundary classes are carried across
+                // verbatim below. A partition of a probability vector is
+                // summed, not averaged, so sum(prj_d) == sum(prj_u) exactly --
+                // the same accounting the up-projection above already obeys
+                // (its rows are binom_row, each summing to 1).
+                //
+                // It used to divide each contribution by the number of states
+                // in its bin:
+                //
+                //     prj_d[j+1] += prj_u[i+1] / row_integral_counts[j+1];
+                //
+                // which reports the MEAN of each bin, not its mass, and so
+                // discarded about (1 - 1/bin-count) of the SEGREGATING
+                // probability. Measured on that code, comparing against the
+                // same run's --no-project output (which is prj_u itself, i.e.
+                // the input to this block):
+                //
+                //   -N 20,10 -G 10,5 -f 2,2         segregating 2.1798e-07
+                //                                            -> 1.0059e-07
+                //   -N 2000,200,1000 ... -f 10,10,10 segregating 3.4641e-05
+                //                                            -> 3.4327e-06
+                //
+                // It survived this long because the two boundary classes carry
+                // ~0.5 each under the mutation-drift models this tool solves,
+                // so the published total still read 0.99999988 and 0.99996879
+                // -- close enough to 1 to pass for roundoff. Nothing
+                // downstream renormalised it: print_wfafs_stochastic_results
+                // writes d out entry by entry, so the deficit was published.
+                //
+                // Changing this MOVES the default f != 1 spectrum. That is the
+                // point, and it was approved as such (task CX-proj). Runs with
+                // f == 1 never enter this block, and --no-project takes the
+                // else branch, so both are unaffected byte for byte.
+                // baseline_tests/test_degenerate_wfafs_stochastic.py's
+                // test_down_projection_conserves_mass asserts the invariant
+                // directly, by straddling this block with --no-project.
                 dvec prj_d = dvec::Zero(n);
                 double diag_f = static_cast<double>(m - 2) / (n - 2);
-                
-                // Count how many states are integrated into each projected state
-                dvec row_integral_counts = dvec::Zero(n);
-                for (llong i = 0; i < m - 2; i++) {
-                    llong j = static_cast<llong>(i / diag_f);
-                    row_integral_counts[j + 1]++;
-                }
-                
-                // Project the distribution
+
                 prj_d[0] = prj_u[0];
                 prj_d[prj_d.size() - 1] = prj_u[prj_u.size() - 1];
                 for (llong i = 0; i < m - 2; i++) {
                     llong j = static_cast<llong>(i / diag_f);
-                    prj_d[j + 1] += prj_u[i + 1] / row_integral_counts[j + 1];
+                    prj_d[j + 1] += prj_u[i + 1];
                 }
                 d = prj_d;
             } else {
