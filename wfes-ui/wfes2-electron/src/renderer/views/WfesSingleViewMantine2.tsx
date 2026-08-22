@@ -89,6 +89,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     setResults(null)
     setWarnings([])
     setExecutionTime('')
+    setError('')
   }
 
   // Handle population scaling toggle
@@ -164,6 +165,24 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   // Destination folder for the files above; Downloads when unset.
   const [outputDirectory, setOutputDirectory] = useState('')
 
+  // Mode-aware validity, matching the CLI's -p rules (args_parser.cpp):
+  // fixation keeps count 0 as a transient state, so p = 0 is legal there and
+  // means "start from zero copies, mutational origination included"; in the
+  // both-absorbing modes (absorption, establishment, allele-age) count 0 is an
+  // absorbing state and the CLI rejects -p 0. Valid counts top out at 2N-1 in
+  // both state spaces (count 2N is always absorbing). Defined here, ahead of
+  // canWriteI below, because that gate now needs it too (T5c CX1b follow-up:
+  // canWriteI's --fundamental clause must require a SET count, not just the
+  // "single" scope, or a blank count still lets --output-I through while -p
+  // is dropped).
+  const validateStartingCopies = () => {
+    const p = parseInt(startingCopies)
+    const N = parseInt(populationSize)
+    if (isNaN(p) || isNaN(N)) return false
+    const minCount = modelType === 'fixation' ? 0 : 1
+    return p >= minCount && p <= 2 * N - 1
+  }
+
   // Every --output-* flag, and both starting-state parameters (-p /
   // --starting-copies, --initial), are mode-scoped in the CLI: passing one
   // outside its mode is now a hard error (nonzero exit, named diagnostic),
@@ -192,10 +211,14 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     modelType === 'fundamental' || modelType === 'alleleAge'
   // The starting distribution: refused where the model integrates over no
   // starting state at all (equilibrium, non-absorbing), and in --fundamental
-  // unless a single starting count is chosen -- with no -p it computes the
-  // whole fundamental matrix and uses no starting distribution.
+  // unless a single starting count is CHOSEN AND SET -- with no -p (whether
+  // because "All starting states" is picked, or "One starting count" is
+  // picked but left blank/invalid) it computes the whole fundamental matrix
+  // and uses no starting distribution. Checking sojournScope alone used to
+  // leave this true with a blank count, so a stray --output-I could reach
+  // the CLI with --starting-copies dropped -- refused at runtime (T5b/T5c).
   const canWriteI = modelType !== 'equilibrium' && modelType !== 'nonAbsorbing' &&
-    (modelType !== 'fundamental' || sojournScope === 'single')
+    (modelType !== 'fundamental' || (sojournScope === 'single' && validateStartingCopies()))
   // --output-E is written only inside the CLI's --equilibrium branch,
   // --output-V only inside its --fundamental branch.
   const canWriteE = modelType === 'equilibrium'
@@ -246,6 +269,10 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   const [executionTime, setExecutionTime] = useState('')
   // Whatever the solver wrote to stderr while still exiting 0.
   const [warnings, setWarnings] = useState<string[]>([])
+  // Pre-execute validation refusals (T5c item 8): shown the same way every
+  // other view reports them -- an inline Alert next to the results, not a
+  // blocking alert() dialog.
+  const [error, setError] = useState('')
   const [showEquilibriumChart, setShowEquilibriumChart] = useState(false)
   const [showFundamentalMatrix, setShowFundamentalMatrix] = useState(false)
   const [sojournType, setSojournType] = useState<'unconditional' | 'extinction' | 'fixation'>('unconditional')
@@ -262,19 +289,8 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     return !isNaN(num) && num >= 0 && num <= 1
   }
 
-  // Mode-aware validity, matching the CLI's -p rules (args_parser.cpp):
-  // fixation keeps count 0 as a transient state, so p = 0 is legal there and
-  // means "start from zero copies, mutational origination included"; in the
-  // both-absorbing modes (absorption, establishment, allele-age) count 0 is an
-  // absorbing state and the CLI rejects -p 0. Valid counts top out at 2N-1 in
-  // both state spaces (count 2N is always absorbing).
-  const validateStartingCopies = () => {
-    const p = parseInt(startingCopies)
-    const N = parseInt(populationSize)
-    if (isNaN(p) || isNaN(N)) return false
-    const minCount = modelType === 'fixation' ? 0 : 1
-    return p >= minCount && p <= 2 * N - 1
-  }
+  // validateStartingCopies now lives above, next to canWriteI, which needs it
+  // too -- see the comment there.
 
   const modelOptions = [
     { value: 'absorption', label: 'Standard Wright-Fisher', description: 'Extinction and fixation are both absorbing' },
@@ -297,7 +313,19 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     // mode-aware validity (validateStartingCopies, not validatePositiveInteger:
     // p = 0 is legal under the Substitution Model).
     if (canUseStartingState && initialMode === 'fixed' && !validateStartingCopies()) {
-      alert('Fixed p needs a valid starting count. Enter one, or switch the initial state to "Integrate over p".')
+      setError('Fixed p needs a valid starting count. Enter one, or switch the initial state to "Integrate over p".')
+      return
+    }
+    // The Sojourn Times variant of the same gate: modeHasStartingState
+    // excludes 'fundamental' (its single count arrives through the scope
+    // control, not the initial-state selector), so the gate above never
+    // covers it. No stray flag in this one -- --integration-cutoff is never
+    // sent under --fundamental -- but with a blank or invalid count,
+    // startingCopies below resolves to undefined, exactly what "All starting
+    // states" sends, so the run would silently compute the full fundamental
+    // matrix (2N-1 solves) while the UI still says one count.
+    if (modelType === 'fundamental' && sojournScope === 'single' && !validateStartingCopies()) {
+      setError('"One starting count" needs a valid starting count. Enter one, or switch the scope to "All starting states".')
       return
     }
     setIsExecuting(true)
@@ -455,7 +483,14 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     const wantsStartingCopies = modelType === 'fundamental'
       ? sojournScope === 'single'
       : (canUseStartingState && initialMode === 'fixed')
-    if (wantsStartingCopies && startingCopies !== '') parts.push(`--starting-copies ${parseInt(startingCopies)}`)
+    // intOrUndefined, not a bare parseInt guarded only by `!== ''`: a
+    // non-numeric count (e.g. stray text) passed that blank-only guard and
+    // rendered "--starting-copies NaN" here while the run's own
+    // intOrUndefined(startingCopies) (see executeModel's params below) sent
+    // no flag at all -- preview and argv disagreed on a case the
+    // string-equality check never saw, since it was blank on neither side.
+    const startingCopiesVal = intOrUndefined(startingCopies)
+    if (wantsStartingCopies && startingCopiesVal !== undefined) parts.push(`--starting-copies ${startingCopiesVal}`)
     if (modelType === 'alleleAge' && observedCopies !== '') parts.push(`--observed-copies ${parseInt(observedCopies)}`)
     if (modelType === 'alleleAge') parts.push(`--num-moments ${parseInt(ageMoments) || 2}`)
     if (modelType !== 'fundamental') {
@@ -847,6 +882,12 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
 
               <SolverWarnings warnings={warnings} />
 
+              {error && (
+                <Alert color="red" mb="md">
+                  {error}
+                </Alert>
+              )}
+
               {isExecuting ? (
                 <Stack align="center" justify="center" style={{ height: '200px' }}>
                   <Loader size="lg" />
@@ -1211,74 +1252,73 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                   label="Write R"
                   checked={writeR}
                   disabled={!canWriteR}
+                  // T5c item 6: the reason lives in the Checkbox's own
+                  // description prop, not a sibling <Text>, so the
+                  // preview-harness's control recorder (which reads
+                  // props.description) can see it -- the pattern Write E/V
+                  // already used below.
+                  description={canWriteR
+                    ? 'Transient-to-absorbing transition probability sub-matrix'
+                    : 'Transient-to-absorbing transition probability sub-matrix — requires a model with an absorbing state'}
                   onChange={(e) => setWriteR(e.currentTarget.checked)}
                 />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Transient-to-absorbing transition probability sub-matrix
-                  {!canWriteR && ' — requires a model with an absorbing state'}
-                </Text>
               </div>
               <div>
                 <Checkbox
                   label="Write B"
                   checked={writeB}
                   disabled={!canWriteB}
+                  description={canWriteB
+                    ? 'Absorption probability matrix: B = NR'
+                    : 'Absorption probability matrix: B = NR — requires a model with an absorbing state'}
                   onChange={(e) => setWriteB(e.currentTarget.checked)}
                 />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Absorption probability matrix: B = NR
-                  {!canWriteB && ' — requires a model with an absorbing state'}
-                </Text>
               </div>
               <div>
                 <Checkbox
                   label="Write N"
                   checked={writeN}
                   disabled={!canWriteN}
+                  description={canWriteN
+                    ? 'Fundamental matrix: N = (I-Q)^(-1)'
+                    : 'Fundamental matrix: N = (I-Q)^(-1) — requires a model with an absorbing state'}
                   onChange={(e) => setWriteN(e.currentTarget.checked)}
                 />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Fundamental matrix: N = (I-Q)^(-1)
-                  {!canWriteN && ' — requires a model with an absorbing state'}
-                </Text>
               </div>
               <div>
                 <Checkbox
                   label="Write N_Ext"
                   checked={writeNExt}
                   disabled={!canWriteNExt}
+                  description={canWriteNExt
+                    ? 'Fundamental matrix, conditioned on extinction'
+                    : 'Fundamental matrix, conditioned on extinction — requires Standard Wright-Fisher, Sojourn Times, or Allele Age'}
                   onChange={(e) => setWriteNExt(e.currentTarget.checked)}
                 />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Fundamental matrix, conditioned on extinction
-                  {!canWriteNExt && ' — requires Standard Wright-Fisher, Sojourn Times, or Allele Age'}
-                </Text>
               </div>
               <div>
                 <Checkbox
                   label="Write N_Fix"
                   checked={writeNFix}
                   disabled={!canWriteNFix}
+                  description={canWriteNFix
+                    ? 'Fundamental matrix, conditioned on fixation'
+                    : 'Fundamental matrix, conditioned on fixation — requires Standard Wright-Fisher, Substitution Model, Sojourn Times, or Allele Age'}
                   onChange={(e) => setWriteNFix(e.currentTarget.checked)}
                 />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Fundamental matrix, conditioned on fixation
-                  {!canWriteNFix && ' — requires Standard Wright-Fisher, Substitution Model, Sojourn Times, or Allele Age'}
-                </Text>
               </div>
               <div>
                 <Checkbox
                   label="Write I"
                   checked={writeI}
                   disabled={!canWriteI}
+                  description={canWriteI
+                    ? 'Initial probability distribution over starting states'
+                    : `Initial probability distribution over starting states — ${modelType === 'fundamental'
+                        ? 'requires a single starting count (the "One starting count" option in Population)'
+                        : 'requires a model with a starting distribution'}`}
                   onChange={(e) => setWriteI(e.currentTarget.checked)}
                 />
-                <Text size="xs" c="dimmed" ml={22}>
-                  Initial probability distribution over starting states
-                  {!canWriteI && (modelType === 'fundamental'
-                    ? ' — requires a single starting count (the "One starting count" option in Population)'
-                    : ' — requires a model with a starting distribution')}
-                </Text>
               </div>
               <div>
                 <Checkbox
