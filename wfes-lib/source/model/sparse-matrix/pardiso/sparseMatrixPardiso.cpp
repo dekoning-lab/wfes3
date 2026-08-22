@@ -126,24 +126,9 @@ void SparseMatrixPardiso::appendChunk(dvec &row, int m0, int r0, int size, int r
     // Update size
     llong new_size = num_non_zeros + size;
 
-#ifdef WFES_CLI
-    if (num_rows <= 10) {
-        std::cerr << "DEBUG appendChunk(): current_row=" << current_row 
-                  << ", m0=" << m0 << ", size=" << size 
-                  << ", num_non_zeros=" << num_non_zeros << std::endl;
-    }
-#endif
-
     // Get row index start
     llong old_row_index_start = row_index_start;
     row_index_start = positiveMin(row_index_start, num_non_zeros);
-    
-#ifdef WFES_CLI
-    if (num_rows <= 10) {
-        std::cerr << "  positiveMin(" << old_row_index_start << ", " << num_non_zeros 
-                  << ") = " << row_index_start << std::endl;
-    }
-#endif
 
     // Resize columns vector. Grow-to-fit: a single doubling does NOT guarantee
     // room when one chunk is more than twice the current capacity -- rows of
@@ -234,15 +219,6 @@ void SparseMatrixPardiso::nextRow() {
         throw std::runtime_error(
             "SparseMatrixPardiso::nextRow(): the matrix already has all "
             + std::to_string(num_rows) + " rows; no further row can be started");
-
-
-#ifdef WFES_CLI
-    if (num_rows <= 10) {
-        std::cerr << "DEBUG nextRow(): current_row=" << current_row 
-                  << ", row_index_start=" << row_index_start 
-                  << ", num_non_zeros=" << num_non_zeros << std::endl;
-    }
-#endif
 
     row_index[current_row] = row_index_start;
     current_row += 1;
