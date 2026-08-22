@@ -53,6 +53,32 @@ recorded md5s and recorded values elsewhere in this directory. Never adjust a
 number here to make a red run green without first understanding which checks
 moved and why.
 
+...AND SO ARE THE SKIPS
+-----------------------
+The counts in EXPECTED were recorded on macOS, on a machine with every
+capability the suites use. Somewhere else -- the Linux/MKL cluster build, for
+one -- some of those checks CANNOT run: there is no /Applications/WFES3.app to
+compare against, and a build whose --library whitelist is "Pardiso" alone
+cannot be asked for Accelerate, SuiteSparse or ParU.
+
+Such a check is not deleted and not quietly dropped. Each suite names it,
+counts it, and prints the total on one machine-readable line --
+
+    SKIPPED 33 (--library Accelerate: this build substitutes no backend ...)
+
+-- which this runner reads, so that the contract becomes
+
+    checks that RAN  ==  recorded count  -  skips the suite reported
+
+An UNDECLARED check that stops running is still CHECKS LOST, on every
+platform: subtracting only what a suite is willing to name in its own output
+is what keeps the two apart. On macOS the subtraction is a no-op (every suite
+reports SKIPPED 0), and a nonzero skip there is reported as a FAILURE --
+UNEXPECTED SKIPS -- because on the recording platform it means a capability
+has gone missing, not that the platform is different. See
+platform_probe.py, and LINUX_SKIP_PROJECTION below for what a Linux run is
+expected to skip.
+
 Prerequisites
 -------------
   * A build of the CLI. Any build directory works; Release is what the counts
@@ -60,14 +86,15 @@ Prerequisites
         cmake -S wfes-cli -B wfes-cli/build -DCMAKE_BUILD_TYPE=Release
         cmake --build wfes-cli/build -j8
 
-  * /Applications/WFES3.app, the shipped v3.0.0-beta.3 reference. Several
-    suites compare against it: test_invalid_output_single.py REQUIRES it (it
-    exits 2 without one, because its non-regression table is not optional),
-    while test_flag_canonicalization.py, test_degenerate_wfafs_deterministic.py
-    and test_degenerate_wfafs_stochastic.py SKIP sections without it -- which
-    lowers their counts and shows up here as CHECKS LOST. If you see those
-    three drop together, check that the app is installed before looking for a
-    regression.
+  * /Applications/WFES3.app, the shipped v3.0.0-beta.3 reference, ON MACOS.
+    Several suites compare against it: test_invalid_output_single.py requires
+    it (its non-regression table is not optional -- without it the suite exits
+    2, unless this runner passes --no-shipped-reference, which it does only
+    when the reference is genuinely absent), while
+    test_flag_canonicalization.py, test_degenerate_wfafs_deterministic.py and
+    test_degenerate_wfafs_stochastic.py report counted skips for the sections
+    that need it. On macOS its absence is a failure (UNEXPECTED SKIPS); on
+    Linux, where the .app does not exist at all, it is an accounted-for skip.
 
 Suites, and where each came from
 --------------------------------
@@ -83,6 +110,7 @@ comment was deliberately left untouched by the task that added this runner.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -92,6 +120,42 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
+
+sys.path.insert(0, str(HERE))
+import platform_probe  # noqa: E402
+
+# --------------------------------------------------------------------------
+# Two Linux-only failure modes this file had, both of them about text encoding
+# rather than about anything the binaries do. Fixed here because the runner is
+# the one process that touches every suite.
+#
+# 1. DECODING what a suite prints. The tools emit a box-drawing banner
+#    (U+2588 and friends) on stdout, and on the refusal path on stderr too. A
+#    cluster shell with LC_ALL=C or LANG=POSIX makes
+#    locale.getpreferredencoding(False) ANSI_X3.4-1968, so `text=True` --
+#    here AND inside every suite -- raises UnicodeDecodeError the first time a
+#    tool says no. In a suite that surfaces as a traceback with no summary
+#    line, which this runner then reports as UNPARSEABLE SUMMARY; here it
+#    surfaced as the runner itself dying. Pinning the codec on both sides ends
+#    it: this call decodes UTF-8 with replacement, and PYTHONUTF8=1 in the
+#    child environment puts every child interpreter into UTF-8 mode, which is
+#    what its own subprocess calls decode with. That last part matters for
+#    validate_baselines.py, which is frozen and could not be edited to pin its
+#    own codec.
+#
+# 2. ENCODING what this file prints. The failure summary used to contain an em
+#    dash. Under the same C locale, with output redirected to a log file,
+#    printing it raises UnicodeEncodeError -- so the runner crashed at the
+#    exact moment it had something to report, and only ever on a red run. The
+#    text is ASCII now, and stdout is reconfigured defensively besides, since
+#    it also relays whatever the suites printed.
+# --------------------------------------------------------------------------
+CHILD_ENV = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+try:  # pragma: no cover - depends on the ambient locale
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
 
 # --------------------------------------------------------------------------
 # Summary-line parsers.
@@ -103,10 +167,21 @@ REPO = HERE.parent
 # suite prints at the very end.
 # --------------------------------------------------------------------------
 
+def _last(pattern: str, text: str):
+    """The LAST line matching `pattern`, or None.
+
+    Last rather than first: a suite's FAIL details quote the tools' own
+    output, so a line that looks like a summary can appear in the body long
+    before the real one. The summary is always the final such line.
+    """
+    matches = list(re.finditer(pattern, text, re.M))
+    return matches[-1] if matches else None
+
+
 def _pass_fail(text: str):
     """`PASS 162   FAIL 0` (and the UNRESOLVED variant)."""
-    m = re.search(r"^PASS\s+(\d+)\s+FAIL\s+(\d+)(?:\s+UNRESOLVED\s+(\d+))?\s*$",
-                  text, re.M)
+    m = _last(r"^PASS\s+(\d+)\s+FAIL\s+(\d+)(?:\s+UNRESOLVED\s+(\d+))?\s*$",
+              text)
     if not m:
         return None
     passed, failed = int(m.group(1)), int(m.group(2))
@@ -118,8 +193,7 @@ def _pass_fail(text: str):
 
 def _checks_failed(text: str):
     """`294 checks, 0 failed` / `37 checks, 0 failure(s)`."""
-    m = re.search(r"^(\d+) checks, (\d+) (?:failed|failure\(s\))\s*$",
-                  text, re.M)
+    m = _last(r"^(\d+) checks, (\d+) (?:failed|failure\(s\))\s*$", text)
     if not m:
         return None
     total, failed = int(m.group(1)), int(m.group(2))
@@ -128,7 +202,7 @@ def _checks_failed(text: str):
 
 def _slash_passed(text: str):
     """`93/93 checks passed`."""
-    m = re.search(r"^(\d+)/(\d+) checks passed\s*$", text, re.M)
+    m = _last(r"^(\d+)/(\d+) checks passed\s*$", text)
     if not m:
         return None
     passed, total = int(m.group(1)), int(m.group(2))
@@ -137,11 +211,11 @@ def _slash_passed(text: str):
 
 def _passed_slash(text: str):
     """`PASSED 185/185 checks` or `FAILED 3/185 checks:`."""
-    m = re.search(r"^PASSED (\d+)/(\d+) checks\s*$", text, re.M)
+    m = _last(r"^PASSED (\d+)/(\d+) checks\s*$", text)
     if m:
         passed, total = int(m.group(1)), int(m.group(2))
         return passed, total - passed
-    m = re.search(r"^FAILED (\d+)/(\d+) checks:?\s*$", text, re.M)
+    m = _last(r"^FAILED (\d+)/(\d+) checks:?\s*$", text)
     if m:
         failed, total = int(m.group(1)), int(m.group(2))
         return total - failed, failed
@@ -150,10 +224,30 @@ def _passed_slash(text: str):
 
 def _n_passed_m_failed(text: str):
     """`189 passed, 0 failed`."""
-    m = re.search(r"^(\d+) passed, (\d+) failed\s*$", text, re.M)
+    m = _last(r"^(\d+) passed, (\d+) failed\s*$", text)
     if not m:
         return None
     return int(m.group(1)), int(m.group(2))
+
+
+# The one line every capability-aware suite prints, in the format
+# platform_probe.Skips.summary_line() produces:
+#
+#     SKIPPED 0
+#     SKIPPED 33 (--library Accelerate: this build substitutes no backend ...)
+#
+# A suite that prints no such line is read as SKIPPED 0. That is only correct
+# for a suite with no capability gate in it, which is why every suite here
+# prints the line unconditionally -- validate_baselines.py excepted, because it
+# is frozen and has no gate.
+SKIPPED_RE = r"^SKIPPED (\d+)(?:\s+\((.*)\))?\s*$"
+
+
+def parse_skips(text: str) -> tuple[int, str]:
+    m = _last(SKIPPED_RE, text)
+    if not m:
+        return 0, ""
+    return int(m.group(1)), (m.group(2) or "")
 
 
 # --------------------------------------------------------------------------
@@ -269,42 +363,146 @@ EXPECTED = [
 # validate_baselines.py takes --bin as a PATH TO wfes_single; every other suite
 # takes --bin as the directory. Kept as data so the asymmetry is visible rather
 # than buried in an `if` inside the run loop.
+#
+# (The first Linux collection run tripped over exactly this, invoking
+# validate_baselines.py with the directory and getting
+# "error: .../bin not found. Build the CLI first" -- a harness mistake, not a
+# missing build. The runner has always got it right; the per-suite ARGV line
+# printed below now makes that visible in the log instead of implied.)
 WANTS_BINARY_NOT_DIR = {"validate_baselines.py": "wfes_single"}
 
 
+# --------------------------------------------------------------------------
+# THE SAME CONTRACT, OFF THE RECORDING PLATFORM.
+#
+# EXPECTED above is a macOS recording. Away from macOS some of those checks
+# cannot run at all: there is no /Applications/WFES3.app to compare against,
+# and a Linux build's --library whitelist is "Pardiso" where the recording's
+# was "Accelerate, SuiteSparse, ParU". Those checks are not deleted and not
+# quietly dropped -- each suite reports them as named skips and prints the
+# total on a SKIPPED line, and the contract becomes
+#
+#       checks that RAN  ==  recorded count  -  skips the suite reported
+#
+# so the arithmetic stays exact and a check that stops running WITHOUT being
+# declared a skip still trips CHECKS LOST, on every platform.
+#
+# On the recording platform the subtraction is a no-op by construction: a
+# fully equipped macOS box reports SKIPPED 0 for all twelve suites and the
+# expected counts are the recorded ones, unchanged. If it ever reports
+# anything else, that is a broken workstation (the .app uninstalled, most
+# likely) rather than a platform difference, and it is reported as a failure
+# instead of being absorbed -- see UNEXPECTED SKIPS below.
+#
+# The table below is the DERIVED Linux expectation, written out so the cluster
+# run has something to be compared against rather than only something to
+# report. Each number is the count of recorded checks that a Pardiso-only
+# Linux build with no WFES3.app installed cannot run, taken from the
+# 2026-08-21 Linux logs and from the skip lists in each suite:
+#
+#   test_invalid_output_single      51  three shipped-binary comparison sites
+#                                       (41 non-regression + 9 -v 0 + 1 --csv)
+#   test_shared_parser              33  the Accelerate->SuiteSparse
+#                                       substitution, 3 checks x 11 tools
+#   test_degenerate_wfafs_stochastic 28 15 recorded md5s + 13 shipped-binary
+#                                       comparisons
+#   test_paru_multirhs              26  every ParU half of every comparison
+#   test_flag_canonicalization       8  the collision checker's negative
+#                                       control, which needs the shipped
+#                                       binaries to fail against
+#   test_degenerate_wfafs_determ.    7  3 recorded md5s + 4 shipped-binary
+#                                       comparisons
+#   test_degenerate_wfafs_sweep      1  one recorded md5
+#
+# It is a PROJECTION, not an assertion: a Linux build configured with
+# SuiteSparse, or a machine with the reference binaries copied into place,
+# will legitimately skip fewer. A deviation is therefore printed loudly and
+# not treated as a failure by itself -- what IS enforced is the arithmetic
+# above, which holds whatever the build turns out to have.
+# --------------------------------------------------------------------------
+LINUX_SKIP_PROJECTION = {
+    "validate_baselines.py": 0,
+    "test_invalid_output_single.py": 51,
+    "test_single_output_matrix.py": 0,
+    "test_degenerate_switching_sequential.py": 0,
+    "test_numeric_switching_sequential.py": 0,
+    "test_degenerate_time_dist_family.py": 0,
+    "test_degenerate_wfafs_deterministic.py": 7,
+    "test_degenerate_wfafs_stochastic.py": 28,
+    "test_degenerate_wfafs_sweep.py": 1,
+    "test_shared_parser.py": 33,
+    "test_flag_canonicalization.py": 8,
+    "test_paru_multirhs.py": 26,
+}
+
+PROJECTIONS = {"linux": LINUX_SKIP_PROJECTION,
+               "macos": {script: 0 for script, _, _ in EXPECTED}}
+
+
+def extra_args_for(script: str) -> list[str]:
+    """Per-suite flags that depend on what this machine has.
+
+    Only one so far. test_invalid_output_single.py REQUIRES the shipped
+    reference and exits 2 without it, deliberately: its non-regression table
+    is not an optional extra. --no-shipped-reference is the explicit,
+    per-machine permission to run the contract sections without it and report
+    the comparisons as counted skips, and it is passed ONLY when the reference
+    is genuinely absent -- never as a default, and never on a machine that has
+    one (where the suite ignores it anyway).
+    """
+    if (script == "test_invalid_output_single.py"
+            and platform_probe.shipped_reference("wfes_single") is None):
+        return ["--no-shipped-reference"]
+    return []
+
+
 class Result:
-    def __init__(self, script, expected):
+    def __init__(self, script, recorded):
         self.script = script
-        self.expected = expected
+        self.recorded = recorded      # the macOS recording, never adjusted
+        self.expected = recorded      # recorded - skipped, on this machine
         self.passed = None
         self.failed = None
+        self.skipped = 0
+        self.skip_reason = ""
         self.returncode = None
         self.seconds = 0.0
+        self.argv: list[str] = []
         self.output = ""
         self.problems: list[str] = []
+        self.notes: list[str] = []
 
     @property
     def ok(self) -> bool:
         return not self.problems
 
     def status(self) -> str:
-        if not self.problems:
+        parts = self.problems + self.notes
+        if not parts:
             return "OK"
-        return "; ".join(self.problems)
+        return "; ".join(parts)
 
 
-def run_suite(script: str, parser, expected: int, bin_dir: Path,
+def run_suite(script: str, parser, recorded: int, bin_dir: Path,
               timeout: int) -> Result:
-    res = Result(script, expected)
+    res = Result(script, recorded)
     target = bin_dir
     if script in WANTS_BINARY_NOT_DIR:
         target = bin_dir / WANTS_BINARY_NOT_DIR[script]
 
-    argv = [sys.executable, str(HERE / script), "--bin", str(target)]
+    res.argv = [sys.executable, str(HERE / script), "--bin", str(target),
+                *extra_args_for(script)]
     started = time.time()
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True,
-                              timeout=timeout, cwd=REPO)
+        # Streams are kept apart and stdout is parsed FIRST. Concatenating
+        # them and parsing the join can put a stderr line where a summary
+        # anchor expects an end-of-line, and on a suite whose stdout does not
+        # end in a newline it can splice two lines into one. stderr is still
+        # searched as a fallback, and both are relayed in full for a failing
+        # suite.
+        proc = subprocess.run(res.argv, capture_output=True, timeout=timeout,
+                              cwd=REPO, env=CHILD_ENV,
+                              encoding="utf-8", errors="replace")
         res.output = proc.stdout + proc.stderr
         res.returncode = proc.returncode
     except subprocess.TimeoutExpired:
@@ -322,12 +520,38 @@ def run_suite(script: str, parser, expected: int, bin_dir: Path,
                             "required reference; see output)")
         return res
 
-    counts = parser(res.output)
+    counts = parser(proc.stdout) or parser(res.output)
     if counts is None:
-        res.problems.append("UNPARSEABLE SUMMARY (the suite's final line "
-                            "changed; teach run_all_suites.py the new format)")
+        res.problems.append("UNPARSEABLE SUMMARY (no recognised summary line "
+                            "on stdout or stderr -- the suite may have died "
+                            "before printing one, or changed its format; the "
+                            "full output is relayed below)")
         return res
     res.passed, res.failed = counts
+    res.skipped, res.skip_reason = parse_skips(proc.stdout)
+    if not res.skipped:  # a suite that printed its summary on stderr
+        res.skipped, res.skip_reason = parse_skips(res.output)
+
+    # THE PLATFORM ADJUSTMENT. Recorded on macOS; here, minus whatever this
+    # machine declared it could not run.
+    res.expected = res.recorded - res.skipped
+
+    if res.skipped and platform_probe.is_recording_platform():
+        # macOS is where every count in EXPECTED was taken. A skip here means
+        # a capability that was present at recording time has gone missing --
+        # /Applications/WFES3.app uninstalled, most likely -- and subtracting
+        # it would turn a broken workstation into a quiet green.
+        res.problems.append(
+            f"UNEXPECTED SKIPS ({res.skipped}) on the recording platform: "
+            f"{res.skip_reason or 'no reason given'}")
+
+    projection = PROJECTIONS.get(platform_probe.platform_tag())
+    if projection is not None and script in projection:
+        want = projection[script]
+        if res.skipped != want:
+            res.notes.append(
+                f"skips differ from the {platform_probe.platform_tag()} "
+                f"projection (reported {res.skipped}, projected {want})")
 
     if res.failed:
         res.problems.append(f"{res.failed} FAILING CHECK"
@@ -342,10 +566,17 @@ def run_suite(script: str, parser, expected: int, bin_dir: Path,
     # more alarming diagnosis than the truth. Total = passed + failed isolates
     # the two: a failing check is a FAILING CHECK, and only a check that never
     # ran at all is a lost one.
+    #
+    # A DECLARED skip is not a lost check either -- it has already been
+    # subtracted from res.expected -- but an UNDECLARED one still is, on every
+    # platform. That is the whole point of making suites count their skips
+    # rather than letting them return early.
     ran = res.passed + res.failed
     if ran < res.expected:
         res.problems.append(
-            f"CHECKS LOST ({res.expected - ran} fewer ran than recorded)")
+            f"CHECKS LOST ({res.expected - ran} fewer ran than the "
+            f"{res.recorded} recorded minus the {res.skipped} declared "
+            f"skipped)")
     elif ran > res.expected:
         res.problems.append(
             f"COUNT ROSE (+{ran - res.expected}); record it in EXPECTED")
@@ -394,6 +625,10 @@ def main() -> int:
     skipped = [row[0] for row in EXPECTED if row not in selected]
 
     print(f"binaries:  {bin_dir}")
+    print(f"{platform_probe.platform_banner(bin_dir)}")
+    print(f"effective solver backend: "
+          f"{platform_probe.effective_backend(bin_dir)} "
+          f"(recorded against {platform_probe.RECORDING_BACKEND})")
     print(f"suites:    {len(selected)} of {len(EXPECTED)}"
           f"   jobs: {opts.jobs}\n")
 
@@ -406,26 +641,40 @@ def main() -> int:
     elapsed = time.time() - started
 
     name_w = max(len(r.script) for r in results)
-    print(f"{'SUITE'.ljust(name_w)}  {'EXPECT':>6} {'PASS':>6} {'FAIL':>5} "
-          f"{'TIME':>7}  STATUS")
-    print("-" * (name_w + 36))
-    total_pass = total_fail = 0
+    print(f"{'SUITE'.ljust(name_w)}  {'RECORD':>6} {'SKIP':>5} {'EXPECT':>6} "
+          f"{'PASS':>6} {'FAIL':>5} {'TIME':>7}  STATUS")
+    print("-" * (name_w + 48))
+    total_pass = total_fail = total_skip = 0
     for r in sorted(results, key=lambda x: x.script):
         total_pass += r.passed or 0
         total_fail += r.failed or 0
+        total_skip += r.skipped
         shown_p = "-" if r.passed is None else str(r.passed)
         shown_f = "-" if r.failed is None else str(r.failed)
-        print(f"{r.script.ljust(name_w)}  {r.expected:>6} {shown_p:>6} "
-              f"{shown_f:>5} {r.seconds:>6.1f}s  {r.status()}")
-    print("-" * (name_w + 36))
+        print(f"{r.script.ljust(name_w)}  {r.recorded:>6} {r.skipped:>5} "
+              f"{r.expected:>6} {shown_p:>6} {shown_f:>5} "
+              f"{r.seconds:>6.1f}s  {r.status()}")
+    print("-" * (name_w + 48))
+    recorded_total = sum(r.recorded for r in results)
     expected_total = sum(r.expected for r in results)
-    print(f"{'TOTAL'.ljust(name_w)}  {expected_total:>6} {total_pass:>6} "
-          f"{total_fail:>5} {elapsed:>6.1f}s")
+    print(f"{'TOTAL'.ljust(name_w)}  {recorded_total:>6} {total_skip:>5} "
+          f"{expected_total:>6} {total_pass:>6} {total_fail:>5} "
+          f"{elapsed:>6.1f}s")
+
+    if total_skip:
+        print(f"\nSKIPPED ({total_skip} checks this machine cannot run; each "
+              f"one is named in its suite's output):")
+        for r in sorted(results, key=lambda x: x.script):
+            if r.skipped:
+                print(f"  {r.script}: {r.skipped} -- "
+                      f"{r.skip_reason or 'no reason given'}")
 
     bad = [r for r in results if not r.ok]
     for r in results:
         if opts.verbose or r in bad:
-            print(f"\n{'=' * 78}\n{r.script}  --  {r.status()}\n{'=' * 78}")
+            print(f"\n{'=' * 78}\n{r.script}  --  {r.status()}\n"
+                  f"argv: {' '.join(r.argv)}\n"
+                  f"exit: {r.returncode}\n{'=' * 78}")
             print(r.output.rstrip())
 
     if skipped:
@@ -433,13 +682,22 @@ def main() -> int:
 
     print()
     if bad:
-        print(f"FAIL: {len(bad)} of {len(results)} suites — "
+        # ASCII only: this line is printed exactly when there is bad news, and
+        # under a C locale a non-ASCII character here raises UnicodeEncodeError
+        # and destroys the report instead of delivering it.
+        print(f"FAIL: {len(bad)} of {len(results)} suites -- "
               + ", ".join(f"{r.script} [{r.status()}]" for r in bad))
         return 1
     if skipped:
         print(f"Partial run: {len(results)} suites passed at their recorded "
               f"counts, {len(skipped)} not run. This is NOT a full green.")
         return 1
+    if total_skip:
+        print(f"PASS: all {len(results)} suites at their recorded counts "
+              f"minus {total_skip} declared platform skips "
+              f"({total_pass} checks ran, {recorded_total} recorded on "
+              f"{platform_probe.RECORDING_PLATFORM}).")
+        return 0
     print(f"PASS: all {len(results)} suites at their recorded counts "
           f"({total_pass} checks).")
     return 0

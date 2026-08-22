@@ -22,12 +22,57 @@ run always exits nonzero so it cannot be mistaken for a full green),
 ### Prerequisites
 
 * A build of the CLI. Any build directory works.
-* `/Applications/WFES3.app`, the shipped v3.0.0-beta.3 reference.
-  `test_invalid_output_single.py` **requires** it and exits 2 without one;
+* `/Applications/WFES3.app`, the shipped v3.0.0-beta.3 reference, **on
+  macOS**. `test_invalid_output_single.py` requires it and exits 2 without
+  one, unless it is given `--no-shipped-reference` (which `run_all_suites.py`
+  passes only when the reference is genuinely absent);
   `test_flag_canonicalization.py`, `test_degenerate_wfafs_deterministic.py`
-  and `test_degenerate_wfafs_stochastic.py` skip sections without it, which
-  lowers their counts and surfaces as `CHECKS LOST`. If those three drop
-  together, check the app is installed before hunting a regression.
+  and `test_degenerate_wfafs_stochastic.py` report counted skips for the
+  sections that need it. On macOS, the recording platform, a skip is a
+  **failure** (`UNEXPECTED SKIPS`) — it means the app was uninstalled, not
+  that the platform differs. Elsewhere it is subtracted from the contract;
+  see below.
+
+## Platforms
+
+Every count, digest and recorded value here was taken on macOS (arm64,
+Accelerate requested / SuiteSparse effective) with WFES3.app installed. A
+machine without those capabilities cannot run some of the checks at all: a
+Linux build's `--library` whitelist is `Pardiso` alone, so nothing can ask it
+for Accelerate, SuiteSparse or ParU, and there is no `.app` to compare
+against.
+
+`platform_probe.py` is the single place that asks the build under test what it
+has — the `--library` whitelist read back out of `--help` (or out of the
+parser's own refusal message), which backend actually factorises, and whether
+the shipped reference is installed. Suites import it, and a check the machine
+cannot run becomes a **named, counted skip** rather than a failure or a silent
+`return`:
+
+```
+  SKIP  wfafs equal epochs: --library ParU exits 0 -- --library ParU: not in this build's whitelist
+...
+SKIPPED 26 (--library ParU: not in this build's whitelist)
+```
+
+`run_all_suites.py` reads that last line, and the contract becomes
+
+    checks that RAN == recorded count - skips the suite reported
+
+An **undeclared** check that stops running is still `CHECKS LOST`, on every
+platform. Recorded md5s and recorded numeric values get the same treatment:
+a digest of printed doubles is only asserted on the platform and backend it
+was recorded on, and the recorded-value tolerance in
+`test_numeric_switching_sequential.py` rises from `1e-11` to
+`platform_probe.CROSS_BACKEND_REL_TOL` (`1e-9`) only when the effective solver
+backend differs from the recording's — measured cross-backend spread is
+2.6e-11 (ParU) and 2.33e-10 (MKL Pardiso), on the same two fields both times.
+
+To rehearse the absent-reference path on a machine that has the reference:
+
+```sh
+WFES3_SHIPPED_BIN=/nonexistent python3 baseline_tests/run_all_suites.py --bin DIR
+```
 
 ## The counts are the contract
 
@@ -62,6 +107,7 @@ Both directions fail:
 | a check ran and failed | `N FAILING CHECKS` | an ordinary regression — reported on its own, *not* as a lost check |
 | summary line unparseable | `UNPARSEABLE SUMMARY` | a suite changed its final line; teach the runner, don't let it contribute zero |
 | exit code 2 | `COULD NOT RUN` | missing binary or missing required reference — not a pass |
+| a skip reported on macOS | `UNEXPECTED SKIPS` | the recording platform lost a capability; fix the machine, do not absorb it |
 
 The comparison is against checks **run** (passed + failed), not checks passed,
 so a suite with one genuine failure is not also accused of having lost a check
