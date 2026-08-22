@@ -1,5 +1,6 @@
 #include "types.h"
 #include "output_formatter.hpp"
+#include "solver.h"          // re-exports model/solver/solverFactory.h
 #include <cmath>
 #include <iostream>
 #include <iomanip>
@@ -117,6 +118,62 @@ std::string json_escape(const std::string &raw) {
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// Solver-backend provenance. Contract and rationale: output_formatter.hpp.
+// ---------------------------------------------------------------------------
+
+OutputFormatter::LibraryProvenance
+OutputFormatter::library_provenance(const std::string& requested) {
+    LibraryProvenance p;
+    p.requested = requested;
+    // The ONE place the CLI asks what actually ran. Everything below is
+    // rendering; nothing here re-implements the substitution rule.
+    p.effective = wfes::solver::SolverFactory::effectiveLibrary(requested);
+    return p;
+}
+
+std::string OutputFormatter::library_provenance_json(const std::string& requested,
+                                                     const char* indent,
+                                                     bool trailing_comma) {
+    const LibraryProvenance p = library_provenance(requested);
+    std::ostringstream os;
+    os << indent << "\"library_requested\": \"" << json_escape(p.requested)
+       << "\"," << std::endl;
+    os << indent << "\"library_effective\": ";
+    // null, not "" and not a guess: an empty effective name means this build
+    // has no backend for the request, so there is no true value to publish.
+    // Unreachable from the CLI -- Args_Parser::validate_library() refuses those
+    // values at parse time -- but a provenance field must fail honestly rather
+    // than plausibly if it ever is reached.
+    if (p.effective.empty()) os << "null";
+    else os << "\"" << json_escape(p.effective) << "\"";
+    if (trailing_comma) os << ",";
+    os << std::endl;
+    return os.str();
+}
+
+std::string OutputFormatter::library_provenance_json_block(
+    const std::string& requested, const char* indent) {
+    const std::string inner = std::string(indent) + "  ";
+    std::ostringstream os;
+    os << indent << "\"parameters\": {" << std::endl;
+    os << library_provenance_json(requested, inner.c_str(), false);
+    os << indent << "}," << std::endl;
+    return os.str();
+}
+
+const char* OutputFormatter::library_provenance_csv_header() {
+    return "library_requested,library_effective";
+}
+
+std::string OutputFormatter::library_provenance_csv_values(
+    const std::string& requested) {
+    const LibraryProvenance p = library_provenance(requested);
+    // Same convention CsvRow::add_per_model_or_empty already uses for a value
+    // the run did not use: the column stays, the field is empty.
+    return p.requested + "," + p.effective;
+}
+
 void OutputFormatter::write_vector_to_file(const dvec& vec, const std::string& filename) {
     // Refuse before writing the first character, whether the destination is
     // a real file or the "stdout" pseudo-filename below -- see the contract
@@ -199,6 +256,7 @@ void OutputFormatter::print_fixation_results(const CommandLineOptions& options,
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"fixation\"," << std::endl;
+        std::cout << library_provenance_json_block(options.library);
         std::cout << "  \"results\": {" << std::endl;
         std::cout << "    \"T_fix\": " << T_fix << "," << std::endl;
         std::cout << "    \"T_std\": " << T_std << "," << std::endl;
@@ -234,6 +292,7 @@ void OutputFormatter::print_absorption_results(const CommandLineOptions& options
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"absorption\"," << std::endl;
+        std::cout << library_provenance_json_block(options.library);
         std::cout << "  \"results\": {" << std::endl;
         std::cout << "    \"P_ext\": " << P_ext << "," << std::endl;
         std::cout << "    \"P_fix\": " << P_fix << "," << std::endl;
@@ -269,6 +328,7 @@ void OutputFormatter::print_equilibrium_results(const CommandLineOptions& option
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"equilibrium\"," << std::endl;
+        std::cout << library_provenance_json_block(options.library);
         std::cout << "  \"results\": {" << std::endl;
         std::cout << "    \"E_freq\": " << e_freq << std::endl;
         std::cout << "  }" << std::endl;
@@ -290,6 +350,7 @@ void OutputFormatter::print_equilibrium_results_with_distribution(
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"equilibrium\"," << std::endl;
+        std::cout << library_provenance_json_block(options.library);
         std::cout << "  \"results\": {" << std::endl;
         std::cout << "    \"E_freq\": " << e_freq << "," << std::endl;
         std::cout << "    \"distribution\": [" << std::endl;
@@ -334,6 +395,7 @@ void OutputFormatter::print_establishment_results(
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"establishment\"," << std::endl;
+        std::cout << library_provenance_json_block(options.library);
         std::cout << "  \"results\": {" << std::endl;
         std::cout << "    \"est_freq\": " << est_freq << "," << std::endl;
         std::cout << "    \"P_est\": " << P_est << "," << std::endl;
@@ -398,6 +460,7 @@ void OutputFormatter::print_allele_age_results(const CommandLineOptions& options
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"allele_age\"," << std::endl;
+        std::cout << library_provenance_json_block(options.library);
         std::cout << "  \"results\": {" << std::endl;
         std::cout << "    \"E_T\": " << age << "," << std::endl;
         std::cout << "    \"Std_T\": " << age_std;
@@ -448,6 +511,7 @@ void OutputFormatter::print_fundamental_results(const CommandLineOptions& option
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"fundamental\"," << std::endl;
+        std::cout << library_provenance_json_block(options.library);
         std::cout << "  \"results\": {" << std::endl;
         std::cout << "    \"message\": \"Fundamental matrix calculation completed\"";
         if (has_start) {
@@ -484,6 +548,7 @@ void OutputFormatter::print_non_absorbing_results(const CommandLineOptions& opti
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"non_absorbing\"," << std::endl;
+        std::cout << library_provenance_json_block(options.library);
         std::cout << "  \"results\": {" << std::endl;
         std::cout << "    \"message\": \"Non-absorbing matrix construction completed\"" << std::endl;
         std::cout << "  }" << std::endl;
@@ -528,6 +593,7 @@ void OutputFormatter::print_switching_absorption_results(
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"switching-absorption\"," << std::endl;
         std::cout << "  \"parameters\": {" << std::endl;
+        std::cout << library_provenance_json(options.library);
         std::cout << "    \"n_models\": " << n_models << "," << std::endl;
         std::cout << "    \"population_sizes\": [";
         for (llong i = 0; i < n_models; i++) {
@@ -650,7 +716,11 @@ void OutputFormatter::print_switching_absorption_results(
             std::cout << "p" << i;
             if (i < n_models - 1) std::cout << ",";
         }
-        std::cout << ",a,P_ext,P_fix,T_ext,T_fix";
+        // The provenance pair closes the parameters group, immediately after
+        // alpha and before the first result column -- the same position it
+        // occupies in this model's JSON parameters block.
+        std::cout << ",a," << library_provenance_csv_header()
+                  << ",P_ext,P_fix,T_ext,T_fix";
         for (llong i = 0; i < n_models; i++) {
             std::cout << ",P_cond_ext" << i;
         }
@@ -705,6 +775,7 @@ void OutputFormatter::print_switching_absorption_results(
             if (i < n_models - 1) std::cout << ",";
         }
         std::cout << "," << options.alpha << ","
+                  << library_provenance_csv_values(options.library) << ","
                   << P_ext << "," << P_fix << ","
                   << T_ext << "," << T_fix;
         for (llong i = 0; i < n_models; i++) {
@@ -750,6 +821,7 @@ void OutputFormatter::print_wfafs_stochastic_results(
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"wfafs-stochastic\"," << std::endl;
         std::cout << "  \"parameters\": {" << std::endl;
+        std::cout << library_provenance_json(options.library);
         std::cout << "    \"n_models\": " << n_models << "," << std::endl;
         std::cout << "    \"alpha\": " << options.alpha << std::endl;
         std::cout << "  }," << std::endl;

@@ -318,6 +318,20 @@ int main(int argc, char const *argv[]) {
                 std::cout << "{" << std::endl;
                 std::cout << "  \"model\": \"time_dist_sgv\"," << std::endl;
                 std::cout << "  \"mode\": \"fixation\"," << std::endl;
+                // Solver-backend provenance: what was ASKED FOR and what
+                // actually ran. SolverFactory serves a "--library Accelerate"
+                // request with SuiteSparse whenever this build has it, so the
+                // request alone is not a record of the run. See
+                // output_formatter.hpp.
+                //
+                // Emitted at TOP LEVEL, not inside a "parameters" object: this
+                // is the one tool of the eleven that publishes its parameters
+                // flat, beside population_size and lambda, and inventing a
+                // nested block for two fields would change this document's
+                // shape for every existing reader. The fields sit with the
+                // other parameters, which is where the tool keeps them.
+                std::cout << wfes::cli::OutputFormatter::library_provenance_json(
+                    options.library, "  ");
                 std::cout << "  \"population_size\": " << options.population_size << "," << std::endl;
                 std::cout << "  \"lambda\": " << options.lambda << "," << std::endl;
                 std::cout << "  \"selection_coefficients\": [";

@@ -51,6 +51,87 @@ public:
      */
     static void require_finite_all(const dvec& values, const char* field);
 
+    // ----------------------------------------------------------------------
+    // Solver-backend provenance (integrity audit section 2.3)
+    //
+    // The parameters block is the provenance record of a run: every value in
+    // it has to be what the run actually used. --library was the one value
+    // that was not. SolverFactory serves a "--library Accelerate" request with
+    // SuiteSparse/UMFPACK whenever this build has SuiteSparse -- which is
+    // every shipped macOS build, and, because the macOS default IS
+    // "Accelerate", every macOS run that does not pass the flag at all. The
+    // only disclosure was one --verbose text line in wfes_single's --fixation
+    // branch; a --json or --csv record that echoed the request alone named a
+    // backend that never executed.
+    //
+    // So both halves are published, always, side by side:
+    //
+    //     "library_requested": "Accelerate",
+    //     "library_effective": "SuiteSparse",
+    //
+    // A run whose two values agree says so explicitly, which is what makes the
+    // pair a record rather than a warning: absence of a substitution is now
+    // stated, not inferred from silence.
+    //
+    // The effective name comes from SolverFactory::effectiveLibrary(), so the
+    // substitution rule has exactly one home and no main re-derives it.
+    // ----------------------------------------------------------------------
+
+    /**
+     * @brief The two provenance values for a run that asked for @p requested.
+     *
+     * `effective` is empty only when this build has no backend at all for the
+     * request -- the cases SolverFactory::createSolver throws on, which
+     * Args_Parser::validate_library() refuses long before any output is
+     * formatted. The renderers below emit JSON `null` / an empty CSV field for
+     * it rather than inventing a name.
+     */
+    struct LibraryProvenance {
+        std::string requested;
+        std::string effective;
+    };
+    static LibraryProvenance library_provenance(const std::string& requested);
+
+    /**
+     * @brief The provenance pair as two complete lines of a JSON parameters block.
+     *
+     * Returns, with @p indent in front of each line:
+     *
+     *     <indent>"library_requested": "Accelerate",\n
+     *     <indent>"library_effective": "SuiteSparse",\n
+     *
+     * The pair goes FIRST in a parameters block -- every such block in the ten
+     * tools that already had one has at least one field after it, so the
+     * trailing comma is always right, and first-position gives the eleven
+     * tools one consistent field order. Pass @p trailing_comma false for the
+     * block that ends with this pair (see library_provenance_json_block).
+     *
+     * Returning a string rather than printing keeps the caller's option to
+     * build it before the first character of the document is written, matching
+     * the validate-then-emit convention the require_finite family follows.
+     */
+    static std::string library_provenance_json(const std::string& requested,
+                                               const char* indent = "    ",
+                                               bool trailing_comma = true);
+
+    /**
+     * @brief The whole `"parameters": { ... },` object, provenance only.
+     *
+     * For a tool whose JSON had no parameters block at all before this -- only
+     * wfes_single, whose seven modes each publish a bare `results` object. The
+     * block is emitted with the same two-space/four-space indentation every
+     * other tool uses, and with a trailing comma, so it precedes `results`.
+     */
+    static std::string library_provenance_json_block(const std::string& requested,
+                                                     const char* indent = "  ");
+
+    /// The two CSV column headers, in the same order: "library_requested,library_effective".
+    static const char* library_provenance_csv_header();
+
+    /// The two CSV field values, in the same order. An unavailable backend
+    /// leaves the second field empty rather than naming one that never ran.
+    static std::string library_provenance_csv_values(const std::string& requested);
+
     /**
      * @brief Format and output results from wfes_single in fixation mode
      * 

@@ -220,6 +220,11 @@ int main(int argc, char const *argv[]) {
             std::cout << "{" << std::endl;
             std::cout << "  \"model\": \"time_dist_dual\"," << std::endl;
             std::cout << "  \"parameters\": {" << std::endl;
+            // Solver-backend provenance: what was ASKED FOR and what actually
+            // ran. SolverFactory serves a "--library Accelerate" request with
+            // SuiteSparse whenever this build has it, so the request alone is not
+            // a record of the run. See output_formatter.hpp.
+            std::cout << wfes::cli::OutputFormatter::library_provenance_json(options.library);
             std::cout << "    \"population_size\": " << options.population_size << "," << std::endl;
             std::cout << "    \"selection_coefficient\": " << options.selection_coefficient << "," << std::endl;
             std::cout << "    \"dominance\": " << options.dominance << "," << std::endl;

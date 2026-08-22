@@ -815,6 +815,12 @@ void print_results_partial(const CLI::CommandLineOptions& options,
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"" << model << "\"," << std::endl;
+        // Solver-backend provenance, exactly as the shared formatter's
+        // all-fields path emits it -- this variant differs only in which
+        // RESULT fields it may omit (see the struct comment above), and the
+        // parameters block is not a result.
+        std::cout << CLI::OutputFormatter::library_provenance_json_block(
+            options.library);
         std::cout << "  \"results\": {" << std::endl;
         size_t remaining = n_present;
         for (const auto& f : fields) {
@@ -904,6 +910,8 @@ void print_matrix_mode_status(const CLI::CommandLineOptions& options,
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"" << model << "\"," << std::endl;
+        std::cout << CLI::OutputFormatter::library_provenance_json_block(
+            options.library);
         std::cout << "  \"results\": {" << std::endl;
         std::cout << "    \"message\": \"" << json_escape(message) << "\"";
         for (const auto& f : fields) {
@@ -943,6 +951,8 @@ void print_fundamental_sojourn(const CLI::CommandLineOptions& options,
     if (options.json_output) {
         std::cout << "{" << std::endl;
         std::cout << "  \"model\": \"fundamental\"," << std::endl;
+        std::cout << CLI::OutputFormatter::library_provenance_json_block(
+            options.library);
         std::cout << "  \"results\": {" << std::endl;
         std::cout << "    \"T_abs\": " << std::setprecision(17) << T_abs << ","
                   << std::endl;
@@ -1174,8 +1184,19 @@ int main(int argc, char const *argv[]) {
                 // SuiteSparse/UMFPACK whenever SuiteSparse is available. Echoing
                 // options.library alone put a backend in the user's log that
                 // never executed.
+                //
+                // Sourced from the same function that fills the machine-readable
+                // library_effective field, so this text line and every --json /
+                // --csv provenance record in the eleven tools can never disagree
+                // about the same run. It therefore prints the name
+                // Args_Parser::supported_libraries() uses ("SuiteSparse") rather
+                // than the solver class's own longer label ("SuiteSparse
+                // (UMFPACK)"): one vocabulary for the backend everywhere.
                 if (options.verbose) {
-                    std::cout << "  Library (in use):    " << solver->backendName() << std::endl;
+                    std::cout << "  Library (in use):    "
+                              << CLI::OutputFormatter::library_provenance(
+                                     options.library).effective
+                              << std::endl;
                 }
 
                 // Conditioning of THIS factorization, measured once and shared

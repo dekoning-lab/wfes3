@@ -275,6 +275,23 @@ struct CsvRow {
         }
     }
 
+    // The solver-backend provenance pair, closing the parameters group of
+    // this row -- the same two fields, in the same order and the same
+    // position, that this model's JSON parameters block carries. Placed
+    // BEFORE the first result column rather than appended at the end,
+    // because end-relative readers of this row exist (the GUI's own CSV
+    // fallback indexes results from the last field backwards) and appending
+    // would silently shift every one of them. See output_formatter.hpp.
+    void add_library_provenance(const std::string &requested) {
+        const wfes::cli::OutputFormatter::LibraryProvenance p =
+            wfes::cli::OutputFormatter::library_provenance(requested);
+        cols.emplace_back("library_requested", p.requested);
+        // Empty, not a guessed name, when this build has no backend for the
+        // request -- unreachable from the CLI, which refuses those values at
+        // parse time. Same convention as add_per_model_or_empty above.
+        cols.emplace_back("library_effective", p.effective);
+    }
+
     void print() const {
         for (size_t i = 0; i < cols.size(); i++) {
             std::cout << (i ? "," : "") << cols[i].first;
@@ -608,6 +625,11 @@ int main(int argc, char const *argv[]) {
                 std::cout << "{" << std::endl;
                 std::cout << "  \"model\": \"switching_fixation\"," << std::endl;
                 std::cout << "  \"parameters\": {" << std::endl;
+                // Solver-backend provenance: what was ASKED FOR and what actually
+                // ran. SolverFactory serves a "--library Accelerate" request with
+                // SuiteSparse whenever this build has it, so the request alone is not
+                // a record of the run. See output_formatter.hpp.
+                std::cout << wfes::cli::OutputFormatter::library_provenance_json(options.library);
                 std::cout << "    \"n_models\": " << n_models << "," << std::endl;
                 json_vec("population_sizes", population_sizes);
                 json_vec("selection_coefficients", s);
@@ -646,6 +668,7 @@ int main(int argc, char const *argv[]) {
                 row.add_per_model("v", v);
                 row.add_per_model_or_empty("p", p, options.initial_distribution_path.empty());
                 row.add("a", options.alpha);
+                row.add_library_provenance(options.library);
                 row.add("T_fix", T_fix);
                 row.add("rate", rate);
                 row.print();

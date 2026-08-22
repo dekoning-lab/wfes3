@@ -18,6 +18,7 @@
 #include "wright_fisher.h"
 #include "utils.h"
 #include "solver.h"
+#include "output_formatter.hpp"    // for the shared solver-backend provenance fields
 #include "exceptions.h"
 #include "types.h"
 
@@ -582,6 +583,11 @@ int main(int argc, char* argv[]) {
             cout << "{" << endl;
             cout << "  \"model\": \"wfafs_deterministic\"," << endl;
             cout << "  \"parameters\": {" << endl;
+            // Solver-backend provenance: what was ASKED FOR and what actually
+            // ran. SolverFactory serves a "--library Accelerate" request with
+            // SuiteSparse whenever this build has it, so the request alone is not
+            // a record of the run. See output_formatter.hpp.
+            cout << wfes::cli::OutputFormatter::library_provenance_json(options.library);
             cout << "    \"starting_count\": " << options.p << "," << endl;
             cout << "    \"n_epochs\": " << options.N_vec.size() << "," << endl;
             cout << "    \"population_sizes\": [";
