@@ -147,22 +147,35 @@ export class WfesBackendService {
         // not re-added: the first run already wrote both to the user's chosen
         // paths, and re-running them here would rewrite identical content --
         // and in V's case pay for a second full N*N product.
-        const dropWithValue = new Set(['--output-N', '--output-I', '--output-V'])
+        const dropWithValue = new Set([
+          '--output-N', '--output-N-ext', '--output-N-fix', '--output-I', '--output-V'
+        ])
         const matrixArgs: string[] = []
         for (let i = 0; i < args.length; i++) {
           if (args[i] === '--json') continue
           if (dropWithValue.has(args[i])) { i++; continue }
           matrixArgs.push(args[i])
         }
+
+        // All three sojourn matrices, always -- this mode is "Sojourn times,
+        // including conditional on the absorbing state", and the conditional
+        // pair is half of what it advertises.
+        //
+        // They used to be requested only when the user had ticked the "write
+        // N_ext / N_fix to file" export boxes, which are about saving files and
+        // say nothing about wanting to look at a chart. So the two conditional
+        // View buttons -- which render only when results.n_ext / n_fix are
+        // present -- appeared as a side effect of an unrelated checkbox, and
+        // the mode otherwise showed the unconditional matrix alone.
+        //
+        // The cost is one solve each inside the re-run that already happens for
+        // N, measured at +50% wall time for the whole invocation at N = 100
+        // (0.068 s -> 0.104 s). Where a conditional sojourn is not well defined
+        // the CLI declines to write that file rather than failing the run, so
+        // each is read back only if it exists and its button stays hidden.
         matrixArgs.push('--output-N', matrixFile)
-        
-        // Add N_ext and N_fix output files if requested
-        if (params.output_options?.writeNExt) {
-          matrixArgs.push('--output-N-ext', nExtFile)
-        }
-        if (params.output_options?.writeNFix) {
-          matrixArgs.push('--output-N-fix', nFixFile)
-        }
+        matrixArgs.push('--output-N-ext', nExtFile)
+        matrixArgs.push('--output-N-fix', nFixFile)
         
         console.log('Running with matrix output to:', matrixFile)
         // Re-run with matrix output
@@ -188,16 +201,16 @@ export class WfesBackendService {
           parsedResult.results.fundamental_matrix = matrixData
         }
         
-        // Read N_ext if it was requested
-        if (params.output_options?.writeNExt && fs.existsSync(nExtFile)) {
+        // Each conditional matrix is present only if the CLI could define it at
+        // these parameters; absent is a legitimate outcome, not an error.
+        if (fs.existsSync(nExtFile)) {
           const nExtData = await this.readFundamentalMatrix(nExtFile)
           if (nExtData) {
             parsedResult.results.n_ext = nExtData
           }
         }
-        
-        // Read N_fix if it was requested
-        if (params.output_options?.writeNFix && fs.existsSync(nFixFile)) {
+
+        if (fs.existsSync(nFixFile)) {
           const nFixData = await this.readFundamentalMatrix(nFixFile)
           if (nFixData) {
             parsedResult.results.n_fix = nFixData
@@ -213,7 +226,42 @@ export class WfesBackendService {
           console.warn('Failed to clean up temp files:', e)
         }
       }
-      
+
+      // The non-absorbing model's transition matrix, always.
+      //
+      // This model reports no probabilities and no times -- its own message
+      // says the transition matrix is its whole product -- yet Q was written
+      // only when the user ticked "write Q to file" in Options and Settings.
+      // Without that the Results panel had a sentence and nothing else. Same
+      // treatment as the sojourn matrices: fetch it into a temp file so the
+      // view can offer it, and leave the user's own --output-Q (if they asked
+      // for one) to the first run, which already wrote it.
+      if (params.model_type === 'nonAbsorbing' && parsedResult.model === 'non_absorbing') {
+        const qFile = join(os.tmpdir(), `wfes_q_${Date.now()}.csv`)
+        const qArgs: string[] = []
+        for (let i = 0; i < args.length; i++) {
+          if (args[i] === '--json') continue
+          if (args[i] === '--output-Q') { i++; continue }
+          qArgs.push(args[i])
+        }
+        qArgs.push('--output-Q', qFile)
+
+        const qRun = await this.executeProcess('wfes_single', qArgs, processId + '_q')
+        for (const line of this.warningsFrom(qRun.stderr)) {
+          if (!warnings.includes(line)) warnings.push(line)
+        }
+
+        if (fs.existsSync(qFile)) {
+          const qData = await this.readSparseCsvMatrix(qFile)
+          if (qData) parsedResult.results.q_matrix = qData
+          try {
+            await fs.promises.unlink(qFile)
+          } catch (e) {
+            console.warn('Failed to clean up Q temp file:', e)
+          }
+        }
+      }
+
       return { ...parsedResult, warnings }
     } finally {
       this.activeProcesses.delete(processId)
@@ -504,16 +552,18 @@ export class WfesBackendService {
    * failed or the file landed somewhere the user would never find. The drawer
    * now carries an outputDirectory; Downloads is the fallback.
    *
-   * Files are named <tool>_<label>.<ext>. Only Q is written by
-   * SparseMatrix::saveMarket (MatrixMarket); everything else goes through
-   * OutputFormatter as CSV.
+   * Files are named <tool>_<label>.csv. Q goes through
+   * SparseMatrix::saveSparseCsv as `row,col,value` coordinate triples rather
+   * than a dense grid -- these matrices are banded, so a dense export is
+   * O(N^2) and mostly zeros -- while everything else goes through
+   * OutputFormatter as a dense CSV. Both are CSV; Q was Matrix Market (.mtx)
+   * until 2026-08-22.
    */
   private outputPath(params: any, tool: string, label: string): string {
     const dir =
       params.output_options?.outputDirectory ||
       app.getPath('downloads')
-    const ext = label === 'Q' ? 'mtx' : 'csv'
-    return join(dir, `${tool}_${label}.${ext}`)
+    return join(dir, `${tool}_${label}.csv`)
   }
 
   /**
@@ -2884,6 +2934,61 @@ export class WfesBackendService {
    * @private
    * @remarks Used for wfes_single fundamental mode matrix output
    */
+  /**
+   * Read a sparse `row,col,value` CSV (SparseMatrix::saveSparseCsv) into a
+   * dense array for display.
+   *
+   * The file stores only non-zeros and declares no dimensions, so the extent
+   * is the largest index on each axis and every cell not named in the file is
+   * a true zero. Densifying is fine here because this only ever runs on a
+   * matrix the GUI is about to draw; the file itself stays sparse, which is
+   * what keeps the on-disk export from being O(N^2).
+   *
+   * Returns null rather than a partial matrix if the file is not in this
+   * format -- a half-parsed transition matrix would be drawn as if it were
+   * the real one.
+   */
+  private async readSparseCsvMatrix(filePath: string): Promise<number[][] | null> {
+    try {
+      const content = await fs.promises.readFile(filePath, 'utf-8')
+      const lines = content.trim().split('\n').filter(l => l.trim())
+      if (lines.length === 0) return null
+      if (lines[0].trim() !== 'row,col,value') {
+        console.error('Sparse CSV: unexpected header:', lines[0].slice(0, 40))
+        return null
+      }
+
+      const entries: Array<[number, number, number]> = []
+      let maxRow = 0
+      let maxCol = 0
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split(',')
+        if (parts.length !== 3) {
+          console.error('Sparse CSV: bad entry at line', i + 1)
+          return null
+        }
+        const r = parseInt(parts[0], 10)
+        const c = parseInt(parts[1], 10)
+        const v = parseFloat(parts[2])
+        if (!Number.isFinite(r) || !Number.isFinite(c) || Number.isNaN(v)) {
+          console.error('Sparse CSV: unparseable entry at line', i + 1)
+          return null
+        }
+        entries.push([r, c, v])
+        if (r > maxRow) maxRow = r
+        if (c > maxCol) maxCol = c
+      }
+      if (maxRow === 0 || maxCol === 0) return null
+
+      const dense: number[][] = Array.from({ length: maxRow }, () => new Array(maxCol).fill(0))
+      for (const [r, c, v] of entries) dense[r - 1][c - 1] = v
+      return dense
+    } catch (error) {
+      console.error('Error reading sparse CSV matrix:', error)
+      return null
+    }
+  }
+
   private async readFundamentalMatrix(filePath: string): Promise<number[][] | null> {
     try {
       const content = await fs.promises.readFile(filePath, 'utf-8')

@@ -86,11 +86,21 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   
   // Helper function to clear results and reset execution state
   const clearResults = () => {
+    setRanCommand('')
     setResults(null)
+    setRanStartingCopies(undefined)
     setWarnings([])
     setExecutionTime('')
     setError('')
   }
+
+  /**
+   * The command line that produced the results now on screen, captured at
+   * execution. Exported figures are stamped with it. Rebuilding it at export
+   * time would read the live form, which stays editable after a run and can
+   * therefore describe a different analysis than the one plotted.
+   */
+  const [ranCommand, setRanCommand] = useState('')
 
   // Handle population scaling toggle
   const handlePopulationScaledToggle = (newValue: boolean) => {
@@ -276,6 +286,20 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
   const [showEquilibriumChart, setShowEquilibriumChart] = useState(false)
   const [showFundamentalMatrix, setShowFundamentalMatrix] = useState(false)
   const [sojournType, setSojournType] = useState<'unconditional' | 'extinction' | 'fixation'>('unconditional')
+  /** Starting count the displayed results were computed from; undefined for an all-states run. */
+  const [ranStartingCopies, setRanStartingCopies] = useState<number | undefined>(undefined)
+  const [showTransitionMatrix, setShowTransitionMatrix] = useState(false)
+
+  // Which matrix the modal will actually display. The requested type only
+  // holds if that matrix came back -- a conditional sojourn is not defined at
+  // every set of parameters, and the CLI declines to write it rather than
+  // inventing one. Deriving the data, the title and the caption from this one
+  // value is what stops the modal captioning a fallback matrix as something it
+  // is not.
+  const shownSojourn: 'unconditional' | 'extinction' | 'fixation' =
+    sojournType === 'extinction' && results?.n_ext ? 'extinction' :
+    sojournType === 'fixation' && results?.n_fix ? 'fixation' :
+    'unconditional'
 
 
   // Validation functions
@@ -330,6 +354,9 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     }
     setIsExecuting(true)
     clearResults()
+    // After clearResults, which wipes it: this records the command for the
+    // run about to start, and must outlive the reset that precedes it.
+    setRanCommand(buildCommandLine())
     const startTime = Date.now()
 
     try {
@@ -403,6 +430,14 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
       if (response.success) {
         console.log('Received results:', response.results)
         setResults(response.results)
+        // What this run actually started from, captured here rather than read
+        // off the form later: the controls stay editable after a run, so the
+        // live value can describe a different model than the results do.
+        setRanStartingCopies(
+          modelType === 'fundamental' && sojournScope === 'single'
+            ? intOrUndefined(startingCopies)
+            : undefined
+        )
         setWarnings(response.warnings || [])
         setExecutionTime(response.executionTime || `${((Date.now() - startTime) / 1000).toFixed(3)}s`)
       } else {
@@ -431,7 +466,18 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
 
   const exportResults = () => {
     if (!results) return
-    
+
+    // Same reasoning as Copy: for the non-absorbing model the matrix is the
+    // result, so Export writes the matrix rather than a JSON object whose only
+    // scalar fields are a message and two dimensions.
+    if (modelType === 'nonAbsorbing') {
+      const csv = qMatrixCsv()
+      if (csv) {
+        void saveTextFile(csv, `wfes_single_Q_N${populationSize}.csv`)
+        return
+      }
+    }
+
     // For equilibrium distribution, export as CSV
     if (modelType === 'equilibrium' && results.distribution) {
       const headers = ['Copies', 'Frequency', 'Probability']
@@ -506,7 +552,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     if (canUseInitialFile && initialMode === 'file' && initialDistribution) parts.push(`--initial ${initialDistribution}`)
     if (force) parts.push('--force')
     const dir = outputDirectory || '~/Downloads'
-    if (writeQ) parts.push(`--output-Q ${dir}/wfes_single_Q.mtx`)
+    if (writeQ) parts.push(`--output-Q ${dir}/wfes_single_Q.csv`)
     if (emitR) parts.push(`--output-R ${dir}/wfes_single_R.csv`)
     if (emitB) parts.push(`--output-B ${dir}/wfes_single_B.csv`)
     if (emitN) parts.push(`--output-N ${dir}/wfes_single_N.csv`)
@@ -524,8 +570,32 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
     navigator.clipboard.writeText(command)
   }
 
+  /**
+   * The non-absorbing transition matrix as dense CSV text.
+   *
+   * Dense here, sparse on disk: this is a few hundred kB of clipboard or one
+   * saved file for a matrix small enough to have been drawn, and a grid is
+   * what a person pasting into a spreadsheet expects. `--output-Q` keeps the
+   * coordinate form, which is what stops the exported file being O(N^2) at
+   * the population sizes this tool is built for.
+   */
+  const qMatrixCsv = (): string | null => {
+    const m = results?.q_matrix
+    if (!Array.isArray(m) || m.length === 0) return null
+    return m.map((row: number[]) => row.join(',')).join('\n')
+  }
+
   const copyResultsToClipboard = () => {
     if (!results) return
+    // This model reports no quantities -- the matrix IS the result, so it is
+    // what Copy copies rather than the one-line "construction completed".
+    if (modelType === 'nonAbsorbing') {
+      const csv = qMatrixCsv()
+      if (csv) {
+        navigator.clipboard.writeText(csv)
+        return
+      }
+    }
     // Reuses the same row builder as the table. This handler used to carry its
     // own parallel switch over modelType, which had already drifted: it named
     // the dispersion rows T_abs_SD where the table said "T_abs SD", and it
@@ -907,54 +977,98 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
                   <Divider my="sm" />
                   <Text size="xs" c="dimmed">Execution time: {executionTime}</Text>
                   
-                  <Group mt="md" gap="sm">
-                    <Button
-                      leftSection={<IconPlayerPlay size={16} />}
-                      size="sm"
-                      onClick={executeModel}
-                    >
-                      Re-execute
-                    </Button>
+                  {/* Re-execute is the action; the sojourn matrices are things
+                      to look at. Putting them on one row made a Group centre a
+                      single short button against a three-button column, leaving
+                      Re-execute floating at mid-height. Separate rows, with the
+                      matrices under their own heading, also let the three wrap
+                      instead of forcing a column. */}
+                  <Stack mt="md" gap="md">
+                    <Group gap="sm">
+                      <Button
+                        leftSection={<IconPlayerPlay size={16} />}
+                        size="sm"
+                        onClick={executeModel}
+                      >
+                        Re-execute
+                      </Button>
+                    </Group>
 
                     {modelType === 'fundamental' && results.fundamental_matrix && (
                       <Stack gap="xs">
-                        <Button 
-                          variant="light" 
-                          size="sm"
-                          onClick={() => {
-                            setSojournType('unconditional')
-                            setShowFundamentalMatrix(true)
-                          }}
+                        <Text
+                          size="xs"
+                          fw={600}
+                          c="dimmed"
+                          tt="uppercase"
+                          style={{ letterSpacing: '0.06em' }}
                         >
-                          View N (unconditional)
-                        </Button>
-                        {results.n_ext && (
-                          <Button 
-                            variant="light" 
+                          Sojourn matrix
+                        </Text>
+                        <Group gap="xs">
+                          <Button
+                            variant="light"
                             size="sm"
                             onClick={() => {
-                              setSojournType('extinction')
+                              setSojournType('unconditional')
                               setShowFundamentalMatrix(true)
                             }}
                           >
-                            View N_ext (extinction-conditioned)
+                            N (unconditional)
                           </Button>
-                        )}
-                        {results.n_fix && (
-                          <Button 
-                            variant="light" 
-                            size="sm"
-                            onClick={() => {
-                              setSojournType('fixation')
-                              setShowFundamentalMatrix(true)
-                            }}
-                          >
-                            View N_fix (fixation-conditioned)
-                          </Button>
-                        )}
+                          {results.n_ext && (
+                            <Button
+                              variant="light"
+                              size="sm"
+                              onClick={() => {
+                                setSojournType('extinction')
+                                setShowFundamentalMatrix(true)
+                              }}
+                            >
+                              N_ext (extinction)
+                            </Button>
+                          )}
+                          {results.n_fix && (
+                            <Button
+                              variant="light"
+                              size="sm"
+                              onClick={() => {
+                                setSojournType('fixation')
+                                setShowFundamentalMatrix(true)
+                              }}
+                            >
+                              N_fix (fixation)
+                            </Button>
+                          )}
+                        </Group>
                       </Stack>
                     )}
-                  </Group>
+
+                    {/* The non-absorbing model's only product. Its own message
+                        says so: no probabilities, no times, just Q. */}
+                    {modelType === 'nonAbsorbing' && results.q_matrix && (
+                      <Stack gap="xs">
+                        <Text
+                          size="xs"
+                          fw={600}
+                          c="dimmed"
+                          tt="uppercase"
+                          style={{ letterSpacing: '0.06em' }}
+                        >
+                          Transition matrix
+                        </Text>
+                        <Group gap="xs">
+                          <Button
+                            variant="light"
+                            size="sm"
+                            onClick={() => setShowTransitionMatrix(true)}
+                          >
+                            View Q (transition matrix)
+                          </Button>
+                        </Group>
+                      </Stack>
+                    )}
+                  </Stack>
                 </Stack>
               ) : (
                 <Stack align="center" justify="center" style={{ height: '200px' }}>
@@ -1426,6 +1540,7 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
             u: parseFloat(mutationRateBackward) / (scaledMutation ? 4 * parseInt(populationSize) : 1),
             v: parseFloat(mutationRateForward) / (scaledMutation ? 4 * parseInt(populationSize) : 1)
           }}
+                  command={ranCommand}
         />
       </Modal>
       
@@ -1433,8 +1548,8 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
         opened={showFundamentalMatrix}
         onClose={() => setShowFundamentalMatrix(false)}
         data={
-          sojournType === 'extinction' && results?.n_ext ? results.n_ext :
-          sojournType === 'fixation' && results?.n_fix ? results.n_fix :
+          shownSojourn === 'extinction' ? results!.n_ext :
+          shownSojourn === 'fixation' ? results!.n_fix :
           results?.fundamental_matrix || []
         }
         populationSize={parseInt(populationSize)}
@@ -1446,10 +1561,30 @@ const WfesSingleViewMantine2: React.FC<WfesSingleViewProps> = ({ onBack, hideBac
           v: parseFloat(mutationRateForward) / (scaledMutation ? 4 * parseInt(populationSize) : 1)
         }}
         title={
-          sojournType === 'extinction' ? 'Extinction-Conditioned Sojourn Times N_ext(i,j)' :
-          sojournType === 'fixation' ? 'Fixation-Conditioned Sojourn Times N_fix(i,j)' :
+          shownSojourn === 'extinction' ? 'Extinction-Conditioned Sojourn Times N_ext(i,j)' :
+          shownSojourn === 'fixation' ? 'Fixation-Conditioned Sojourn Times N_fix(i,j)' :
           'Unconditional Sojourn Times N(i,j)'
         }
+        kind={shownSojourn}
+        startingCopies={ranStartingCopies}
+        command={ranCommand}
+      />
+
+      <FundamentalMatrixModal
+        opened={showTransitionMatrix}
+        onClose={() => setShowTransitionMatrix(false)}
+        data={results?.q_matrix || []}
+        populationSize={parseInt(populationSize)}
+        parameters={{
+          N: parseInt(populationSize),
+          s: parseFloat(selectionCoefficient) / (scaledSelection ? 2 * parseInt(populationSize) : 1),
+          h: parseFloat(dominanceCoefficient),
+          u: parseFloat(mutationRateBackward) / (scaledMutation ? 4 * parseInt(populationSize) : 1),
+          v: parseFloat(mutationRateForward) / (scaledMutation ? 4 * parseInt(populationSize) : 1)
+        }}
+        title="Transition Matrix Q(i,j) — non-absorbing model"
+        kind="transition"
+        command={ranCommand}
       />
     </div>
     </>
