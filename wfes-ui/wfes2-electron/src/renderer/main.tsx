@@ -9,6 +9,13 @@ import './styles/native.css'
 import './styles/mantine-nav.css'
 import './styles/resizable-nav.css'
 
+// The window title is the one place the running version is visible without
+// opening a menu, and it matters now that exported figures carry a version
+// stamp: a reader comparing a figure to a session needs to see which build
+// made it. Set here rather than in BrowserWindow's `title` option, which the
+// page's own <title> overrides on load.
+document.title = `WFES3 v${__APP_VERSION__} — Wright-Fisher Exact Solver`
+
 const theme = createTheme({
   components: {
     TextInput: {
