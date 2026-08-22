@@ -196,7 +196,28 @@ EXPECTED = [
     # see PROVENANCE_COLUMNS in that suite.
     ("test_degenerate_switching_sequential.py", _checks_failed,     306),
     ("test_numeric_switching_sequential.py",   _pass_fail,          330),
-    ("test_degenerate_time_dist_family.py",    _slash_passed,        93),
+    # 93 -> 180 (2026-08-21, task CX-disclose): +87 for disclosing the CDF
+    # rescale itself, PI decision "Rescale + disclose" on the open item
+    # recorded for this branch. A converged run's JSON already ended its CDF
+    # at exactly 1.0; it now also says so explicitly, with two additive
+    # keys -- cdf_rescaled: true and cdf_pre_rescale_mass (the captured mass
+    # the rescale divided by) -- present exactly when the renormalisation
+    # block actually ran, and honestly ABSENT (not false) on a run that
+    # stopped at --max-t instead, same as this tool's own
+    # mean_extinction/std_extinction convention. When --distribution-cutoff
+    # is <= 0.99 (comfortably below the ~1e-8-of-1 default, where the
+    # rescale is cleaning up floating-point noise rather than discarding a
+    # modeling-relevant tail), the same fact is also printed to stderr,
+    # since CSV and plain text carry neither JSON key. +9 in
+    # test_truncated_runs_disclose (both keys confirmed absent, and no
+    # stderr note, on the existing -m 40 truncated fixture, x3 tools); +9 in
+    # test_converged_runs_still_normalise (cdf_rescaled true + mass bounded
+    # + stderr note present, on the existing -d 0.9 fixture, x3 tools); +69
+    # in the new test_cdf_rescale_disclosure, covering the default cutoff
+    # (converged, mass approx cutoff, no note), -d 0.5 (note names the
+    # cutoff and the conditionality), --csv (structure unchanged, note still
+    # fires), and plain text (note still fires), x3 tools.
+    ("test_degenerate_time_dist_family.py",    _slash_passed,       180),
     ("test_degenerate_wfafs_deterministic.py", _passed_slash,       185),
     # 190 -> 242 (2026-08-21, task FINAL): +52 for the missing -p range check,
     # in test_starting_copies_range. The starting copy count was used as a

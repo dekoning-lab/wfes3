@@ -76,7 +76,13 @@ it does not end at 1 -- so the truncation is visible in every output format
 rather than disguised as a complete distribution. JSON carries a
 `reached_cutoff` field for the same reason, and a warning naming the mass
 actually captured is printed to stderr. Only a run that genuinely reaches the
-cutoff is normalised to end at exactly 1. A cutoff already satisfied before
+cutoff is normalised to end at exactly 1. When it does, the JSON also
+discloses the rescale itself -- `cdf_rescaled: true` alongside
+`cdf_pre_rescale_mass`, the captured mass (mirroring `final_cdf`) the CDF was
+divided by -- and a cutoff of 0.99 or below additionally prints a one-line
+stderr note, since the reported distribution is then conditional on
+fixation occurring within the computed window rather than an unconditional
+probability. A cutoff already satisfied before
 the first generation is refused rather than published as a zero-row
 "result". (`-r`/`--no-recurrent-mu` is a flag on other WFES tools but is not
 wired into this tool's SGV model, so it is refused here rather than silently

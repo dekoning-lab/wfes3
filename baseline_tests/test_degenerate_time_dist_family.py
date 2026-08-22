@@ -14,6 +14,13 @@ substitute when a computation cannot be performed correctly:
     truncation is visible in every output format (the CSV path carries no
     reached_cutoff field), and must say so on stderr.
   * A converged run still ends at 1.0.
+  * task CX-disclose (PI decision "Rescale + disclose"): a converged run's
+    JSON additionally carries `cdf_rescaled: true` and the pre-rescale
+    captured mass (`cdf_pre_rescale_mass`), present exactly when -- and only
+    when -- the CDF columns were actually divided down to end at 1.0; a
+    truncated run has neither key. When --distribution-cutoff is <= 0.99, the
+    rescale is also disclosed on stderr in every output format, since CSV and
+    plain text carry neither field.
   * A degenerate --distribution-cutoff (<= 0) must not produce a header-only
     "success"; zero computed time steps is a refusal, not a result.
   * phase_type_moments must never print nan/inf. Moments that overflow double
@@ -65,6 +72,15 @@ DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cx3" / "bin"
 # would) do not trip the scan.
 NONFINITE_TOKEN = re.compile(r"(?<![A-Za-z0-9_.])[-+]?(?:nan|inf|infinity)(?![A-Za-z0-9_])",
                              re.IGNORECASE)
+
+# Substring common to all three tools' stderr disclosure for task CX-disclose
+# (PI decision "Rescale + disclose"): printed when, and only when, a run
+# converged (reached_cutoff) AND --distribution-cutoff <= 0.99 -- see the
+# threshold rationale next to cdf_was_rescaled in each tool's main.cpp. Format
+# -agnostic (emitted before the --json/--csv/plain branch), which is the point:
+# CSV and plain text carry no cdf_rescaled field, so this note is their only
+# disclosure channel.
+RESCALE_NOTE_MARKER = "rescaled to end at 1.0 from the captured mass"
 
 BIN_DIR = DEFAULT_BIN_DIR  # replaced in main()
 FAILURES: list[str] = []
@@ -164,8 +180,19 @@ def test_truncated_runs_disclose():
               close(rows[-1]["cdf_ext"], st["total_probability_extinction"]))
         check(f"{label}: last cdf_fix == total_probability_fixation",
               close(rows[-1]["cdf_fix"], st["total_probability_fixation"]))
+        # task CX-disclose: nothing was rescaled here (the run stopped at
+        # --max-t short of the cutoff), so the disclosure keys are honestly
+        # ABSENT rather than printed with a false/null sentinel -- the same
+        # convention this tool already uses for mean_extinction/std_extinction
+        # when cdf_ext == 0 (see time_dist_main.cpp).
+        check(f"{label}: cdf_rescaled absent (nothing was rescaled)",
+              "cdf_rescaled" not in st, str(sorted(st)))
+        check(f"{label}: cdf_pre_rescale_mass absent (nothing was rescaled)",
+              "cdf_pre_rescale_mass" not in st, str(sorted(st)))
     check(f"{label}: stderr warns about --max-t", "--max-t" in proc.stderr,
           proc.stderr.strip()[:80])
+    check(f"{label}: stderr carries no rescale-disclosure note",
+          RESCALE_NOTE_MARKER not in proc.stderr, proc.stderr.strip()[:160])
 
     # The CSV path has no reached_cutoff field at all, so the raw CDF is the
     # only thing that can disclose the truncation.
@@ -190,8 +217,14 @@ def test_truncated_runs_disclose():
         check(f"{label}: last cdf_total == final_cdf",
               close(rows[-1]["cdf_total"], st["final_cdf"]),
               f'{rows[-1]["cdf_total"]!r} vs {st["final_cdf"]!r}')
+        check(f"{label}: cdf_rescaled absent (nothing was rescaled)",
+              "cdf_rescaled" not in st, str(sorted(st)))
+        check(f"{label}: cdf_pre_rescale_mass absent (nothing was rescaled)",
+              "cdf_pre_rescale_mass" not in st, str(sorted(st)))
     check(f"{label}: stderr warns about --max-t", "--max-t" in proc.stderr,
           proc.stderr.strip()[:80])
+    check(f"{label}: stderr carries no rescale-disclosure note",
+          RESCALE_NOTE_MARKER not in proc.stderr, proc.stderr.strip()[:160])
 
     # time_dist_sgv
     proc = run("time_dist_sgv", ["-N", "50", "-L", "0.5", "-s", "0,0.01",
@@ -205,27 +238,36 @@ def test_truncated_runs_disclose():
         check(f"{label}: last cdf < 1", cdfs[-1] < 1.0, repr(cdfs[-1]))
         check(f"{label}: last cdf == final_cdf", close(cdfs[-1], d["final_cdf"]),
               f'{cdfs[-1]!r} vs {d["final_cdf"]!r}')
+        check(f"{label}: cdf_rescaled absent (nothing was rescaled)",
+              "cdf_rescaled" not in d, str(sorted(d)))
+        check(f"{label}: cdf_pre_rescale_mass absent (nothing was rescaled)",
+              "cdf_pre_rescale_mass" not in d, str(sorted(d)))
     check(f"{label}: stderr warns about --max-t", "--max-t" in proc.stderr,
           proc.stderr.strip()[:80])
+    check(f"{label}: stderr carries no rescale-disclosure note",
+          RESCALE_NOTE_MARKER not in proc.stderr, proc.stderr.strip()[:160])
 
 
 def test_converged_runs_still_normalise():
     print("\n=== converged runs: CDF still ends at 1, no warning ===")
     cases = [
-        ("time_dist", ["-N", "20", "-d", "0.9", "--json"],
+        ("time_dist", ["-N", "20", "-d", "0.9", "--json"], 0.9,
          lambda d: d["distribution"][-1]["cdf_total"],
-         lambda d: d["statistics"]["reached_cutoff"]),
+         lambda d: d["statistics"]["reached_cutoff"],
+         lambda d: d["statistics"]),
         ("time_dist_dual", ["-N", "20", "-u", "0.01", "-v", "0.01",
-                            "-d", "0.9", "--json"],
+                            "-d", "0.9", "--json"], 0.9,
          lambda d: d["distribution"][-1]["cdf_total"],
-         lambda d: d["statistics"]["reached_cutoff"]),
+         lambda d: d["statistics"]["reached_cutoff"],
+         lambda d: d["statistics"]),
         ("time_dist_sgv", ["-N", "10", "-L", "0.5", "-s", "0.1,0.1",
                            "-u", "0.01,0.01", "-v", "0.01,0.01",
-                           "-d", "0.9", "--json"],
+                           "-d", "0.9", "--json"], 0.9,
          lambda d: d["distribution"]["cdf"][-1],
-         lambda d: d["reached_cutoff"]),
+         lambda d: d["reached_cutoff"],
+         lambda d: d),
     ]
-    for tool, args, last_cdf, reached in cases:
+    for tool, args, cutoff, last_cdf, reached, stats in cases:
         proc = run(tool, args)
         label = f"{tool} converged"
         check(f"{label}: exit 0", proc.returncode == 0, f"exit={proc.returncode}")
@@ -236,6 +278,132 @@ def test_converged_runs_still_normalise():
             check(f"{label}: reached_cutoff true", reached(d) is True)
             check(f"{label}: last cdf == 1", close(last_cdf(d), 1.0, rel=1e-12),
                   repr(last_cdf(d)))
+            # task CX-disclose: this cutoff (0.9) is <= 0.99, so the run must
+            # both carry the disclosure keys AND print the stderr note -- the
+            # two channels are not exclusive alternatives, JSON gets both.
+            check(f"{label}: cdf_rescaled true", stats(d).get("cdf_rescaled") is True,
+                  repr(stats(d).get("cdf_rescaled")))
+            mass = stats(d).get("cdf_pre_rescale_mass")
+            check(f"{label}: cdf_pre_rescale_mass in [cutoff, 1)",
+                  mass is not None and cutoff <= mass < 1.0, repr(mass))
+            check(f"{label}: stderr carries the rescale-disclosure note "
+                  f"(cutoff {cutoff} <= 0.99)",
+                  RESCALE_NOTE_MARKER in proc.stderr, proc.stderr.strip()[:160])
+
+
+def test_cdf_rescale_disclosure():
+    """task CX-disclose (PI decision "Rescale + disclose").
+
+    A converged run always rescales its CDF(s) to end at 1.0 -- that part is
+    unchanged and tested above. What is new is DISCLOSING the rescale: every
+    converged run's JSON carries cdf_rescaled + cdf_pre_rescale_mass, and a
+    run whose --distribution-cutoff is <= 0.99 (chosen because the DEFAULT
+    cutoff is 1-1e-8 -- comfortably above it, where the rescale only mops up
+    floating-point-scale tail noise nobody would call a modeling choice --
+    while 0.99 already means at least 1% of one of the branches' own mass
+    sits outside the computed window, which is large enough to change how a
+    reader should interpret "P(T <= t) -> 1") ALSO explains itself on stderr,
+    in every output format, since CSV and plain text carry neither JSON key.
+    """
+    print("\n=== task CX-disclose: converged runs disclose their CDF rescale ===")
+
+    # Small, fast-converging models (verified empirically against an
+    # unmodified build: each reaches even the ~1e-8-of-1 default cutoff in
+    # well under a second at these sizes). No -d/-csv/--json here -- those are
+    # appended per scenario below.
+    MODEL_ARGS = {
+        "time_dist": ["-N", "10", "-s", "0.5"],
+        "time_dist_dual": ["-N", "10", "-s", "0.5", "-v", "0.05"],
+        "time_dist_sgv": ["-N", "10", "-L", "0.5", "-s", "0.1,0.5",
+                          "-u", "0.01,0.01", "-v", "0.01,0.01"],
+    }
+    # (tool, statistics-dict accessor, reached_cutoff accessor) -- time_dist
+    # and time_dist_dual nest both under "statistics"; time_dist_sgv publishes
+    # everything flat at top level (see time_dist_sgv_main.cpp's own comment
+    # on why: it is the one tool of the eleven that does).
+    CASES = [
+        ("time_dist", lambda d: d["statistics"], lambda d: d["statistics"]["reached_cutoff"]),
+        ("time_dist_dual", lambda d: d["statistics"], lambda d: d["statistics"]["reached_cutoff"]),
+        ("time_dist_sgv", lambda d: d, lambda d: d["reached_cutoff"]),
+    ]
+    CSV_HEADER = {
+        "time_dist": "time,P_ext,P_fix,P_total,cdf_ext,cdf_fix,cdf_total",
+        "time_dist_dual": "time,P_ext,P_fix,P_total,cdf_total",
+        "time_dist_sgv": "time,pdf,cdf",
+    }
+
+    print("--- default cutoff (converged): disclosure keys, no stderr note ---")
+    for tool, stats, reached in CASES:
+        proc = run(tool, MODEL_ARGS[tool] + ["--json"])
+        label = f"{tool} default cutoff"
+        check(f"{label}: exit 0", proc.returncode == 0, f"exit={proc.returncode}")
+        d = assert_clean_json(label, proc)
+        if d:
+            st = stats(d)
+            cutoff = st["distribution_cutoff"]
+            check(f"{label}: reached_cutoff true", reached(d) is True)
+            check(f"{label}: cdf_rescaled true", st.get("cdf_rescaled") is True,
+                  repr(st.get("cdf_rescaled")))
+            mass = st.get("cdf_pre_rescale_mass")
+            check(f"{label}: cdf_pre_rescale_mass present", mass is not None)
+            check(f"{label}: cdf_pre_rescale_mass approx cutoff ({cutoff!r})",
+                  mass is not None and close(mass, cutoff, rel=1e-3), repr(mass))
+        # The default cutoff (1-1e-8) is far above the 0.99 threshold: no note.
+        check(f"{label}: stderr carries no rescale-disclosure note (cutoff far above 0.99)",
+              RESCALE_NOTE_MARKER not in proc.stderr, proc.stderr.strip()[:160])
+
+    print("--- -d 0.5 (deliberate low cutoff): disclosure keys + stderr note ---")
+    for tool, stats, reached in CASES:
+        proc = run(tool, MODEL_ARGS[tool] + ["-d", "0.5", "--json"])
+        label = f"{tool} -d 0.5"
+        check(f"{label}: exit 0", proc.returncode == 0, f"exit={proc.returncode}")
+        d = assert_clean_json(label, proc)
+        if d:
+            st = stats(d)
+            check(f"{label}: reached_cutoff true", reached(d) is True)
+            check(f"{label}: cdf_rescaled true", st.get("cdf_rescaled") is True,
+                  repr(st.get("cdf_rescaled")))
+            mass = st.get("cdf_pre_rescale_mass")
+            # Not a tight equality: time_dist's cutoff is applied separately to
+            # each branch's OWN total (target_ext/target_fix), so when the two
+            # branches converge at different rates the combined captured mass
+            # can overshoot 0.5 substantially even though each branch is right
+            # at its own target -- verified empirically (0.5 -> 0.82 total in
+            # one asymmetric case). >= cutoff and < 1 (strictly -- otherwise
+            # this could not be distinguished from the POST-rescale value) is
+            # what is actually guaranteed for all three tools.
+            check(f"{label}: cdf_pre_rescale_mass in [0.5, 1)",
+                  mass is not None and 0.5 <= mass < 1.0, repr(mass))
+        check(f"{label}: stderr carries the rescale-disclosure note",
+              RESCALE_NOTE_MARKER in proc.stderr, proc.stderr.strip()[:200])
+        check(f"{label}: stderr note names the triggering cutoff (0.5)",
+              "0.5" in proc.stderr, proc.stderr.strip()[:200])
+        check(f"{label}: stderr note explains the conditionality",
+              "conditional" in proc.stderr, proc.stderr.strip()[:200])
+
+    print("--- -d 0.5 --csv: structure unchanged, note is the only channel ---")
+    for tool, _stats, _reached in CASES:
+        proc = run(tool, MODEL_ARGS[tool] + ["-d", "0.5", "--csv"])
+        label = f"{tool} -d 0.5 --csv"
+        check(f"{label}: exit 0", proc.returncode == 0, f"exit={proc.returncode}")
+        lines = [l for l in proc.stdout.splitlines() if l.strip()]
+        check(f"{label}: CSV header unchanged",
+              bool(lines) and lines[0] == CSV_HEADER[tool],
+              lines[0] if lines else "no output")
+        data = [l for l in lines if not l.startswith("time,")]
+        last_col = float(data[-1].split(",")[-1]) if data else None
+        check(f"{label}: last row's CDF column still ends at 1 (structure unchanged)",
+              last_col is not None and close(last_col, 1.0, rel=1e-9), repr(last_col))
+        check(f"{label}: stderr still carries the rescale-disclosure note",
+              RESCALE_NOTE_MARKER in proc.stderr, proc.stderr.strip()[:200])
+
+    print("--- -d 0.5, plain text: note fires regardless of format ---")
+    for tool, _stats, _reached in CASES:
+        proc = run(tool, MODEL_ARGS[tool] + ["-d", "0.5"])
+        label = f"{tool} -d 0.5 (plain)"
+        check(f"{label}: exit 0", proc.returncode == 0, f"exit={proc.returncode}")
+        check(f"{label}: stderr carries the rescale-disclosure note",
+              RESCALE_NOTE_MARKER in proc.stderr, proc.stderr.strip()[:200])
 
 
 def test_degenerate_cutoff_refuses():
@@ -368,6 +536,7 @@ def main() -> int:
     test_sgv_output_P_does_not_suppress_streams()
     test_truncated_runs_disclose()
     test_converged_runs_still_normalise()
+    test_cdf_rescale_disclosure()
     test_degenerate_cutoff_refuses()
     test_phase_type_moments_refuses_nonfinite()
     test_phase_type_moments_safe_k()

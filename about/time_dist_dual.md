@@ -75,7 +75,13 @@ mass actually captured is printed to stderr. JSON also carries an explicit
 `reached_cutoff` field in its statistics block; CSV and plain text do not
 have that field, so a raw CDF that stops short of 1 (plus the stderr
 warning) is what discloses the truncation there. Only a run that genuinely
-reaches the cutoff is normalised to end at exactly 1. A cutoff already
+reaches the cutoff is normalised to end at exactly 1. When it does, the JSON
+statistics block also discloses the rescale itself -- `cdf_rescaled: true`
+alongside `cdf_pre_rescale_mass`, the captured mass (mirroring `final_cdf`)
+the CDF was divided by -- and a cutoff of 0.99 or below additionally prints a
+one-line stderr note, since the reported distribution is then conditional on
+absorption occurring within the computed window rather than an unconditional
+probability. A cutoff already
 satisfied before the first generation is refused rather than published as a
 zero-row "result".
 

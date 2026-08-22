@@ -283,10 +283,36 @@ int main(int argc, char const *argv[]) {
         // indistinguishable from a converged run. Left raw, the partial CDF
         // discloses its own truncation in every output format and stays
         // consistent with final_cdf.
-        if (reached_cutoff && cdf > 0) {
+        // Named once so the JSON disclosure below (task CX-disclose, PI
+        // decision "Rescale + disclose") can never drift out of sync with
+        // the renormalisation it is disclosing -- it is the exact condition
+        // that gates the division, not a separately-derived equivalent.
+        const bool cdf_was_rescaled = reached_cutoff && cdf > 0;
+        if (cdf_was_rescaled) {
             for (llong j = 0; j < i; j++) {
                 PH(j, 2) = PH(j, 2) / cdf;  // Normalize CDF
             }
+        }
+
+        // Disclose the rescale itself when the cutoff that drove it is far
+        // enough from 1 to matter for interpretation. See time_dist_main.cpp
+        // for the full rationale behind the 0.99 threshold: at or below it,
+        // the rescale discards a modeling-relevant slice of the tail rather
+        // than cleaning up residual truncation noise near the ~1e-8-of-1
+        // default, and the resulting "CDF -> 1" is conditional on fixation
+        // occurring within the captured window, not the unconditional
+        // statement it looks like. CSV and plain text carry no
+        // reached_cutoff or cdf_rescaled field at all, so this stderr note
+        // -- printed before the --json/--csv/plain branch below, hence
+        // format-agnostic -- is their only disclosure channel; JSON gets
+        // both.
+        if (cdf_was_rescaled && options.distribution_cutoff <= 0.99) {
+            std::cerr << "Note: --distribution-cutoff " << options.distribution_cutoff
+                      << " is well below 1, so the CDF was rescaled to end at 1.0"
+                         " from the captured mass " << cdf << "; the reported"
+                         " distribution is therefore conditional on fixation"
+                         " occurring within the computed time window, not an"
+                         " unconditional probability.\n";
         }
 
         // Output phase-type distribution if requested
@@ -344,6 +370,18 @@ int main(int argc, char const *argv[]) {
                 std::cout << "  \"final_cdf\": " << cdf << "," << std::endl;
                 std::cout << "  \"distribution_cutoff\": " << options.distribution_cutoff << "," << std::endl;
                 std::cout << "  \"reached_cutoff\": " << (reached_cutoff ? "true" : "false") << "," << std::endl;
+                // Additive disclosure fields -- see time_dist_dual_main.cpp
+                // for the full rationale; identical pattern, flat rather than
+                // nested under "statistics" because this tool already
+                // publishes everything flat (see the provenance comment
+                // above). Present exactly when cdf_was_rescaled actually
+                // divided the CDF column down to end at 1.0; a run that
+                // stopped at --max-t instead has neither key, honestly
+                // ABSENT rather than printed with a false/null sentinel.
+                if (cdf_was_rescaled) {
+                    std::cout << "  \"cdf_rescaled\": true," << std::endl;
+                    std::cout << "  \"cdf_pre_rescale_mass\": " << cdf << "," << std::endl;
+                }
                 std::cout << "  \"distribution\": {" << std::endl;
                 std::cout << "    \"time\": [";
                 for (llong j = 0; j < i; j++) {

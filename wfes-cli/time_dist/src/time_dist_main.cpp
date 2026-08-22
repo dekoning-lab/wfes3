@@ -286,7 +286,12 @@ int main(int argc, char const *argv[]) {
         // indistinguishable from a converged one. Left raw, the partial CDF
         // discloses its own truncation in every output format and stays
         // consistent with the totals reported in the statistics block.
-        if (reached_cutoff && (cdf_ext > 0 || cdf_fix > 0)) {
+        // Named once so the JSON disclosure below (task CX-disclose, PI
+        // decision "Rescale + disclose") can never drift out of sync with
+        // the renormalisation it is disclosing -- it is the exact condition
+        // that gates the division, not a separately-derived equivalent.
+        const bool cdf_was_rescaled = reached_cutoff && (cdf_ext > 0 || cdf_fix > 0);
+        if (cdf_was_rescaled) {
             for (llong j = 0; j < i; j++) {
                 if (cdf_ext > 0) {
                     PH(j, 4) = PH(j, 4) / cdf_ext;  // Normalize extinction CDF
@@ -299,7 +304,35 @@ int main(int argc, char const *argv[]) {
                 }
             }
         }
-        
+
+        // Disclose the rescale itself when the cutoff that drove it is far
+        // enough from 1 to matter for interpretation (task CX-disclose, PI
+        // decision "Rescale + disclose"). Every converged run rescales its
+        // CDF columns to end at 1.0 -- including runs at the ~1e-8-of-1
+        // default, where the rescale only cleans up residual truncation
+        // noise nobody would notice. At a deliberately low cutoff, the same
+        // arithmetic instead discards a modeling-relevant slice of the
+        // distribution's tail, and the resulting "CDF -> 1" is conditional
+        // on the event occurring within the captured window, not the
+        // unconditional statement it looks like. 0.99 is the line: at or
+        // below it, at least 1% of one of the branches' own mass sits
+        // outside the window actually computed, which is large enough to
+        // change how the output should be read; above it (including the
+        // default) the excluded mass is closer to floating-point noise than
+        // a modeling choice. CSV and plain text carry no reached_cutoff or
+        // cdf_rescaled field at all, so this stderr note -- printed before
+        // the --json/--csv/plain branch below, hence format-agnostic -- is
+        // their only disclosure channel; JSON gets both.
+        if (cdf_was_rescaled && options.distribution_cutoff <= 0.99) {
+            std::cerr << "Note: --distribution-cutoff " << options.distribution_cutoff
+                      << " is well below 1, so the extinction and fixation CDFs"
+                         " were each rescaled to end at 1.0 from the captured mass"
+                         " (cdf_ext=" << cdf_ext << ", cdf_fix=" << cdf_fix << ");"
+                         " each is therefore conditional on that branch's event"
+                         " occurring within the computed time window, not an"
+                         " unconditional probability.\n";
+        }
+
         // Calculate standard deviations
         // Var(T) = E[T^2] - (E[T])^2
         // But we need to normalize by the total probability for conditional expectations
@@ -354,6 +387,22 @@ int main(int argc, char const *argv[]) {
             std::cout << "    \"total_probability_extinction\": " << cdf_ext << "," << std::endl;
             std::cout << "    \"total_probability_fixation\": " << cdf_fix << "," << std::endl;
             std::cout << "    \"total_probability_absorption\": " << cdf_total << "," << std::endl;
+            // Additive disclosure fields (task CX-disclose, PI decision
+            // "Rescale + disclose"): present exactly when cdf_was_rescaled --
+            // see the comment at that block, above -- actually divided the
+            // CDF columns down to end at 1.0; a run that stopped at --max-t
+            // instead has neither key, honestly ABSENT rather than printed
+            // with a false/null sentinel, the same convention this block
+            // already uses for mean_extinction/std_extinction just below.
+            // cdf_pre_rescale_mass mirrors total_probability_absorption
+            // exactly (cdf_total is never itself divided, only the PH column
+            // is) -- a by-name convenience so a reader who already has
+            // "cdf_rescaled": true does not have to know which of this
+            // tool's three totals is the one the rescale used.
+            if (cdf_was_rescaled) {
+                std::cout << "    \"cdf_rescaled\": true," << std::endl;
+                std::cout << "    \"cdf_pre_rescale_mass\": " << cdf_total << "," << std::endl;
+            }
             if (cdf_ext > 0) {
                 std::cout << "    \"mean_extinction\": " << mean_ext / cdf_ext << "," << std::endl;
                 std::cout << "    \"std_extinction\": " << std_ext << "," << std::endl;
