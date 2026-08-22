@@ -127,10 +127,27 @@ from decimal import Decimal, InvalidOperation
 import tempfile
 from pathlib import Path
 
+import platform_probe
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cxdet" / "bin"
 DEFAULT_REFERENCE = Path(
     "/Applications/WFES3.app/Contents/Resources/bin/wfafs_deterministic")
+
+# The reference is the SHIPPED v3.0.0-beta.3 binary, which exists only inside
+# the macOS .app bundle. Where it is absent this suite used to print a note and
+# return, which read downstream as four CHECKS LOST with no reason attached;
+# the four comparisons are now named and counted instead.
+NO_REFERENCE_REASON = ("shipped v3.0.0-beta.3 wfafs_deterministic not "
+                       "installed (second-implementation byte comparison)")
+
+SKIPS = platform_probe.Skips()
+
+# Set in main() from the probe: True only on the platform AND backend the
+# HEALTHY_MD5 table was recorded against. See platform_probe's
+# "Byte-identity locks" block for why a digest of printed doubles is not a
+# portable assertion, and for the procedure that would record a second one.
+DIGESTS_APPLY = True
 
 # The validated reproducer, exactly as found.
 REPRO = ["-p", "2", "--pop-sizes", "5,10", "--generations", "0,0",
@@ -445,9 +462,15 @@ def test_healthy_unchanged(tool: Path) -> dict[str, str]:
             stdout_bytes = strip_banner(stdout_bytes)
         digest = hashlib.md5(strip_provenance(stdout_bytes)).hexdigest()
         digests[fmt_name] = digest
-        check(f"{tag} stdout is byte-identical to the recorded pre-fix output",
-              digest == HEALTHY_MD5[fmt_name],
-              f"md5 {digest}, expected {HEALTHY_MD5[fmt_name]}")
+        if DIGESTS_APPLY:
+            check(f"{tag} stdout is byte-identical to the recorded pre-fix "
+                  f"output", digest == HEALTHY_MD5[fmt_name],
+                  f"md5 {digest}, expected {HEALTHY_MD5[fmt_name]}")
+        else:
+            SKIPS.skip(f"{tag} stdout is byte-identical to the recorded "
+                       f"pre-fix output",
+                       f"{platform_probe.DIGEST_REASON}; measured here: "
+                       f"{digest}, recorded {HEALTHY_MD5[fmt_name]}")
         rows = SPECTRUM_ROW_RE[fmt_name].findall(stdout)
         check(f"{tag} printed all {HEALTHY_N_STATES} spectrum rows",
               len(rows) == HEALTHY_N_STATES, f"found {len(rows)} rows")
@@ -573,8 +596,13 @@ def test_matches_reference_binary(tool: Path, reference: Path,
     """Byte-compare the healthy run against a second, independently built
     wfafs_deterministic (by default the one shipped inside WFES3.app)."""
     if not reference.is_file():
-        print(f"wfafs_deterministic: reference binary {reference} not present "
-              f"-- skipping byte comparison (md5s above still apply)")
+        print(f"wfafs_deterministic: reference binary {reference} not present")
+        for what in ("[json] byte-identical to the reference binary",
+                     "[csv] same row count as the reference binary",
+                     "[csv] every value agrees with the reference binary to "
+                     "the full precision the reference prints",
+                     "[plain] byte-identical to the reference binary"):
+            SKIPS.skip(what, NO_REFERENCE_REASON)
         return
     global REFERENCE_UNDER_TEST
     REFERENCE_UNDER_TEST = tool
@@ -628,7 +656,8 @@ def main() -> int:
     ap.add_argument("--bin", type=Path, default=DEFAULT_BIN_DIR,
                     help=f"directory holding wfafs_deterministic "
                          f"(default: {DEFAULT_BIN_DIR})")
-    ap.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE,
+    ap.add_argument("--reference", type=Path,
+                    default=platform_probe.shipped_root() / "wfafs_deterministic",
                     help="a second wfafs_deterministic to byte-compare the "
                          f"healthy run against (default: {DEFAULT_REFERENCE}; "
                          "skipped if absent)")
@@ -639,7 +668,11 @@ def main() -> int:
         print(f"error: {tool} not found (build it first, or pass --bin)")
         return 2
 
-    print(f"Binary: {tool}\n")
+    global DIGESTS_APPLY
+    DIGESTS_APPLY = platform_probe.digests_apply(opts.bin)
+    print(f"Binary: {tool}")
+    print(platform_probe.platform_banner(opts.bin))
+    print(f"recorded md5s asserted here: {DIGESTS_APPLY}\n")
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         test_repro_refuses(tool)
@@ -653,6 +686,7 @@ def main() -> int:
         test_matches_reference_binary(tool, opts.reference, digests)
 
     print()
+    print(SKIPS.summary_line())
     if failures:
         print(f"FAILED {len(failures)}/{checks_run} checks:")
         for label in failures:

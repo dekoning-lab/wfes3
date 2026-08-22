@@ -64,6 +64,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import platform_probe
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cx3" / "bin"
 
@@ -92,7 +94,8 @@ N_CHECKS = 0
 
 def run(tool: str, args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run([str(BIN_DIR / tool), *args],
-                          capture_output=True, text=True, timeout=600)
+                          capture_output=True, timeout=600,
+                          **platform_probe.TEXT_IO)
 
 
 def strict_json(text: str):
@@ -544,6 +547,10 @@ def main() -> int:
     test_no_stale_integration_cutoff_echo()
 
     print(f"\n{'='*70}")
+    # No capability gate anywhere in this suite -- see the note in
+    # test_degenerate_switching_sequential.py's main() for why the line is
+    # printed anyway.
+    print(platform_probe.Skips().summary_line())
     print(f"{N_CHECKS - len(FAILURES)}/{N_CHECKS} checks passed")
     if FAILURES:
         print("failed:")

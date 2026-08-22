@@ -215,10 +215,25 @@ import sys
 import tempfile
 from pathlib import Path
 
+import platform_probe
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cxstoch" / "bin"
 DEFAULT_REFERENCE = Path(
     "/Applications/WFES3.app/Contents/Resources/bin/wfafs_stochastic")
+
+# The reference is the SHIPPED v3.0.0-beta.3 binary, which exists only inside
+# the macOS .app bundle. Where it is absent, each comparison it would have made
+# is named and counted rather than quietly not run -- that silence is what the
+# first Linux run reported as thirteen CHECKS LOST.
+NO_REFERENCE_REASON = ("shipped v3.0.0-beta.3 wfafs_stochastic not installed "
+                       "(second-implementation byte comparison)")
+
+SKIPS = platform_probe.Skips()
+
+# Set in main() from the probe: True only on the platform AND backend the md5
+# table was recorded against. See platform_probe's "Byte-identity locks".
+DIGESTS_APPLY = True
 
 # ---------------------------------------------------------------------------
 # Solver-backend provenance lines (task CX8, integrity audit section 2.3)
@@ -668,8 +683,13 @@ def test_legitimate_models(binary: Path, reference: Path | None) -> None:
                      f"exit {proc.returncode}: {text(proc).strip()[:400]}"):
             continue
         got = hashlib.md5(strip_provenance(proc.stdout)).hexdigest()
-        check(f"[{label}] stdout matches the recorded md5",
-              got == digest, f"recorded {digest}, got {got}")
+        if DIGESTS_APPLY:
+            check(f"[{label}] stdout matches the recorded md5",
+                  got == digest, f"recorded {digest}, got {got}")
+        else:
+            SKIPS.skip(f"[{label}] stdout matches the recorded md5",
+                       f"{platform_probe.DIGEST_REASON}; measured here: "
+                       f"{got}, recorded {digest}")
         # stdout only, per the stderr-scope convention in the module docstring.
         # This site used to sweep both streams, on the argument that a healthy
         # run "says nothing at all about nan" so stderr costs nothing to
@@ -696,8 +716,18 @@ def test_legitimate_models(binary: Path, reference: Path | None) -> None:
                 _cx_proj_divergence(label, proc.stdout, run(reference, args),
                                     got)
             else:
+                # NOT a platform skip: this comparison is retired on every
+                # machine, and the recorded count already excludes it. Counting
+                # it here would break the recording platform's own arithmetic
+                # (recorded - skipped == ran).
                 print(f"  SKIP  [{label}] reference comparison "
                       "(known pre-existing divergence -- see module docstring)")
+        elif ship_match is True:
+            SKIPS.skip(f"[{label}] byte-identical to the reference binary",
+                       NO_REFERENCE_REASON)
+        elif ship_match == "cx-proj":
+            SKIPS.skip(f"[{label}] diverges from the reference binary as "
+                       f"CX-proj intends", NO_REFERENCE_REASON)
 
 
 def test_healthy_distribution_is_a_distribution(binary: Path) -> None:
@@ -834,7 +864,8 @@ def main() -> int:
     ap.add_argument("--bin", type=Path, default=DEFAULT_BIN_DIR,
                     help=f"directory holding wfafs_stochastic "
                          f"(default: {DEFAULT_BIN_DIR})")
-    ap.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE,
+    ap.add_argument("--reference", type=Path,
+                    default=platform_probe.shipped_root() / "wfafs_stochastic",
                     help="second wfafs_stochastic to compare healthy output "
                          "against byte for byte (skipped if absent)")
     opts = ap.parse_args()
@@ -849,8 +880,12 @@ def main() -> int:
               "skipping the byte-for-byte comparison")
         reference = None
 
+    global DIGESTS_APPLY
+    DIGESTS_APPLY = platform_probe.digests_apply(opts.bin)
     print(f"Binary:    {binary}")
-    print(f"Reference: {reference if reference else '(none)'}\n")
+    print(f"Reference: {reference if reference else '(none)'}")
+    print(platform_probe.platform_banner(opts.bin))
+    print(f"recorded md5s asserted here: {DIGESTS_APPLY}\n")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
@@ -863,6 +898,7 @@ def main() -> int:
         test_down_projection_conserves_mass(binary)
 
     print()
+    print(SKIPS.summary_line())
     if failures:
         print(f"FAILED {len(failures)}/{checks_run} checks:")
         for label in failures:

@@ -80,6 +80,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import platform_probe
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cx4" / "bin"
 
@@ -100,6 +102,16 @@ WFAFS_N_UPPROJECTED = 21
 # Re-recorded in task CX-proj; was 2a401eaf33ea2e3b175d77940d3c0071 before the
 # down-projection was made mass-conserving (see module docstring).
 WFAFS_DEFAULT_MD5 = "272ee5c8af127c7035fdcb76628f788b"
+
+SKIPS = platform_probe.Skips()
+
+# Set in main() from the probe: True only on the platform AND backend
+# WFAFS_DEFAULT_MD5 was recorded against. See platform_probe's "Byte-identity
+# locks" block -- a digest of printed doubles is a toolchain fingerprint, and
+# the numbers it stands for are checked separately below (the document parses,
+# the down-projection lands on the right number of states, the spectrum is a
+# distribution) on every platform.
+DIGESTS_APPLY = True
 
 # ---------------------------------------------------------------------------
 # Solver-backend provenance lines (task CX8, integrity audit section 2.3)
@@ -359,9 +371,14 @@ def test_wfafs_default_unchanged(wfafs: Path) -> str:
     if not check("exits 0", proc.returncode == 0, f"exit {proc.returncode}: {text(proc)[:400]}"):
         return ""
     digest = hashlib.md5(strip_provenance(proc.stdout)).hexdigest()
-    check("md5 of stdout matches the recorded value",
-          digest == WFAFS_DEFAULT_MD5,
-          f"recorded {WFAFS_DEFAULT_MD5}, got {digest}")
+    if DIGESTS_APPLY:
+        check("md5 of stdout matches the recorded value",
+              digest == WFAFS_DEFAULT_MD5,
+              f"recorded {WFAFS_DEFAULT_MD5}, got {digest}")
+    else:
+        SKIPS.skip("md5 of stdout matches the recorded value",
+                   f"{platform_probe.DIGEST_REASON}; measured here: "
+                   f"{digest}, recorded {WFAFS_DEFAULT_MD5}")
     doc = parse_json(proc.stdout.decode())
     if not check("stdout parses with json.load", doc is not None, text(proc)[:400]):
         return digest
@@ -406,7 +423,11 @@ def main() -> int:
             print(f"error: {tool} not found (build it first, or pass --bin)")
             return 2
 
-    print(f"Binaries: {opts.bin}\n")
+    global DIGESTS_APPLY
+    DIGESTS_APPLY = platform_probe.digests_apply(opts.bin)
+    print(f"Binaries: {opts.bin}")
+    print(platform_probe.platform_banner(opts.bin))
+    print(f"recorded md5s asserted here: {DIGESTS_APPLY}\n")
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         test_sweep_degenerate_refuses(sweep)
@@ -418,6 +439,7 @@ def main() -> int:
         test_wfafs_no_project(wfafs, digest)
 
     print()
+    print(SKIPS.summary_line())
     if failures:
         print(f"FAILED {len(failures)}/{checks_run} checks:")
         for label in failures:

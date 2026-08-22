@@ -120,11 +120,24 @@ import sys
 import tempfile
 from pathlib import Path
 
+import platform_probe
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cx6" / "bin"
 
 PASS = FAIL = 0
 FAILURES: list[str] = []
+SKIPS = platform_probe.Skips()
+
+# The substitution the provenance pair exists to disclose only happens in a
+# build that has BOTH Accelerate and SuiteSparse. Where it does not, there is
+# no run in which requested and effective differ, so the three checks that
+# assert the difference have nothing to assert -- they are skipped by name,
+# and the identity, default-library and refusal cases still run for all eleven
+# tools.
+NO_SUBSTITUTION_REASON = (
+    "--library Accelerate: this build substitutes no backend "
+    "(Accelerate/SuiteSparse pair absent from its whitelist)")
 
 
 def check(condition: bool, label: str, detail: str = "") -> bool:
@@ -140,8 +153,8 @@ def check(condition: bool, label: str, detail: str = "") -> bool:
 
 
 def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run([str(binary), *args], capture_output=True, text=True,
-                          timeout=600)
+    return subprocess.run([str(binary), *args], capture_output=True,
+                          timeout=600, **platform_probe.TEXT_IO)
 
 
 def output(proc: subprocess.CompletedProcess) -> str:
@@ -445,10 +458,16 @@ def section_library(bindir: Path):
         check("ViennaCL" not in output(helped),
               f"{name} --help: does not advertise ViennaCL")
 
-    # A supported library still works, so the gate is not simply closed.
+    # A supported library still works, so the gate is not simply closed. The
+    # NAME comes from the build's own whitelist rather than from this file:
+    # "SuiteSparse" wherever it exists (so macOS keeps testing exactly what it
+    # recorded), and whatever the build does have otherwise -- a Pardiso-only
+    # Linux build refuses "SuiteSparse" correctly, and reading that refusal as
+    # a defect is the harness's mistake, not the binary's.
+    supported = platform_probe.pick_library(bindir, "SuiteSparse")
     proc = run(bindir / "wfes_single",
-               ["--absorption", "-N", "20", "--library", "SuiteSparse", "--json"])
-    check(proc.returncode == 0, "wfes_single --library SuiteSparse: exits 0",
+               ["--absorption", "-N", "20", "--library", supported, "--json"])
+    check(proc.returncode == 0, f"wfes_single --library {supported}: exits 0",
           f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}")
 
 
@@ -675,13 +694,11 @@ def whitelisted_libraries(bindir: Path, tool: str) -> list[str]:
     Args_Parser::supported_libraries() is the naming authority for both the
     help text and the library_effective field, so parsing it back out of
     --help is how this suite checks the two agree without hardcoding a
-    platform's backend list.
+    platform's backend list. The parsing itself now lives in platform_probe,
+    so that every suite asks the same question the same way and gets the same
+    answer.
     """
-    m = re.search(r"Library \(([^)]*)\)", run(bindir / tool, ["--help"]).stdout)
-    if not m:
-        return []
-    return [tok.strip() for tok in re.split(r",\s*|\s+or\s+", m.group(1))
-            if tok.strip()]
+    return list(platform_probe.library_whitelist(bindir))
 
 
 def json_provenance(stdout: str) -> tuple[object, object]:
@@ -719,10 +736,29 @@ def section_library_provenance(bindir: Path):
     # effective MUST agree -- the half of the record that proves the pair is a
     # statement about the run rather than a warning that only ever fires.
     identity = next((lib for lib in libs if lib != "Accelerate"), libs[0])
-    substituted = "Accelerate" in libs and "SuiteSparse" in libs
-    expect_for_accelerate = "SuiteSparse" if substituted else "Accelerate"
+
+    # ...and the substitution itself only exists in a build that HAS both
+    # names. A Pardiso-only build (every Linux build so far) substitutes
+    # nothing: there is no request it answers with a different backend, so the
+    # three checks that assert the substitution have no subject and are
+    # skipped by name rather than run against a value the parser will refuse.
+    # This is where the first Linux run lost 33 checks to "Unknown --library
+    # value 'Accelerate'" -- the harness asking for a backend the build never
+    # had.
+    substituted_request = platform_probe.substituting_request(bindir)
+    expect_for_accelerate = platform_probe.expected_effective(
+        bindir, "Accelerate")
+
+    # The name used by the checks that need SOME valid request rather than the
+    # substituted one specifically (the --verbose agreement and the --csv
+    # placement below). On a build that substitutes, this is "Accelerate", so
+    # macOS goes on testing exactly what it recorded, against the harder case.
+    probe_request = substituted_request or identity
+    probe_effective = platform_probe.expected_effective(bindir, probe_request)
     print(f"  (whitelist {libs}; identity backend {identity!r}; "
-          f"Accelerate -> {expect_for_accelerate!r})")
+          f"substituted request {substituted_request!r} -> "
+          f"{expect_for_accelerate!r}; probe request {probe_request!r} -> "
+          f"{probe_effective!r})")
 
     for name, args in provenance_invocations():
         binary = bindir / name
@@ -748,21 +784,29 @@ def section_library_provenance(bindir: Path):
               repr(eff))
 
         # 2. The substitution itself, recorded rather than hidden.
-        proc = run(binary, args + ["--library", "Accelerate", "--json"])
         label = f"{name} --library Accelerate"
-        req = eff = None
-        if proc.returncode == 0:
-            try:
-                req, eff = json_provenance(proc.stdout)
-            except json.JSONDecodeError:
-                pass
-        check(proc.returncode == 0, f"{label}: exits 0",
-              f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}")
-        check(req == "Accelerate", f"{label}: library_requested is 'Accelerate'",
-              repr(req))
-        check(eff == expect_for_accelerate,
-              f"{label}: library_effective is {expect_for_accelerate!r} "
-              f"(the backend that actually factorises)", repr(eff))
+        if substituted_request is None:
+            for what in (f"{label}: exits 0",
+                         f"{label}: library_requested is 'Accelerate'",
+                         f"{label}: library_effective is the backend that "
+                         f"actually factorises"):
+                SKIPS.skip(what, NO_SUBSTITUTION_REASON)
+        else:
+            proc = run(binary,
+                       args + ["--library", substituted_request, "--json"])
+            req = eff = None
+            if proc.returncode == 0:
+                try:
+                    req, eff = json_provenance(proc.stdout)
+                except json.JSONDecodeError:
+                    pass
+            check(proc.returncode == 0, f"{label}: exits 0",
+                  f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}")
+            check(req == substituted_request,
+                  f"{label}: library_requested is 'Accelerate'", repr(req))
+            check(eff == expect_for_accelerate,
+                  f"{label}: library_effective is {expect_for_accelerate!r} "
+                  f"(the backend that actually factorises)", repr(eff))
 
         # 3. A run with no --library at all still carries the record, and the
         #    effective name is one the whitelist knows. On macOS the default IS
@@ -795,7 +839,7 @@ def section_library_provenance(bindir: Path):
     #    fact, so they come from the same function and cannot disagree.
     print("\n== the --verbose disclosure and library_effective agree ==")
     single = bindir / "wfes_single"
-    vargs = ["--fixation", "-N", "10", "-p", "1", "--library", "Accelerate"]
+    vargs = ["--fixation", "-N", "10", "-p", "1", "--library", probe_request]
     vproc = run(single, vargs + ["--verbose"])
     jproc = run(single, vargs + ["--json"])
     jeff = None
@@ -834,7 +878,7 @@ def section_library_provenance(bindir: Path):
     ]
     for name, args, has_header in csv_cases:
         label = f"{name} {args[0]} --csv"
-        proc = run(bindir / name, args + ["--library", "Accelerate", "--csv"])
+        proc = run(bindir / name, args + ["--library", probe_request, "--csv"])
         if not check(proc.returncode == 0, f"{label}: exits 0",
                      f"exit={proc.returncode} {proc.stderr.strip()[:160]!r}"):
             continue
@@ -852,8 +896,8 @@ def section_library_provenance(bindir: Path):
                 continue
             i = header.index("library_requested")
             check(header[i + 1] == "library_effective"
-                  and row[i] == "Accelerate"
-                  and row[i + 1] == expect_for_accelerate,
+                  and row[i] == probe_request
+                  and row[i + 1] == probe_effective,
                   f"{label}: the pair carries the run's actual backends",
                   f"header={header[i:i+2]} row={row[i:i+2]}")
             check(i + 2 < len(header),
@@ -862,7 +906,7 @@ def section_library_provenance(bindir: Path):
                   f"index {i} of {len(header)} columns")
         else:
             row = lines[-1].split(",")
-            pair = ["Accelerate", expect_for_accelerate]
+            pair = [probe_request, probe_effective]
             positions = [j for j in range(len(row) - 1)
                          if row[j:j + 2] == pair]
             check(len(positions) == 1,
@@ -890,6 +934,7 @@ def main() -> int:
         return 2
 
     print(f"binaries: {bindir}")
+    print(platform_probe.platform_banner(bindir))
     section_observed_copies(bindir)
     section_sgv_distribution_cutoff(bindir)
     section_advisories(bindir)
@@ -904,7 +949,8 @@ def main() -> int:
     section_file_writer_guard(bindir)
     section_library_provenance(bindir)
 
-    print(f"\n{PASS} passed, {FAIL} failed")
+    print(f"\n{SKIPS.summary_line()}")
+    print(f"{PASS} passed, {FAIL} failed")
     if FAILURES:
         print("failed checks:")
         for f in FAILURES:

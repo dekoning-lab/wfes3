@@ -67,9 +67,58 @@ import sys
 import tempfile
 from pathlib import Path
 
+import platform_probe
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cx1a" / "bin"
 DEFAULT_SHIPPED = Path("/Applications/WFES3.app/Contents/Resources/bin/wfes_single")
+
+SKIPS = platform_probe.Skips()
+
+NO_SHIPPED_REASON = ("shipped v3.0.0-beta.3 wfes_single not installed "
+                     "(numerical non-regression against a second "
+                     "implementation)")
+
+# How many checks each shipped-dependent site contributes when the reference IS
+# present. Needed because --no-shipped-reference has to report the EXACT number
+# of checks it did not run: run_all_suites.py expects
+# recorded_count - skipped checks to have run, so a wrong number here reads
+# downstream as CHECKS LOST or COUNT ROSE rather than as a skip.
+#
+# Recorded 2026-08-22 on macOS against /Applications/WFES3.app v3.0.0-beta.3,
+# by counting the checks each section registered. Per-case counts vary because
+# they depend on what the SHIPPED binary printed: a defect reproduction whose
+# shipped output is unparseable contributes one check ("...parseable for
+# healthy case"), one whose output parses but is not healthy contributes none
+# (nothing is compared against a known-bad baseline), and a healthy case
+# contributes the field-set check plus one per shared field.
+#
+# TRIPWIRE: when the reference is present these numbers are re-measured and a
+# mismatch registers an extra FAILING check (see check_shipped_accounting).
+# It fires only when the table is already wrong, so the recorded total of 178
+# is unaffected in the normal case -- and when it does fire the runner reports
+# both a failing check and a changed count, which is the correct alarm.
+NONREG_SKIP_COUNTS = {
+    "abs N=100 s=0.02": 10,
+    "abs N=50 s=0": 10,
+    "abs N=100 s=-0.001": 10,
+    "abs N=200 s=-0.09 h=0.5": 1,
+    "abs N=300 s=-0.05": 0,
+    "abs N=400 s=-0.08": 1,
+    "abs N=600 s=-0.05": 1,
+    "fix N=100 s=0.02": 4,
+    "fix N=50 s=0": 4,
+}
+# section_v0: "shipped output parseable for -v 0" plus one per shared field
+# (ABS_FIELDS minus N_ext, which -v 0 omits by design).
+V0_SHIPPED_CHECKS = 9
+# section_csv: the single "field count matches shipped binary's --csv" check.
+CSV_SHIPPED_CHECKS = 1
+
+# Filled in by the three sections when the reference IS present: how many
+# checks their shipped-dependent part actually registered. Compared against the
+# constants above by check_shipped_accounting().
+SHIPPED_CHECKS_RUN: dict[str, int] = {}
 
 ABS_FIELDS = ["P_ext", "P_fix", "T_abs", "T_abs_std", "T_ext", "T_ext_std",
               "N_ext", "T_fix", "T_fix_std"]
@@ -134,7 +183,8 @@ def check(ok: bool, label: str, detail: str = "") -> bool:
 
 def run(binary: Path, args: list[str], fmt: str = "--json") -> subprocess.CompletedProcess:
     return subprocess.run([str(binary), *args, fmt],
-                          capture_output=True, text=True, timeout=600)
+                          capture_output=True, timeout=600,
+                          **platform_probe.TEXT_IO)
 
 
 def parse_results(proc: subprocess.CompletedProcess):
@@ -331,9 +381,20 @@ def section_spread(new_bin: Path):
     return outputs
 
 
-def section_nonregression(new_bin: Path, shipped: Path, new_outputs):
+def section_nonregression(new_bin: Path, shipped: Path | None, new_outputs):
     print("\n== numerical non-regression vs shipped binary ==")
+    if shipped is None:
+        # Named and counted, one line per case, rather than a silent return:
+        # the comparison is still a required part of this suite, and what a
+        # machine without the reference can honestly say is "not checked
+        # here", with the number of checks that means.
+        for label, _extra, _mode, _healthy in SPREAD:
+            SKIPS.skip(f"{label}: numerical non-regression vs the shipped "
+                       f"binary", NO_SHIPPED_REASON,
+                       checks=NONREG_SKIP_COUNTS[label])
+        return
     print(f"   shipped: {shipped}")
+    _before = len(_results)
     header = f"{'case':<24} {'field':<10} {'shipped':>24} {'new':>24} {'rel diff':>10}  verdict"
     print(header)
     print("-" * len(header))
@@ -373,6 +434,7 @@ def section_nonregression(new_bin: Path, shipped: Path, new_outputs):
             if healthy:
                 check(d <= tol, f"{label}.{f} agrees with shipped to {tol:g}",
                       f"rel diff {d:.3e}")
+    SHIPPED_CHECKS_RUN["nonregression"] = len(_results) - _before
 
 
 def section_degenerate_cutoff(new_bin: Path):
@@ -395,7 +457,7 @@ def section_degenerate_cutoff(new_bin: Path):
           f"exit={proc.returncode}")
 
 
-def section_v0(new_bin: Path, shipped: Path):
+def section_v0(new_bin: Path, shipped: Path | None):
     print("\n== -v 0: N_ext undefined, everything else reported ==")
     proc = run(new_bin, ["--absorption", "-N", "8", "-v", "0"])
     results = contract_check("abs N=8 v=0", proc, ABS_FIELDS)
@@ -410,12 +472,18 @@ def section_v0(new_bin: Path, shipped: Path):
           str([f for f in others if f not in results]))
     # Non-regression on the shared fields (shipped output is healthy here
     # except for the N_ext artifact).
+    if shipped is None:
+        SKIPS.skip("v0: the eight shared fields agree with the shipped binary",
+                   NO_SHIPPED_REASON, checks=V0_SHIPPED_CHECKS)
+        return
+    _before = len(_results)
     old_res, err = parse_results(run(shipped, ["--absorption", "-N", "8", "-v", "0"]))
     if check(old_res is not None, "shipped output parseable for -v 0", err):
         for f in [f for f in others if f in old_res and f in results]:
             d = rel_diff(old_res[f], results[f])
             check(d <= REL_TOL, f"v0.{f} agrees with shipped to {REL_TOL:g}",
                   f"shipped={old_res[f]!r} new={results[f]!r} rel={d:.2e}")
+    SHIPPED_CHECKS_RUN["v0"] = len(_results) - _before
 
 
 def section_underflow(new_bin: Path):
@@ -683,7 +751,7 @@ def section_injection_range_guards(new_bin: Path):
                      "the model was never the problem", "run was refused")
 
 
-def section_csv(new_bin: Path, shipped: Path):
+def section_csv(new_bin: Path, shipped: Path | None):
     print("\n== --csv output: healthy case and degenerate refusal ==")
     # The suite above exercises --json exclusively; --csv is a separate
     # OutputFormatter code path (and, for a run with an omitted field, a
@@ -698,12 +766,19 @@ def section_csv(new_bin: Path, shipped: Path):
 
     new_lines = proc.stdout.strip().splitlines()
     new_fields = new_lines[0].split(",") if new_lines else []
-    shipped_proc = run(shipped, ["--absorption", "-N", "100", "-s", "0.02"], fmt="--csv")
-    shipped_lines = shipped_proc.stdout.strip().splitlines()
-    shipped_fields = shipped_lines[0].split(",") if shipped_lines else []
-    check(len(new_fields) == len(shipped_fields) and len(new_fields) > 0,
-          f"{label}: field count matches shipped binary's --csv",
-          f"new={new_fields} shipped={shipped_fields}")
+    if shipped is None:
+        SKIPS.skip(f"{label}: field count matches shipped binary's --csv",
+                   NO_SHIPPED_REASON, checks=CSV_SHIPPED_CHECKS)
+    else:
+        _before = len(_results)
+        shipped_proc = run(shipped, ["--absorption", "-N", "100", "-s", "0.02"],
+                           fmt="--csv")
+        shipped_lines = shipped_proc.stdout.strip().splitlines()
+        shipped_fields = shipped_lines[0].split(",") if shipped_lines else []
+        check(len(new_fields) == len(shipped_fields) and len(new_fields) > 0,
+              f"{label}: field count matches shipped binary's --csv",
+              f"new={new_fields} shipped={shipped_fields}")
+        SHIPPED_CHECKS_RUN["csv"] = len(_results) - _before
 
     proc = run(new_bin, ["--absorption", "-N", "10", "-c", "1"], fmt="--csv")
     check(proc.returncode != 0, "csv degenerate -c 1 exits nonzero",
@@ -738,13 +813,45 @@ def section_dense_reference(new_bin: Path):
                   f"ref={ref[f]:.12e} cli={results[f]:.12e} rel={d:.2e}")
 
 
+def check_shipped_accounting() -> None:
+    """Keep the --no-shipped-reference skip counts honest.
+
+    The counted skips are only correct if they equal what the same sections
+    run when the reference IS present. Measured here on every run that has
+    one; on a mismatch this registers a FAILING check naming both numbers, so
+    the table can never drift silently into reporting the wrong skip total on
+    a machine that cannot notice. It adds nothing when the numbers agree,
+    which is why the recorded total is unaffected.
+    """
+    want = (sum(NONREG_SKIP_COUNTS.values()), V0_SHIPPED_CHECKS,
+            CSV_SHIPPED_CHECKS)
+    got = (SHIPPED_CHECKS_RUN.get("nonregression"),
+           SHIPPED_CHECKS_RUN.get("v0"), SHIPPED_CHECKS_RUN.get("csv"))
+    if got != want:
+        check(False, "shipped-section skip accounting is up to date",
+              f"NONREG_SKIP_COUNTS/V0_SHIPPED_CHECKS/CSV_SHIPPED_CHECKS say "
+              f"{want}, the sections actually ran {got} -- re-record them, or "
+              f"--no-shipped-reference will report the wrong SKIPPED total")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bin", type=Path, default=DEFAULT_BIN_DIR,
                     help=f"directory containing wfes_single (default: {DEFAULT_BIN_DIR})")
-    ap.add_argument("--shipped", type=Path, default=DEFAULT_SHIPPED,
+    ap.add_argument("--shipped", type=Path,
+                    default=platform_probe.shipped_root() / "wfes_single",
                     help=f"shipped reference binary (default: {DEFAULT_SHIPPED})")
+    ap.add_argument("--no-shipped-reference", action="store_true",
+                    help="permit this run to proceed WITHOUT the shipped "
+                         "reference: the three comparison sites report named, "
+                         "counted SKIPs and every contract section still runs. "
+                         "Without this flag a missing reference is exit 2, "
+                         "which is the default on purpose -- the comparison is "
+                         "part of what this suite is for. The flag is "
+                         "permission to degrade, not an instruction: if the "
+                         "reference IS present it is ignored and the "
+                         "comparisons run.")
     ap.add_argument("--skip-dense", action="store_true",
                     help="skip the (slower) pure-Python dense reference section")
     opts = ap.parse_args()
@@ -755,21 +862,35 @@ def main() -> int:
               f"(cmake -S wfes-cli -B wfes-cli/build-cx1a && "
               f"cmake --build wfes-cli/build-cx1a -j8)", file=sys.stderr)
         return 2
+    shipped: Path | None = opts.shipped
     if not opts.shipped.is_file():
-        print(f"error: shipped reference binary {opts.shipped} not found; the "
-              f"non-regression comparison is a required part of this suite "
-              f"(point --shipped at a known-good binary)", file=sys.stderr)
-        return 2
+        if not opts.no_shipped_reference:
+            print(f"error: shipped reference binary {opts.shipped} not found; "
+                  f"the non-regression comparison is a required part of this "
+                  f"suite (point --shipped at a known-good binary, or pass "
+                  f"--no-shipped-reference to run the contract sections alone "
+                  f"with the comparisons reported as counted SKIPs)",
+                  file=sys.stderr)
+            return 2
+        shipped = None
+    elif opts.no_shipped_reference:
+        print("note: --no-shipped-reference ignored -- the reference IS "
+              "present, so the comparisons run.")
 
     print(f"binary under test: {new_bin}")
+    print(platform_probe.platform_banner(opts.bin))
+    print(f"shipped reference: {shipped if shipped else '(absent -- comparison '
+          f'sections report counted SKIPs)'}")
     new_outputs = section_spread(new_bin)
-    section_nonregression(new_bin, opts.shipped, new_outputs)
+    section_nonregression(new_bin, shipped, new_outputs)
     section_degenerate_cutoff(new_bin)
-    section_v0(new_bin, opts.shipped)
+    section_v0(new_bin, shipped)
     section_underflow(new_bin)
     section_refusal_leaves_nothing(new_bin)
     section_injection_range_guards(new_bin)
-    section_csv(new_bin, opts.shipped)
+    section_csv(new_bin, shipped)
+    if shipped is not None:
+        check_shipped_accounting()
     if opts.skip_dense:
         print("\n(dense reference section skipped on request)")
     else:
@@ -777,7 +898,9 @@ def main() -> int:
 
     n_fail = sum(1 for ok, *_ in _results if not ok)
     n_pass = len(_results) - n_fail
-    print(f"\n{'=' * 78}\nPASS {n_pass}   FAIL {n_fail}")
+    print(f"\n{'=' * 78}")
+    print(SKIPS.summary_line())
+    print(f"PASS {n_pass}   FAIL {n_fail}")
     if n_fail:
         print("failing checks:")
         for ok, label, detail in _results:

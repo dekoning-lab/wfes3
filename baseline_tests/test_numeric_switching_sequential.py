@@ -164,11 +164,38 @@ import subprocess
 import sys
 from pathlib import Path
 
+import platform_probe
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-c6" / "bin"
 
 # See "Tolerance" in the module docstring.
 REL_TOL = 1e-11
+
+# The tolerance actually in force for section 3, and a one-line explanation of
+# why. Set in main() from platform_probe.cross_backend_rel_tol():
+#
+#   * on the backend the table was recorded against (SuiteSparse, macOS) this
+#     is REL_TOL unchanged -- 1e-11, exactly as recorded, with no
+#     cross-platform slack anywhere near the machine the numbers came from;
+#
+#   * on any OTHER backend it is platform_probe.CROSS_BACKEND_REL_TOL = 1e-9,
+#     because the comparison has become one between two independent LU
+#     implementations. Measured spread, twice, on the SAME two fields both
+#     times: ParU vs SuiteSparse differs by 2.6e-11 (macOS, recorded in the
+#     "Tolerance" block above), and MKL Pardiso vs SuiteSparse by 2.33e-10
+#     (Linux, 2026-08-21: sw_fix_2model.T_fix recorded 54463721.4784434,
+#     measured 54463721.49112928, and its reciprocal `rate` moves with it).
+#     Every one of the other 184 recorded field values agreed to <= 1.6e-14.
+#
+#     T_fix there is the largest number in the table -- a sum of sojourn times
+#     over the whole transient state space, where a different pivot order
+#     accumulates rounding differently. 1e-9 is about 4x the largest spread
+#     measured so far, which is thin; it is stated rather than rounded up,
+#     because the right response to a third backend exceeding it is to measure
+#     that backend, not to widen the tier again.
+ACTIVE_REL_TOL = REL_TOL
+ACTIVE_REL_TOL_WHY = f"{REL_TOL:.0e} (recording backend)"
 
 # The anchor's own tolerance, per the C6 brief. Observed disagreement at
 # recording time was exactly 0.0 for all six comparisons.
@@ -193,7 +220,7 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
 
 def run(tool: str, args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run([str(BIN_DIR / tool), *args], capture_output=True,
-                          text=True, timeout=600)
+                          timeout=600, **platform_probe.TEXT_IO)
 
 
 def results(tool: str, args: list[str], label: str, want_stderr=None):
@@ -540,8 +567,8 @@ RECORDED = [
 
 
 def test_recorded_values() -> None:
-    print(f"[3] recorded values ({len(RECORDED)} cases, "
-          f"{REL_TOL:.0e} relative)")
+    print(f"[3] recorded values ({len(RECORDED)} cases, relative tolerance "
+          f"{ACTIVE_REL_TOL_WHY})")
     for name, tool, args, expected in RECORDED:
         res = results(tool, args, name, want_stderr="empty")
         if res is None:
@@ -577,8 +604,9 @@ def test_recorded_values() -> None:
                                              if isinstance(want, list) else key)
                 check(f"{name}.{key}"
                       + (f"[{i}]" if isinstance(want, list) else ""),
-                      d <= REL_TOL,
-                      f"recorded {w!r}, got {g!r}, rel {d:.3e} > {REL_TOL:.0e}")
+                      d <= ACTIVE_REL_TOL,
+                      f"recorded {w!r}, got {g!r}, rel {d:.3e} > "
+                      f"{ACTIVE_REL_TOL:.0e}")
         print(f"        {name:<22} worst {worst:.2e} rel"
               + (f"  ({worst_field})" if worst else ""))
 
@@ -604,7 +632,13 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
+    global ACTIVE_REL_TOL, ACTIVE_REL_TOL_WHY
+    ACTIVE_REL_TOL, ACTIVE_REL_TOL_WHY = platform_probe.cross_backend_rel_tol(
+        BIN_DIR, REL_TOL)
+
     print(f"binaries: {BIN_DIR}")
+    print(platform_probe.platform_banner(BIN_DIR))
+    print(f"recorded-value tolerance in force: {ACTIVE_REL_TOL_WHY}")
     anchored = test_cross_tool_anchor()
     test_sequential_converges_to_single()
     if anchored:
@@ -618,7 +652,9 @@ def main() -> int:
               "section 3 was skipped because section 1 failed")
 
     n_fail = len(failures)
-    print(f"\n{'=' * 78}\nPASS {checks_run - n_fail}   FAIL {n_fail}")
+    print(f"\n{'=' * 78}")
+    print(platform_probe.Skips().summary_line())
+    print(f"PASS {checks_run - n_fail}   FAIL {n_fail}")
     if failures:
         print("failing checks:")
         for f in failures:

@@ -83,10 +83,29 @@ import subprocess
 import sys
 from pathlib import Path
 
+import platform_probe
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cx7" / "bin"
-DEFAULT_SHIPPED = Path("/Applications/WFES3.app/Contents/Resources/bin")
+# Resolved at call time, not at import, so WFES3_SHIPPED_BIN reaches it (see
+# platform_probe's module docstring: that override is how the absent-reference
+# branch is rehearsed on a machine that has the .app installed).
+def default_shipped() -> Path:
+    return platform_probe.shipped_root()
+
 CHECKER = REPO / "wfes-cli" / "scripts" / "check_flag_collisions.py"
+
+# The seven letters the shipped v3.0.0-beta.3 binaries overload. Named here so
+# the negative control and its skip list are the same list.
+SHIPPED_COLLISION_LETTERS = ("-t", "-l", "-m", "-r", "-k", "-p", "-N")
+
+# The negative control needs the SHIPPED v3.0.0-beta.3 binaries, which exist
+# only inside the macOS .app bundle. Where they are not installed the checker's
+# "can still say no" half cannot be demonstrated at all -- and quietly
+# returning, as this suite used to, is how the first Linux run reported eight
+# CHECKS LOST with no explanation attached.
+NO_SHIPPED_REASON = ("shipped v3.0.0-beta.3 binaries not installed "
+                     "(the collision checker's negative control)")
 
 ALL_TOOLS = [
     "wfes_single", "wfes_sweep", "wfes_switching", "wfes_sequential",
@@ -96,6 +115,7 @@ ALL_TOOLS = [
 
 PASS = FAIL = 0
 FAILURES: list[str] = []
+SKIPS = platform_probe.Skips()
 
 
 def check(condition: bool, label: str, detail: str = "") -> bool:
@@ -111,8 +131,8 @@ def check(condition: bool, label: str, detail: str = "") -> bool:
 
 
 def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run([str(binary), *args], capture_output=True, text=True,
-                          timeout=600)
+    return subprocess.run([str(binary), *args], capture_output=True,
+                          timeout=600, **platform_probe.TEXT_IO)
 
 
 def output(proc: subprocess.CompletedProcess) -> str:
@@ -327,12 +347,18 @@ def section_unchanged(bindir: Path):
 
     # -l: the solver library, in the nine tools that keep it. (wfes_sweep and
     # time_dist_sgv take --library long-only this release, since -l traps.)
-    l_run = run(single, ["--absorption", "-N", "10", "-l", "SuiteSparse",
-                         "--json"])
-    l_long = run(single, ["--absorption", "-N", "10", "--library",
-                          "SuiteSparse", "--json"])
+    # The check is that -l and --library are the same flag, not that any
+    # particular backend exists: the NAME comes from the build's own
+    # whitelist, "SuiteSparse" wherever there is one (so macOS keeps testing
+    # exactly the name it recorded) and the build's own first backend
+    # otherwise. A Pardiso-only build refusing "SuiteSparse" is that build
+    # behaving correctly.
+    lib = platform_probe.pick_library(bindir, "SuiteSparse")
+    l_run = run(single, ["--absorption", "-N", "10", "-l", lib, "--json"])
+    l_long = run(single, ["--absorption", "-N", "10", "--library", lib,
+                          "--json"])
     check(l_run.returncode == 0 and l_run.stdout == l_long.stdout,
-          "wfes_single -l SuiteSparse = --library SuiteSparse",
+          f"wfes_single -l {lib} = --library {lib}",
           f"exit={l_run.returncode} {l_run.stderr.strip()[:120]!r}")
 
     # -t still means threads in the ten tools that keep it, and the answer is
@@ -386,7 +412,8 @@ def section_checker(bindir: Path, shipped: Path):
         check(False, "check_flag_collisions.py exists", str(CHECKER))
         return
     proc = subprocess.run([sys.executable, str(CHECKER), "--bin", str(bindir)],
-                          capture_output=True, text=True, timeout=600)
+                          capture_output=True, timeout=600,
+                          **platform_probe.TEXT_IO)
     check(proc.returncode == 0,
           "check_flag_collisions.py: exits 0 for this build",
           " ".join(output(proc).split())[:400])
@@ -395,14 +422,19 @@ def section_checker(bindir: Path, shipped: Path):
     # nothing; this one has to fail the binaries that actually carry the
     # collisions, and name them.
     if not (shipped / "wfes_single").exists():
-        print(f"  SKIP  shipped binaries not present at {shipped}")
+        SKIPS.skip("check_flag_collisions.py: exits nonzero for the shipped "
+                   "v3.0.0-beta.3 binaries", NO_SHIPPED_REASON)
+        for letter in SHIPPED_COLLISION_LETTERS:
+            SKIPS.skip(f"checker names the shipped {letter} collision",
+                       NO_SHIPPED_REASON)
         return
     proc = subprocess.run([sys.executable, str(CHECKER), "--bin", str(shipped)],
-                          capture_output=True, text=True, timeout=600)
+                          capture_output=True, timeout=600,
+                          **platform_probe.TEXT_IO)
     check(proc.returncode != 0,
           "check_flag_collisions.py: exits nonzero for the shipped v3.0.0-beta.3 "
           "binaries", f"exit={proc.returncode}")
-    for letter in ("-t", "-l", "-m", "-r", "-k", "-p", "-N"):
+    for letter in SHIPPED_COLLISION_LETTERS:
         check(f"collision: {letter} means more than one thing" in proc.stdout,
               f"checker names the shipped {letter} collision")
 
@@ -414,7 +446,7 @@ def main() -> int:
     ap.add_argument("--bin", type=Path, default=DEFAULT_BIN_DIR,
                     help=f"directory holding the eleven binaries "
                          f"(default: {DEFAULT_BIN_DIR})")
-    ap.add_argument("--shipped", type=Path, default=DEFAULT_SHIPPED,
+    ap.add_argument("--shipped", type=Path, default=default_shipped(),
                     help="installed v3.0.0-beta.3 binaries, used as the "
                          "checker's negative control")
     opts = ap.parse_args()
@@ -427,13 +459,15 @@ def main() -> int:
         return 2
 
     print(f"binaries: {bindir}")
+    print(platform_probe.platform_banner(bindir))
     section_traps(bindir)
     section_new_bindings(bindir)
     section_long_aliases(bindir)
     section_unchanged(bindir)
     section_checker(bindir, opts.shipped)
 
-    print(f"\n{PASS} passed, {FAIL} failed")
+    print(f"\n{SKIPS.summary_line()}")
+    print(f"{PASS} passed, {FAIL} failed")
     if FAILURES:
         print("failed checks:")
         for f in FAILURES:

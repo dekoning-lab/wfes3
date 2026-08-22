@@ -58,6 +58,8 @@ import subprocess
 import sys
 import tempfile
 
+import platform_probe
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BIN_DIR = os.path.join(REPO_ROOT, "wfes-cli", "build-cx2", "bin")
 
@@ -91,7 +93,8 @@ class Run(object):
 
 def run(tool, args):
     argv = [os.path.join(BIN_DIR, tool)] + list(args)
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
+    proc = subprocess.run(argv, capture_output=True, timeout=600,
+                          **platform_probe.TEXT_IO)
     r = Run(argv, proc)
     RUNS.append(r)
     return r
@@ -406,24 +409,16 @@ def write_initial_distribution(tmpdir, n_states, active_index=0):
 # parameters block) live in test_shared_parser.py's provenance section.
 PROVENANCE_COLUMNS = ("library_requested", "library_effective")
 
-_LIBRARY_WHITELIST = {}
-
-
 def whitelisted_libraries(tool):
     """The build's --library whitelist, read back out of the tool's --help.
 
     Args_Parser::supported_libraries() is the single source of truth for the
     help text, for what --library accepts, and for the name that appears in
     library_effective, so reading it here keeps this suite from hardcoding a
-    platform's backend list.
+    platform's backend list. The parsing lives in platform_probe so that every
+    suite asks the question the same way and gets the same answer.
     """
-    if tool not in _LIBRARY_WHITELIST:
-        text = run(tool, ["--help"]).stdout
-        m = re.search(r"Library \(([^)]*)\)", text)
-        names = ([t.strip() for t in re.split(r",\s*|\s+or\s+", m.group(1))
-                  if t.strip()] if m else [])
-        _LIBRARY_WHITELIST[tool] = names
-    return _LIBRARY_WHITELIST[tool]
+    return list(platform_probe.library_whitelist(BIN_DIR))
 
 
 def check_csv_header(r, what, empty_ok=(), tool=None):
@@ -620,12 +615,20 @@ def main():
                              "&& cmake --build wfes-cli/build-cx2 -j8\n" % path)
             return 2
 
-    print("Binaries: %s\n" % BIN_DIR)
+    print("Binaries: %s" % BIN_DIR)
+    print(platform_probe.platform_banner(BIN_DIR) + "\n")
     for test in TESTS:
         test()
     test_no_bare_nan_or_inf_in_json_runs()
 
-    print("\n%d checks, %d failed" % (CHECKS, len(FAILURES)))
+    # Every check here runs on every platform: this suite asks the tools
+    # about their own inputs and their own published output, and needs
+    # neither a second implementation to compare against nor a backend the
+    # build may not have. The line is printed anyway, always, so that its
+    # ABSENCE means "this suite has not been taught about capabilities"
+    # rather than "it skipped nothing".
+    print("\n%s" % platform_probe.Skips().summary_line())
+    print("%d checks, %d failed" % (CHECKS, len(FAILURES)))
     if FAILURES:
         print("\nFailed:")
         for what, _ in FAILURES:

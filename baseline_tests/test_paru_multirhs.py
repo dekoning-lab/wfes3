@@ -60,10 +60,24 @@ import sys
 import tempfile
 from pathlib import Path
 
+import platform_probe
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cx5a" / "bin"
 
 RTOL = 1e-8
+
+# The backend this whole suite is about. A build without it (every Linux/MKL
+# build so far: its whitelist is "Pardiso" alone) cannot answer any question
+# here, and asking anyway is how the first Linux run produced five failures
+# reading `Unknown --library value 'ParU'` -- the harness demanding a backend
+# that was never compiled in. Every ParU-dependent check below becomes a
+# named, counted skip instead; the default-library half still runs, so the
+# suite keeps proving the reference side of each comparison is healthy.
+PARU = "ParU"
+NO_PARU_REASON = "--library ParU: not in this build's whitelist"
+
+SKIPS = platform_probe.Skips()
 
 # Case 1: the exact repro from the validated defect report -- two equal epochs.
 WFAFS_CASE_EQUAL = ["-N", "50,50", "-G", "10,10", "-f", "1,1", "-s", "0,0",
@@ -95,8 +109,8 @@ def check(ok: bool, label: str, detail: str = "") -> None:
 
 
 def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run([str(binary)] + args, capture_output=True, text=True,
-                          timeout=600)
+    return subprocess.run([str(binary)] + args, capture_output=True,
+                          timeout=600, **platform_probe.TEXT_IO)
 
 
 def numeric_leaves(node, prefix: str = "") -> dict[str, float]:
@@ -177,13 +191,33 @@ def parse_csv_pairs(proc: subprocess.CompletedProcess, label: str):
 
 
 def agreement_case(binary: Path, args: list[str], label: str,
-                   csv: bool = False) -> None:
+                   csv: bool = False, have_paru: bool = True) -> None:
     """Run with the default library and with --library ParU; require exit 0
-    from both and elementwise agreement at RTOL."""
+    from both and elementwise agreement at RTOL.
+
+    Without ParU in the build the reference half still runs -- the default
+    backend must produce a parseable result either way -- and the five
+    ParU-dependent checks are named and counted as skips.
+    """
     ref_proc = run(binary, args)
-    paru_proc = run(binary, args + ["--library", "ParU"])
     check(ref_proc.returncode == 0, f"{label}: default library exits 0",
           f"exit={ref_proc.returncode} stderr={ref_proc.stderr.strip()[:200]!r}")
+    if not have_paru:
+        if ref_proc.returncode == 0:
+            if csv:
+                parse_csv_pairs(ref_proc, f"{label} (default)")
+            else:
+                parse_json_results(ref_proc, f"{label} (default)")
+        else:
+            SKIPS.skip(f"{label} (default) result parses", NO_PARU_REASON)
+        for what in (f"{label}: --library ParU exits 0",
+                     f"{label} (ParU): result parses",
+                     f"{label}: identical result structure",
+                     f"{label}: results are non-empty",
+                     f"{label}: values agree elementwise at rtol {RTOL:g}"):
+            SKIPS.skip(what, NO_PARU_REASON)
+        return
+    paru_proc = run(binary, args + ["--library", PARU])
     check(paru_proc.returncode == 0, f"{label}: --library ParU exits 0",
           f"exit={paru_proc.returncode} stderr={paru_proc.stderr.strip()[:200]!r}")
     if ref_proc.returncode != 0 or paru_proc.returncode != 0:
@@ -211,7 +245,8 @@ def parse_matrix_file(path: Path) -> list[list[float]]:
 
 
 def output_N_orientation_case(binary: Path, args: list[str], label: str,
-                              order: int, n_rhs: int) -> None:
+                              order: int, n_rhs: int,
+                              have_paru: bool = True) -> None:
     """--output-N under both libraries must (a) have shape order x n_rhs and
     (b) agree elementwise at RTOL.
 
@@ -227,9 +262,34 @@ def output_N_orientation_case(binary: Path, args: list[str], label: str,
         ref_path = Path(tmp) / "N_default.txt"
         paru_path = Path(tmp) / "N_paru.txt"
         ref_proc = run(binary, args + ["--output-N", str(ref_path)])
-        paru_proc = run(binary, args + ["--output-N", str(paru_path), "--library", "ParU"])
         check(ref_proc.returncode == 0, f"{label}: default library exits 0",
               f"exit={ref_proc.returncode} stderr={ref_proc.stderr.strip()[:200]!r}")
+        if not have_paru:
+            # The default half of the shape assertion still runs: order x n_rhs
+            # is the contract solve_multiple is written to, and the build under
+            # test has to satisfy it whichever backend serves it.
+            ref_written = ref_path.is_file() and ref_path.stat().st_size > 0
+            check(ref_written,
+                  f"{label}: default --output-N file written non-empty")
+            if ref_written:
+                ref_mat = parse_matrix_file(ref_path)
+                ref_shape = (len(ref_mat), len(ref_mat[0]) if ref_mat else 0)
+                check(ref_shape == (order, n_rhs),
+                      f"{label}: default --output-N shape is order x n_rhs "
+                      f"({order}x{n_rhs})", f"got {ref_shape}")
+            else:
+                SKIPS.skip(f"{label}: default --output-N shape is order x n_rhs",
+                           NO_PARU_REASON)
+            for what in (f"{label}: --library ParU exits 0",
+                         f"{label}: ParU --output-N file written non-empty",
+                         f"{label}: ParU --output-N shape is order x n_rhs",
+                         f"{label} (full matrix): identical result structure",
+                         f"{label} (full matrix): results are non-empty",
+                         f"{label} (full matrix): values agree elementwise"):
+                SKIPS.skip(what, NO_PARU_REASON)
+            return
+        paru_proc = run(binary, args + ["--output-N", str(paru_path),
+                                        "--library", PARU])
         check(paru_proc.returncode == 0, f"{label}: --library ParU exits 0",
               f"exit={paru_proc.returncode} stderr={paru_proc.stderr.strip()[:200]!r}")
         if ref_proc.returncode != 0 or paru_proc.returncode != 0:
@@ -273,13 +333,22 @@ def main() -> int:
             return 2
 
     print(f"Binaries: {opts.bin}")
+    print(platform_probe.platform_banner(opts.bin))
+    have_paru = platform_probe.has_library(opts.bin, PARU)
+    if not have_paru:
+        print(f"\nNOTE: this build's --library whitelist is "
+              f"{list(platform_probe.library_whitelist(opts.bin))} -- it has no "
+              f"{PARU}. Every {PARU} comparison below is reported as a named "
+              f"SKIP, not as a failure; the default-backend half still runs.")
 
     print("\n[1] wfafs_stochastic, two equal epochs (the validated repro): "
           "ParU vs default")
-    agreement_case(wfafs, WFAFS_CASE_EQUAL, "wfafs equal epochs")
+    agreement_case(wfafs, WFAFS_CASE_EQUAL, "wfafs equal epochs",
+                   have_paru=have_paru)
 
     print("\n[2] wfafs_stochastic, unequal epochs: ParU vs default")
-    agreement_case(wfafs, WFAFS_CASE_UNEQUAL, "wfafs unequal epochs")
+    agreement_case(wfafs, WFAFS_CASE_UNEQUAL, "wfafs unequal epochs",
+                   have_paru=have_paru)
 
     # WFAFS_CASE_UNEQUAL is -N 30,60 over 2 epochs: order = 2*(30+60) + 2 = 182,
     # n_rhs = 2*30 + 1 = 61 (n_rhs is fixed by the FIRST epoch's population
@@ -290,15 +359,18 @@ def main() -> int:
           "(order x n_rhs): ParU vs default")
     output_N_orientation_case(wfafs, WFAFS_CASE_UNEQUAL,
                               "wfafs unequal epochs --output-N",
-                              order=182, n_rhs=61)
+                              order=182, n_rhs=61, have_paru=have_paru)
 
     print("\n[4] Non-regression: wfes_single --fixation under ParU vs default")
-    agreement_case(single, SINGLE_CASE, "wfes_single fixation")
+    agreement_case(single, SINGLE_CASE, "wfes_single fixation",
+                   have_paru=have_paru)
 
     print("\n[5] Non-regression: phase_type_moments under ParU vs default")
-    agreement_case(ptm, PTM_CASE, "phase_type_moments", csv=True)
+    agreement_case(ptm, PTM_CASE, "phase_type_moments", csv=True,
+                   have_paru=have_paru)
 
-    print(f"\n{checks_run} checks, {len(failures)} failure(s)")
+    print(f"\n{SKIPS.summary_line()}")
+    print(f"{checks_run} checks, {len(failures)} failure(s)")
     if failures:
         for f in failures:
             print(f"  FAILED: {f}")

@@ -89,6 +89,7 @@ REPO = HERE.parent
 DEFAULT_BIN_DIR = REPO / "wfes-cli" / "build-cx1b" / "bin"
 
 sys.path.insert(0, str(HERE))
+import platform_probe  # noqa: E402
 from test_invalid_output_single import (  # noqa: E402
     psi_diploid, binom_row_full, lu_factor, lu_solve,
 )
@@ -218,7 +219,8 @@ def check(ok: bool, label: str, detail: str = "") -> bool:
 
 
 def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run([str(binary), *args], capture_output=True, text=True,
+    return subprocess.run([str(binary), *args], capture_output=True,
+                          **platform_probe.TEXT_IO,
                           timeout=900)
 
 
@@ -889,7 +891,12 @@ def main() -> int:
 
     n_fail = sum(1 for ok, *_ in _results if not ok)
     n_pass = len(_results) - n_fail
-    print(f"\n{'=' * 78}\nPASS {n_pass}   FAIL {n_fail}")
+    print(f"\n{'=' * 78}")
+    # No capability gate anywhere in this suite -- see the note in
+    # test_degenerate_switching_sequential.py's main(). The line is printed
+    # unconditionally so its absence is meaningful.
+    print(platform_probe.Skips().summary_line())
+    print(f"PASS {n_pass}   FAIL {n_fail}")
     if n_fail:
         print("failing checks:")
         for ok, label, detail in _results:
