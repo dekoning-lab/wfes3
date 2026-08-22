@@ -217,12 +217,12 @@ def half_ulp(printed: str) -> Decimal:
     return Decimal(1).scaleb(exponent) / 2
 
 
-def run(binary: Path, args: list[str], library: str) -> tuple[dict[str, str], str]:
+def run(binary: Path, args: list[str], library) -> tuple[dict[str, str], str]:
     """Return ({json key: printed literal}, error message)."""
     cmd = [str(binary), *args]
     if "-N" not in args:
         cmd += N5_PARAMS
-    cmd += ["--library", library, "--json"]
+    cmd += (["--library", library] if library else []) + ["--json"]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     blob = proc.stdout[proc.stdout.find("{"):] if "{" in proc.stdout else ""
     if not blob:
@@ -239,8 +239,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--bin", type=Path, default=DEFAULT_BIN,
                     help=f"wfes_single binary (default: {DEFAULT_BIN})")
-    ap.add_argument("--library", default="Accelerate",
-                    help="solver backend to pass to --library (default: Accelerate)")
+    ap.add_argument("--library", default=None,
+                    help="solver backend to pass to --library (default: omit the "
+                         "flag and use the binary's platform default -- required "
+                         "for portability: each build whitelists only the backends "
+                         "it links, e.g. Linux/MKL builds refuse 'Accelerate')")
     opts = ap.parse_args()
 
     if not opts.bin.is_file():
@@ -249,7 +252,7 @@ def main() -> int:
         return 2
 
     print(f"binary : {opts.bin}")
-    print(f"backend: {opts.library}")
+    print(f"backend: {opts.library or '(platform default)'}")
 
     n_pass = n_fail = n_unresolved = 0
     for label, args, checks in CASES:
@@ -304,7 +307,7 @@ def main() -> int:
         args = [str(opts.bin), "--fundamental"] + sel + extra
         if out:
             args += ["--output-N", str(out)]
-        args += ["--library", opts.library, "--json"]
+        args += (["--library", opts.library] if opts.library else []) + ["--json"]
         return subprocess.run(args, capture_output=True, text=True)
 
     with tempfile.TemporaryDirectory() as td:
@@ -342,7 +345,7 @@ def main() -> int:
         # must not lose the row that -p asked for.
         vpath = Path(td) / "v.csv"
         pv = subprocess.run([str(opts.bin), "--fundamental"] + sel +
-                            ["-p", "3", "--output-V", str(vpath), "--library", opts.library, "--json"],
+                            ["-p", "3", "--output-V", str(vpath), *(["--library", opts.library] if opts.library else []), "--json"],
                             capture_output=True, text=True)
         rv = json.loads(pv.stdout)["results"] if pv.returncode == 0 else {}
         checks.append(("--output-V with -p keeps the row",
@@ -362,7 +365,7 @@ def main() -> int:
     print("--allele-age --num-moments 4 against the dense-series reference")
     aa_args = ["--allele-age", "-N", "10", "-s", "0.01", "-h", "0.5",
                "-u", "1e-4", "-v", "1e-4", "-p", "2", "--observed-copies", "8",
-               "--num-moments", "4", "--library", opts.library, "--json"]
+               "--num-moments", "4", *(["--library", opts.library] if opts.library else []), "--json"]
     proc = subprocess.run([str(opts.bin)] + aa_args, capture_output=True, text=True)
     try:
         r = json.loads(proc.stdout)["results"]
@@ -387,7 +390,7 @@ def main() -> int:
     # (average of per-start SDs) this check fails by ~3e-5 relative.
     proc = subprocess.run([str(opts.bin), "--allele-age", "-N", "10", "-s", "0.01", "-h", "0.5",
                            "-u", "1e-4", "-v", "1e-4", "--observed-copies", "8",
-                           "--num-moments", "3", "--library", opts.library, "--json"],
+                           "--num-moments", "3", *(["--library", opts.library] if opts.library else []), "--json"],
                           capture_output=True, text=True)
     r = json.loads(proc.stdout)["results"]
     import math as _m2
@@ -399,7 +402,7 @@ def main() -> int:
     # Default output must be unchanged: no moment fields without --num-moments.
     proc = subprocess.run([str(opts.bin), "--allele-age", "-N", "10", "-s", "0.01", "-h", "0.5",
                            "-u", "1e-4", "-v", "1e-4", "-p", "2", "--observed-copies", "8",
-                           "--library", opts.library, "--json"], capture_output=True, text=True)
+                           *(["--library", opts.library] if opts.library else []), "--json"], capture_output=True, text=True)
     r = json.loads(proc.stdout)["results"]
     ok = set(r.keys()) == {"E_T", "Std_T"}
     print(f"  {'OK  ' if ok else 'FAIL'} {'default output unchanged':<26} keys={sorted(r.keys())}")

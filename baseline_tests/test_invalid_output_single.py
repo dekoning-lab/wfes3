@@ -879,8 +879,9 @@ def main() -> int:
 
     print(f"binary under test: {new_bin}")
     print(platform_probe.platform_banner(opts.bin))
-    print(f"shipped reference: {shipped if shipped else '(absent -- comparison '
-          f'sections report counted SKIPs)'}")
+    # Kept 3.8-compatible: f-string expressions may not span lines before 3.12.
+    shipped_desc = shipped if shipped else "(absent -- comparison sections report counted SKIPs)"
+    print(f"shipped reference: {shipped_desc}")
     new_outputs = section_spread(new_bin)
     section_nonregression(new_bin, shipped, new_outputs)
     section_degenerate_cutoff(new_bin)
