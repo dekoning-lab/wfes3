@@ -31,6 +31,22 @@ Usage:
     python3 baseline_tests/test_degenerate_switching_sequential.py [--bin DIR]
 
 Exit status is 0 only if every check passes.
+
+stderr-scope convention (shared by every suite in this directory)
+-----------------------------------------------------------------
+The nan/inf TOKEN SWEEP scans **stdout only**. stderr is asserted against
+EXPECTED DIAGNOSTIC SUBSTRINGS and is never swept for tokens.
+
+stdout is the published result: a bare `nan` or `inf` there is not valid JSON,
+jq coerces it to 1.797e308, and a pipeline consumes a fake number. stderr is
+where the tool EXPLAINS itself, and a good explanation often has to name the
+value it is refusing ("rate would be 1/0 = inf") -- sweeping the combined
+streams makes the better diagnostic the failing one. Suites here used to
+disagree; they were aligned in task C6 (2026-08-21). Full statement and
+rationale: baseline_tests/README.md.
+
+This suite's sweep is BAD_JSON_TOKEN over `r.stdout`; stderr is asserted
+only against expected substrings ("-p", "integration cutoff", "T_ext").
 """
 
 import argparse
@@ -231,14 +247,30 @@ def approx_list(values, expected, tol=1e-12):
 
 
 def test_json_parameters_record_the_values_used():
+    """The parameters block must record the NORMALISED -P the run actually used.
+
+    The live-p cases here supply `-P 3,1` and assert [0.75, 0.25], not the
+    obvious `-P 1,1` and [0.5, 0.5]. [0.5, 0.5] is BOTH what `-P 1,1`
+    normalises to AND the parser's default for two models (verified: omitting
+    -P entirely prints "starting_probabilities": [0.5, 0.5]), so an assertion
+    on it passes just as happily against an implementation that ignores -P and
+    echoes its own default -- which is a variant of the exact defect this file
+    exists to lock out. An asymmetric vector discriminates: only a run that
+    read -P and normalised it can print [0.75, 0.25].
+
+    -P 1,1 stays in the DEAD-p cases (--starting-copies / --initial, in
+    test_csv_output_has_a_header), where the point is a vector summing to 2
+    that must not trigger a renormalisation warning; there the sum is the
+    signal, not the ratio.
+    """
     print("test_json_parameters_record_the_values_used")
 
-    r = run("wfes_switching", ["--fixation"] + SWITCHING_BASE + ["-P", "1,1", "-u", "1e-8,1e-8", "--json"])
+    r = run("wfes_switching", ["--fixation"] + SWITCHING_BASE + ["-P", "3,1", "-u", "1e-8,1e-8", "--json"])
     check(r.returncode == 0, "switching --fixation --json: exits 0", context(r))
     doc = parse_json(r, "switching --fixation --json")
     if doc:
         params = doc.get("parameters", {})
-        check(approx_list(params.get("starting_probabilities"), [0.5, 0.5]),
+        check(approx_list(params.get("starting_probabilities"), [0.75, 0.25]),
               "switching --fixation --json: records NORMALISED p",
               "starting_probabilities=%r" % (params.get("starting_probabilities"),))
         check(approx_list(params.get("backward_mutation_rates"), [1e-8, 1e-8], 1e-20),
@@ -251,12 +283,12 @@ def test_json_parameters_record_the_values_used():
         check(isinstance(rate, float) and math.isfinite(rate) and rate > 0,
               "switching --fixation --json: rate is finite and positive", "rate=%r" % (rate,))
 
-    r = run("wfes_sequential", SEQUENTIAL_BASE + ["-P", "1,1", "-u", "1e-8,1e-8", "--json"])
+    r = run("wfes_sequential", SEQUENTIAL_BASE + ["-P", "3,1", "-u", "1e-8,1e-8", "--json"])
     check(r.returncode == 0, "sequential --json: exits 0", context(r))
     doc = parse_json(r, "sequential --json")
     if doc:
         params = doc.get("parameters", {})
-        check(approx_list(params.get("starting_probabilities"), [0.5, 0.5]),
+        check(approx_list(params.get("starting_probabilities"), [0.75, 0.25]),
               "sequential --json: records NORMALISED p",
               "starting_probabilities=%r" % (params.get("starting_probabilities"),))
         check(approx_list(params.get("backward_mutation_rates"), [1e-8, 1e-8], 1e-20),
@@ -282,12 +314,12 @@ def test_json_parameters_record_the_values_used():
     # switching --absorption records the same XOR as --fixation: the
     # parameters block names whichever starting rule the run actually used.
     # Without --initial, that is the NORMALISED -P.
-    r = run("wfes_switching", ["--absorption"] + SWITCHING_BASE + ["-P", "1,1", "--json"])
+    r = run("wfes_switching", ["--absorption"] + SWITCHING_BASE + ["-P", "3,1", "--json"])
     check(r.returncode == 0, "switching --absorption --json: exits 0", context(r))
     doc = parse_json(r, "switching --absorption --json")
     if doc:
         params = doc.get("parameters", {})
-        check(approx_list(params.get("starting_probabilities"), [0.5, 0.5]),
+        check(approx_list(params.get("starting_probabilities"), [0.75, 0.25]),
               "switching --absorption --json: records NORMALISED p",
               "starting_probabilities=%r" % (params.get("starting_probabilities"),))
         check("initial_distribution" not in params,
