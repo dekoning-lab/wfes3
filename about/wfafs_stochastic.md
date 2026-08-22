@@ -54,14 +54,19 @@ The scaling factors fᵢ allow efficient computation:
 
 ### Final Distribution
 
-The allele frequency distribution at the final time point is extracted from the solution vector and optionally projected to the actual population size.
+The allele frequency distribution at the final time point is extracted from the
+solution vector and projected up to the real population's 2N+1 states; unless
+`--no-project` is given, it is then binned back down onto this model's own
+scaled 2(N/f)+1 states for output.
 
 ## Input Parameters
 
 ### Initial Configuration
 - `-p, --starting-copies <int>`: Starting copy number
 - `-i, --initial <path>`: Initial state distribution, as a CSV column of probabilities over this model's states. It replaces the point mass at `-p`.
-- `--no-project`: Skip projection to finite sample size
+- `--no-project`: Report the up-projected distribution over the real population's
+  2N+1 states instead of binning it back down onto this model's own scaled
+  2(N/f)+1 states (the default).
 
 ### Population Parameters (comma-separated)
 - `-N, --pop-size <int,...>`: Population sizes for each epoch
@@ -71,6 +76,23 @@ The allele frequency distribution at the final time point is extracted from the 
 - `-h, --dominance <float,...>`: Dominance coefficients
 - `-u, --backward-mu <float,...>`: Backward mutation rates
 - `-v, --forward-mu <float,...>`: Forward mutation rates
+
+Each of `-G`, `-f`, `-s`, `-h`, `-u` and `-v` must give exactly one value per
+model named by `-N` -- a short or long vector is refused by name (for example
+"Backward mutation rates (-u) has 1 value(s) but there are 2 models"), never
+padded or silently truncated. Every `-f` value must also be a finite positive
+number.
+
+Because this model is non-absorbing, it keeps the two boundary rows (0 copies
+and 2N copies) that absorbing models drop, and each needs a binomial success
+probability strictly inside (0, 1): row 0 is exactly the forward mutation rate
+`v`, and row 2N is exactly `1 - u`, which rounds to 1.0 for any `u` below about
+1.1e-16. A model that puts either boundary at 0 or 1 -- `v` = 0, `u` = 0, or a
+`u`/`v` small enough to underflow -- is refused with a diagnostic naming the
+offending rate and model, rather than silently writing a spectrum full of
+`nan`. The check runs on the rates each matrix is actually built from: the
+`-f`-rescaled rates for the switching solve, and the unscaled rates for the
+final up-projection.
 
 ### Computational Parameters
 - `-a, --alpha <float>`: Transition-matrix tail truncation (default: 1e-20). Each
@@ -86,7 +108,12 @@ The allele frequency distribution at the final time point is extracted from the 
 
 ### Output Options
 - `--output-Q`: Write transition matrices
-- `--output-R`: Write absorption matrix (the transient-to-absorbing sub-matrix)
+- `--output-R`, `--output-N-ext`, `--output-N-fix`, `--output-N-tmo`: NOT
+  AVAILABLE for this tool. wfafs_stochastic builds a non-absorbing switching
+  chain with no extinction or fixation boundary, so it has no
+  transient-to-absorbing matrix and no extinction-, fixation- or
+  timeout-conditional sojourn time to write; requesting any of the four
+  refuses at startup and leaves no file behind.
 - `--verbose`: Detailed progress output
 
 ## Output Format
@@ -134,8 +161,12 @@ wfafs_stochastic -N 1000,5000 -G 500,1000 -f 1,1 -s 0,0.01
 ```bash
 wfafs_stochastic -N 5000,500,50,1000,10000 -G 200,100,20,200,500 \
                 -f 1,1,1,1,1 -s 0,0,-0.1,0,0.01 \
-                -u 1e-8,1e-8,0,1e-8,1e-7
+                -u 1e-8,1e-8,1e-9,1e-8,1e-7
 ```
+(This is a non-absorbing model, so every `-u`/`-v` must stay strictly above
+0 -- see the boundary-refusal note above; `-u ...,0,...` for the bottleneck
+epoch would be refused rather than silently treated as "no recurrent
+mutation".)
 
 ### Starting from specific allele count
 ```bash
@@ -181,9 +212,13 @@ times rather than to the frequency spectrum.
 - Automatic rescaling of parameters
 
 ### Projection Options
-- Project from scaled to actual population size
-- Optional with `--no-project` flag
-- Preserves accuracy while improving efficiency
+- The final epoch's distribution is always projected up to the real
+  population's 2N+1 states first
+- By default it is then binned back down onto this model's own scaled
+  2(N/f)+1 states; `--no-project` reports the up-projected, real-size result
+  instead
+- Skipped entirely when the last model's `-f` is 1, where scaled and real size
+  already coincide
 
 ### Initial Conditions
 - Start from specific allele count

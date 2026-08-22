@@ -104,7 +104,7 @@ Only fixation is absorbing; calculates substitution rates.
 - `--output-Q <file>`: Write combined transition matrix
 - `--output-R <file>`: Write absorption matrix
 - `--csv`: Output in CSV format
-- `--json`: Output in JSON format (pending implementation)
+- `--json`: Output in JSON format
 
 ## Switching Matrix Format
 

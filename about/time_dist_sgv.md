@@ -70,6 +70,18 @@ $$f_{sub}(t) = \int f_{equil}(t_1) \, \pi(i \mid equil) \, f_{fix}(t-t_1 \mid i)
 - `-d, --distribution-cutoff <float>`: Stop when CDF reaches this value (default: 0.99999)
 - `-m, --max-t <int>`: Maximum time to compute (default: 1000000)
 
+If `--max-t` is reached before `-d`'s cutoff, the run has not converged, and
+the CDF is left as the raw, un-renormalised partial sum actually reached --
+it does not end at 1 -- so the truncation is visible in every output format
+rather than disguised as a complete distribution. JSON carries a
+`reached_cutoff` field for the same reason, and a warning naming the mass
+actually captured is printed to stderr. Only a run that genuinely reaches the
+cutoff is normalised to end at exactly 1. A cutoff already satisfied before
+the first generation is refused rather than published as a zero-row
+"result". (`-r`/`--no-recurrent-mu` is a flag on other WFES tools but is not
+wired into this tool's SGV model, so it is refused here rather than silently
+ignored.)
+
 ### Computational Parameters
 - `-t, --num-threads <int>`: Number of threads
 - `--library <string>`: Linear algebra backend: `Pardiso` (Intel MKL; the default on Linux), `Accelerate` (the macOS default), `SuiteSparse`, or `ParU` (parallel SuiteSparse). Note that on macOS `Accelerate` names the matrix backend only: matrices are held in Accelerate format, but the LU factorization and solves are performed by SuiteSparse's UMFPACK. Apple's own sparse solver is used only as a build-time fallback when SuiteSparse is not linked. ViennaCL requires OpenCL support not compiled into the shipped binaries.

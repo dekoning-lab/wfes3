@@ -74,6 +74,18 @@ The matrix exponential e^(Qt) is computed using:
 - `-d, --distribution-cutoff <float>`: Stop when CDF reaches this value (default: 0.99999)
 - `-m, --max-t <int>`: Maximum time to compute (default: 1000000)
 
+If `--max-t` is reached before `-d`'s cutoff, the run has not converged, and
+the CDF columns are left as the raw, un-renormalised partial sums actually
+reached -- they do not end at 1 -- so the truncation is visible in every
+output format rather than disguised as a complete distribution, and a
+warning naming the mass actually captured is printed to stderr. JSON also
+carries an explicit `reached_cutoff` field in its statistics block; CSV and
+plain text do not have that field, so a raw CDF that stops short of 1 (plus
+the stderr warning) is what discloses the truncation there. Only a run that
+genuinely reaches the cutoff is normalised to end at exactly 1. A cutoff
+already satisfied before the first generation is refused rather than
+published as a zero-row "result".
+
 ### Computational Parameters
 - `--no-recurrent-mu`: Disable recurrent mutation
 - `--num-threads <int>`: Number of threads

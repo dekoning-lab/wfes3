@@ -77,7 +77,11 @@ $$R = \frac{1}{T_{b.fix}}$$
   zero-copy row of the transition matrix conditioned on at least one copy
   arising, and this cutoff truncates its tail: starting copy numbers whose
   probability falls below it are not integrated over. It has no effect when `-p`
-  is given, or when the forward mutation rate is zero.
+  is given, or when the forward mutation rate is zero. A cutoff at or above the
+  largest starting-copy probability leaves nothing to integrate over and is
+  refused, naming the cutoff and that largest probability at full precision,
+  rather than solving an all-zero right-hand side and publishing its zero
+  sums as a result.
 - `-p, --starting-copies <int>`: Initial allele count (default: automatic)
 
 ### Execution Parameters
@@ -88,8 +92,22 @@ $$R = \frac{1}{T_{b.fix}}$$
 ### Output Options
 - `--output-Q <file>`: Write combined transition matrix
 - `--output-R <file>`: Write absorption matrix
+- `--output-N <file>`: Write the fundamental matrix
+- `--output-B <file>`: Write the absorption probability vector B = (I-Q)⁻¹R,
+  one fixation probability per transient state (this model has exactly one
+  absorbing state, fixation in the adaptive phase). Since fixation is the
+  only absorbing outcome, each entry sits close to 1, offset by whatever
+  mass the `-a` tail truncation and the numerical solve lose along the way --
+  which is what makes the vector useful on its own: it reads that loss out
+  directly. This now genuinely solves and writes B; it was previously
+  accepted on the command line and silently produced no file.
+- `--output-I <file>`: Write the initial probability distribution
 - `--csv`: Output in CSV format
 - `--json`: Output in JSON format
+
+A run whose substitution time T_fix is not a positive, finite number --
+however that arose -- is refused before any output format is written, so no
+run can print `inf` or `nan` as a result.
 
 ## Output Format
 

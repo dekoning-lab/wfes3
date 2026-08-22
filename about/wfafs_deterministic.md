@@ -33,7 +33,8 @@ $$\Gamma(k,j) = \binom{2N_{i+1}}{j} \left(\frac{k}{2N_i}\right)^j \left(1-\frac{
 
 ### Evolution Algorithm
 
-1. Start with initial distribution π₀ (equilibrium or specified)
+1. Start with initial distribution π₀ (a fixed count, an integration over the
+   mutation-injection distribution, or a supplied file -- one is required)
 2. For each epoch i lasting Gᵢ generations:
    - Apply P^(Gᵢ) via repeated sparse matrix-vector multiplication
    - Apply transition matrix Γ if population size changes
@@ -46,16 +47,34 @@ $$H_{exp} = 2 \sum_i \pi_i \, \frac{i}{2N} \left(1 - \frac{i}{2N}\right)$$
 ## Input Parameters
 
 ### Initial Frequency
-- `-p, --starting-copies <int>`: Starting copy number (default: equilibrium)
+One of these three is required; there is no implicit default starting state,
+and omitting all three is refused ("no starting state given").
+- `-p, --starting-copies <int>`: Starting copy number, a fixed count
+- `-c, --integration-cutoff <float>`: Integrate over the starting-copy
+  distribution a new mutation produces (row 0 of the first epoch's matrix,
+  conditioned on at least one copy), truncated at this probability
 - `-i, --initial <path>`: Initial state distribution, as a CSV column of 2N+1 probabilities over allele counts 0..2N in the first epoch. It replaces the point mass at `-p`, and is renormalised if it does not sum to 1. A point mass reproduces the corresponding `-p` run exactly.
 
 ### Demographic Vectors (comma-separated)
-- `-N, --pop-size <int,...>`: Population sizes for each epoch
-- `-G, --generations <int,...>`: Duration in generations for each epoch
-- `-s, --selection <float,...>`: Selection coefficients
+- `-N, --pop-size <int,...>`: Population sizes for each epoch (required)
+- `-G, --generations <int,...>`: Duration in generations for each epoch (required)
+- `-s, --selection <float,...>`: Selection coefficients (required -- unlike
+  the other WFES/WFAFS tools, this one has no default and must be given
+  explicitly, even as a vector of 0s)
 - `-h, --dominance <float,...>`: Dominance coefficients (`--help` shows this menu; `-h` is dominance, as in every WFES tool)
 - `-u, --backward-mu <float,...>`: Backward mutation rates
 - `-v, --forward-mu <float,...>`: Forward mutation rates (`--verbose` is long-only)
+
+This model is non-absorbing and keeps the two boundary rows -- 0 copies and 2N
+copies -- that absorbing models drop, and each needs a binomial success
+probability strictly inside (0, 1): row 0 is exactly the forward mutation rate
+`v` for that epoch, and row 2N is exactly `1 - u`, which rounds to 1.0 for any
+`u` below about 1.1e-16. An epoch whose rates put either boundary at 0 or 1 --
+`v` = 0, `u` = 0, or a `u`/`v` small enough to underflow -- is refused with a
+diagnostic naming the offending rate and epoch, rather than silently
+propagating a `nan` through the rest of the history. A non-finite `-s` or `-h`
+is refused for a related reason: left unchecked it would be clamped into a
+lethal-homozygote model and reported as though it were the model asked for.
 
 ### Computational Parameters
 - `-a, --alpha <float>`: Transition-matrix tail truncation (default: 1e-20). Each
@@ -103,36 +122,43 @@ Execution time: 2.1s
 
 ### Simple bottleneck
 ```bash
-wfafs_deterministic --pop-size 10000,100,10000 --generations 1000,50,1000
+wfafs_deterministic --pop-size 10000,100,10000 --generations 1000,50,1000 \
+                   --selection 0,0,0 -p 5000
 ```
 
 ### Selection during expansion
 ```bash
-wfafs_deterministic --pop-size 1000,5000,20000 --generations 200,500,1000 --selection 0,0.001,0.01
+wfafs_deterministic --pop-size 1000,5000,20000 --generations 200,500,1000 \
+                   --selection 0,0.001,0.01 -c 1e-10
 ```
 
 ### Complex demographic history
 ```bash
 wfafs_deterministic --pop-size 5000,500,50,500,5000 --generations 100,50,10,50,100 \
-                   --selection 0,0,-0.1,0,0.01 --dominance 0.5,0.5,0.2,0.5,0.8
+                   --selection 0,0,-0.1,0,0.01 --dominance 0.5,0.5,0.2,0.5,0.8 \
+                   -c 1e-10
 ```
 
 ### Starting from specific frequency
 ```bash
-wfafs_deterministic -p 10 --pop-size 1000,5000 --generations 500,1000
+wfafs_deterministic -p 10 --pop-size 1000,5000 --generations 500,1000 --selection 0,0
 ```
 
 ### With varying mutation rates
 ```bash
-wfafs_deterministic --pop-size 1000,10000 --generations 1000,2000 \
-                   --backward-mu 1e-8,1e-7 --forward-mu 1e-8,1e-6
+wfafs_deterministic --pop-size 1000,10000 --generations 1000,2000 --selection 0,0 \
+                   --backward-mu 1e-8,1e-7 --forward-mu 1e-8,1e-6 -c 1e-10
 ```
+
+`-s` (selection) and a starting state (`-p`, `-c`, or `-i`) are both required
+by this tool -- there is no default for either, unlike its sibling programs.
 
 ## Technical Notes
 
 1. **Deterministic Timing**: Each epoch lasts exactly the specified generations
 2. **Frequency Matching**: Preserves expected frequencies during size changes
-3. **Equilibrium Start**: Default initial distribution from mutation-drift balance
+3. **Required Starting State**: No default; give a fixed count (`-p`), an
+   integration cutoff (`-c`), or a distribution file (`-i`)
 4. **Sparse Computation**: Efficient matrix-vector operations
 5. **No Genetic Drift**: Tracks expected values, not stochastic realizations
 

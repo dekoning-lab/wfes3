@@ -113,6 +113,12 @@ Calculates stationary distribution when all states are transient.
 **Key equation:**
 - Equilibrium: π × P = π, where Σπ(i) = 1
 
+### 7. Non-Absorbing Matrix (--non-absorbing)
+Builds the bare Wright-Fisher transition matrix over counts 0..2N with no
+absorbing state at all -- neither extinction nor fixation is removed. There is
+no probability or time to report; the matrix itself, written with
+`--output-Q`, is the only product.
+
 ## Input Parameters
 
 ### Required Parameters
@@ -152,12 +158,40 @@ Calculates stationary distribution when all states are transient.
 
 ### Output Options
 - `--output-Q <file>`: Write transition matrix Q
-- `--output-R <file>`: Write absorption matrix R  
+- `--output-R <file>`: Write absorption matrix R
 - `--output-N <file>`: Write fundamental matrix N
-- `--output-V <file>`: Write variance matrix V
+- `--output-N-ext <file>`: Write extinction-conditional sojourn times
+- `--output-N-fix <file>`: Write fixation-conditional sojourn times
+- `--output-B <file>`: Write absorption probability vector B
+- `--output-I <file>`: Write the initial probability distribution
+- `--output-V <file>`: Write variance-time matrix V
 - `--output-E <file>`: Write equilibrium distribution
 - `--csv`: Output in CSV format
 - `--json`: Output in JSON format
+
+Every `--output-*` flag is scoped to the modes that actually produce that
+quantity. Supplying one outside its producing mode refuses before any matrix
+is built or any file opened -- nothing is written -- with a message naming
+which modes do produce it, for example: *"--output-E is not produced by
+--fixation: --output-E writes the stationary distribution, which only
+--equilibrium computes. Available in: --equilibrium."* The table:
+
+| Flag | Available in |
+| --- | --- |
+| `--output-Q` | all seven modes |
+| `--output-R` | `--absorption`, `--fixation`, `--fundamental`, `--establishment`, `--allele-age` |
+| `--output-N` | `--absorption`, `--fixation`, `--fundamental`, `--establishment`, `--allele-age` |
+| `--output-N-ext` | `--absorption`, `--fundamental`, `--allele-age` (not `--fixation`: extinction is transient there; not `--establishment`: its two absorbing states are extinction and ESTABLISHMENT, not fixation) |
+| `--output-N-fix` | `--absorption`, `--fixation`, `--fundamental`, `--allele-age` |
+| `--output-B` | `--absorption`, `--fixation`, `--fundamental`, `--establishment`, `--allele-age` |
+| `--output-I` | `--absorption`, `--fixation`, `--establishment`, `--allele-age`, and `--fundamental` **only when `-p` is also given** (without `-p` the whole matrix is computed and no single starting distribution applies) |
+| `--output-E` | `--equilibrium` only |
+| `--output-V` | `--fundamental` only |
+
+`--equilibrium` and `--non-absorbing` produce no absorption quantities at all
+(no `-R`, `-N`, `-N-ext`, `-N-fix`, `-B`), because neither model has an
+absorbing state; both also refuse `--output-I`, since neither uses a starting
+distribution.
 
 ## Output Format
 

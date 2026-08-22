@@ -6,8 +6,10 @@ Phase Type Moments computes moments of the substitution-time distribution
 directly, by solving one sparse linear system per moment, without computing the
 distribution itself. `phase_type_dist` returns the whole distribution over a
 finite time horizon; this program returns exact moments with no horizon and no
-truncation, and arbitrarily high orders are available at the cost of one solve
-each.
+truncation, at the cost of one solve per order requested. The raw moments
+themselves grow factorially, though, so double-precision overflow -- not a
+time horizon -- is what eventually limits how high an order can be requested;
+see Numerical Stability below.
 
 The first two moments give the expected time to substitution and its variance,
 and hence the substitution rate in Kimura's sense of one over the time between
@@ -126,8 +128,14 @@ phase_type_moments -N 1000 -s 0.01 -k 10
 
 ### High-order moments for distribution fitting
 ```bash
-phase_type_moments -N 5000 -s 0.001 -k 50
+phase_type_moments -N 5000 -s 0.001 -k 30
 ```
+Raw moments grow so fast that they overflow double precision at a fairly low
+order -- 30-something rather than 100-something -- and the exact order
+depends on N, s, u and v. `-k 50` on this same model fails at moment 34 with
+`Raw moment 34 of 50 is not finite: the moments of this model overflow double
+precision beyond order 33 ... Rerun with -k 33 or smaller`; the tool refuses
+outright rather than printing `nan` past that point.
 
 ### Neutral moments with mutation
 ```bash
@@ -141,13 +149,17 @@ phase_type_moments -N 1000 -s 0.01 -a 1e-6 -k 30
 
 ### Output to file with JSON
 ```bash
-phase_type_moments -N 1000 -s 0.01 -k 100 --json --output-N moments.json
+phase_type_moments -N 1000 -s 0.01 -k 30 --json --output-N moments.json
 ```
 
 ## Technical Notes
 
 1. **Computational Efficiency**: O(k) sparse solves vs O(T) for full distribution
-2. **Numerical Stability**: Stable for moments up to ~100 depending on parameters
+2. **Numerical Stability**: Raw moments grow factorially and overflow double
+   precision well short of order 100 -- order 26 to 42 in cases tried, and it
+   depends on N, s, u and v, not on a fixed cap. Requesting a higher order
+   than the model can represent is refused, naming the largest order it
+   could compute, rather than printing `nan` past that point.
 3. **Recurrent Mutation**: Included by default; disable with `-r, --no-recurrent-mu`
 4. **Starting State**: Default is 0 copies with mutation; a non-default starting state requires `-i, --initial`
 5. **Sparse Methods**: Exploits sparsity for large N

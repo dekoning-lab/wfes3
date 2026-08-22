@@ -73,6 +73,15 @@ From the phase-type distribution:
 - `-d, --distribution-cutoff <float>`: Stop when CDF reaches this value (default: 0.99999). `-c, --integration-cutoff` is a deprecated alias for this same flag in `phase_type_dist` (unlike in the WFES/WFAFS tools, where `--integration-cutoff` instead bounds the starting-copy integration).
 - `-m, --max-t <int>`: Maximum time to compute (default: 1000000)
 
+If `--max-t` is reached before `-d`'s cutoff, the run has not converged, and
+the CDF column is left as the raw, un-renormalised partial sum actually
+reached -- it does not end at 1 -- so the truncation is visible in every
+output format rather than disguised as a complete distribution. JSON carries
+a `reached_cutoff` field for the same reason, and a warning naming the mass
+actually captured is printed to stderr, recommending a larger `--max-t` or
+`phase_type_moments` for exact moments instead. Only a run that genuinely reaches the
+cutoff is normalised to end at exactly 1.
+
 ### Computational Parameters
 - `--num-threads <int>`: Number of threads
 - `--library <string>`: Linear algebra backend: `Pardiso` (Intel MKL; the default on Linux), `Accelerate` (the macOS default), `SuiteSparse`, or `ParU` (parallel SuiteSparse). Note that on macOS `Accelerate` names the matrix backend only: matrices are held in Accelerate format, but the LU factorization and solves are performed by SuiteSparse's UMFPACK. Apple's own sparse solver is used only as a build-time fallback when SuiteSparse is not linked. ViennaCL requires OpenCL support not compiled into the shipped binaries.
