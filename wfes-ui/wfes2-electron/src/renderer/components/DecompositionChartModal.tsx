@@ -18,8 +18,8 @@ import React, { useMemo, useRef, useState } from 'react'
 import { SERIES, PRIMARY, SECONDARY, INK } from '../utils/chartTheme'
 import { Modal, Stack, Group, Text, Button, SegmentedControl, Paper } from '@mantine/core'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { IconDownload } from '@tabler/icons-react'
-import { exportChartsSvg } from '../utils/exportChartsSvg'
+import { IconDownload, IconPhoto } from '@tabler/icons-react'
+import { exportChartsSvg, exportChartsPng } from '../utils/exportChartsSvg'
 import { formatQuantity } from '../utils/quantityLabels'
 
 export interface DecompositionSeries {
@@ -41,12 +41,18 @@ interface DecompositionChartModalProps {
   filename: string
   /** What the category axis is, for the axis label. */
   categoryLabel: string
+  /**
+   * Command line that produced the plotted data, captured when the run
+   * executed. Passed straight through to the exporters, which stamp it onto
+   * the figure. Absent, the figure exports without a provenance block.
+   */
+  command?: string
 }
 
 const COLORS = [PRIMARY, SECONDARY, SERIES[2], SERIES[3], SERIES[4], SERIES[5]]
 
 const DecompositionChartModal: React.FC<DecompositionChartModalProps> = ({
-  opened, onClose, categories, series, title, filename, categoryLabel
+  opened, onClose, categories, series, title, filename, categoryLabel, command
 }) => {
   const [scale, setScale] = useState<'absolute' | 'share'>('absolute')
   const chartsRef = useRef<HTMLDivElement>(null)
@@ -117,7 +123,7 @@ const DecompositionChartModal: React.FC<DecompositionChartModalProps> = ({
                 offset: 0
               }}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip />} cursor={{ fill: INK.cursorFill }} />
             <Legend verticalAlign="top" height={28}
               formatter={(value: string) => (
                 <span style={{ color: INK.text }}>{value}</span>
@@ -150,8 +156,18 @@ const DecompositionChartModal: React.FC<DecompositionChartModalProps> = ({
               { value: 'share', label: 'Share of total' }
             ]}
           />
+          <Group gap="xs">
+          <Button leftSection={<IconPhoto size={16} />} variant="light" onClick={() =>
+            void exportChartsPng({ command, version: __APP_VERSION__,
+              container: chartsRef.current,
+              titles: ['Absorption probability', 'Expected generations'],
+              filename
+            }).catch((e: any) => alert(`The chart could not be exported as PNG: ${e?.message ?? e}`))
+          }>
+            Export PNG
+          </Button>
           <Button leftSection={<IconDownload size={16} />} variant="light" onClick={() =>
-            exportChartsSvg({
+            exportChartsSvg({ command, version: __APP_VERSION__,
               container: chartsRef.current,
               titles: ['Absorption probability', 'Expected generations'],
               filename
@@ -159,6 +175,7 @@ const DecompositionChartModal: React.FC<DecompositionChartModalProps> = ({
           }>
             Export SVG
           </Button>
+          </Group>
         </Group>
 
         <Text size="xs" c="dimmed">

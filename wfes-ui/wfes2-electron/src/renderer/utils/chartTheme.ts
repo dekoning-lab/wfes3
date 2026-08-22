@@ -63,7 +63,19 @@ export const INK = {
   grid: '#424242',
   /** Tooltip surface and its border, matching the app's panels. */
   tooltipBg: '#1f2937',
-  tooltipBorder: '#424242'
+  tooltipBorder: '#424242',
+  /**
+   * The hover band behind the category under the pointer, on bar charts.
+   *
+   * Recharts fills that band with #ccc at full opacity, which on these dark
+   * surfaces reads as a white panel dropped over the plot: the bars it is
+   * meant to be highlighting disappear underneath it. A low-alpha neutral
+   * tints the band instead, so the hovered category is marked and its bars
+   * stay visible. The alpha lives in the colour so the band composites over
+   * whichever surface the chart is drawn on, light or dark, rather than
+   * assuming one.
+   */
+  cursorFill: 'rgba(130, 130, 130, 0.18)'
 } as const
 
 /** Colour for slot i, never cycled: past the last slot, callers should group into "other". */
