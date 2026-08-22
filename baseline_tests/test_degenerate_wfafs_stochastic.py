@@ -61,6 +61,48 @@ The defects
    nan-bearing file on disk. The pre-fix binary did exactly that -- 16 nan
    entries in the --output-Q file, then "matrix is singular" at exit 1.
 
+3. NO RANGE CHECK ON THE STARTING COPY COUNT (-p). The count was used as a
+   direct subscript of a dvec of length 2N+1
+   (`initial[options.initial_count] = 1.0`) with no bound anywhere: the parser
+   stored whatever was typed, and main indexed with it. Every other tool that
+   takes a starting count refuses an out-of-range one by name -- wfes_single
+   in the shared parser, wfafs_deterministic in its own main -- and this was
+   the one that did not.
+
+   Measured on the pre-fix binary at -N 10 -G 100 -f 1 (state space 0..20):
+
+       -p 20   healthy
+       -p 21   exit 0, EMPTY stderr, all-zero spectrum
+       -p 100  exit 0, EMPTY stderr, all-zero spectrum
+
+   and the two refusals were byte-identical to each other
+   (md5 67a8cdc09afc78de4a47a3996ec264b5), so the published spectrum did not
+   depend on what the user asked for and nothing in the run said so. Under
+   NDEBUG, which is how these binaries ship, the 1.0 is written outside the
+   vector.
+
+   Two further faces of the same gap, both measured:
+
+     * a SUPPLIED NEGATIVE collided with the "flag absent" sentinel. `-N 10
+       -G 100 -f 1 --starting-copies=-5` exited 0 with output byte-identical
+       (md5 479b597369902d13c162535f66aab3e3) to the equilibrium-start run
+       that omits -p entirely: a request for a state that does not exist,
+       answered with a different model's spectrum.
+
+     * the bound is on the -f-RESCALED size, not on the typed N. This tool
+       divides every N by its factor before building anything, so
+       `-N 100 -f 10 -p 150` is inside the typed 2N = 200 and indexes 150 into
+       a 21-entry vector (measured: exit 0, all-zero spectrum), while
+       `-N 10 -f 0.5 -p 30` is outside the typed 2N = 20 and is a perfectly
+       ordinary state of the model actually solved. A check against the typed
+       value would both miss the first and falsely refuse the second, which is
+       why the sentinel half of the check lives in the parser and the bound
+       half lives in main beside the vector it protects.
+
+   Valid counts here are 0..2N INCLUSIVE: this tool builds NON_ABSORBING,
+   which keeps all 2N+1 rows, so the boundary counts are ordinary states --
+   unlike the both-absorbing models, where wfes_single refuses -p 0.
+
 What must happen instead
 ------------------------
 Refuse, don't substitute. Each fault exits 1 (not by signal) with a diagnostic
@@ -244,7 +286,53 @@ PSI_FAULTS = [
      ["up-projection", "NOT -f-rescaled", "(-u)"]),
 ]
 
-FAULTS = LENGTH_FAULTS + PSI_FAULTS
+# Guard 3 -- the starting-copy count (-p) against the state space this tool
+# actually builds. See the module docstring's defect 3. Every one of these
+# exited 0 on the pre-fix binary.
+STARTING_COPIES_FAULTS = [
+    # The measured reproducer: one past the top of the state space.
+    ("-p 21 (one past 2N = 20)",
+     ["-N", "10", "-G", "100", "-f", "1", "-p", "21"],
+     ["Starting copies (-p)", "between 0 and 2N = 20", "got 21"]),
+    # Far outside. Pre-fix this was byte-identical to -p 21 (both all-zero),
+    # so the published spectrum did not depend on what was asked for.
+    ("-p 100 (far outside 0..20)",
+     ["-N", "10", "-G", "100", "-f", "1", "-p", "100"],
+     ["between 0 and 2N = 20", "got 100"]),
+    # The sentinel collision: a supplied negative used to be stored verbatim
+    # into the same field that means "no -p given", so the run answered with
+    # the equilibrium start instead -- exit 0, byte-identical to omitting the
+    # flag. Refused in the parser, which is why the wording differs.
+    ("--starting-copies=-5 (collides with the no-flag sentinel)",
+     ["-N", "10", "-G", "100", "-f", "1", "--starting-copies=-5"],
+     ["Starting copies (-p/--starting-copies)", "got -5"]),
+    # The case that decides WHERE the bound has to be checked: 150 is inside
+    # the typed 2N = 200 and outside the -f-rescaled 2N = 20 the model is
+    # actually solved on. A parser-side check against the typed value would
+    # let this through.
+    ("-N 100 -f 10 -p 150 (inside typed 2N, outside rescaled 2N)",
+     ["-N", "100", "-G", "100", "-f", "10", "-p", "150"],
+     ["between 0 and 2N = 20", "got 150", "-f-rescaled"]),
+]
+
+# The other half of the same contract: counts that ARE in range must still run.
+# (label, argv, expected number of states)
+#
+# The bounds are INCLUSIVE at both ends -- this tool builds NON_ABSORBING, so
+# counts 0 and 2N are ordinary states, unlike the both-absorbing models where
+# wfes_single refuses -p 0. And -f 0.5 is the mirror image of the -N 100 -f 10
+# fault above: 30 is OUTSIDE the typed 2N = 20 and inside the rescaled 2N = 40,
+# so a check against the typed value would falsely refuse a valid model.
+STARTING_COPIES_ACCEPTED = [
+    ("-p 20 (the 2N boundary)",
+     ["-N", "10", "-G", "100", "-f", "1", "-p", "20"], 21),
+    ("-p 0 (the lower boundary; NON_ABSORBING keeps count 0)",
+     ["-N", "10", "-G", "100", "-f", "1", "-p", "0"], 21),
+    ("-N 10 -f 0.5 -p 30 (outside typed 2N, inside rescaled 2N = 40)",
+     ["-N", "10", "-G", "100", "-f", "0.5", "-p", "30"], 41),
+]
+
+FAULTS = LENGTH_FAULTS + PSI_FAULTS + STARTING_COPIES_FAULTS
 
 # ---------------------------------------------------------------------------
 # Legitimate models: (label, argv, md5-of-stdout, matches-shipped-binary)
@@ -421,6 +509,61 @@ def test_psi_guard(binary: Path, tmp: Path) -> None:
         assert_refused(binary, tmp, f"psi{i}", label, args, wanted)
 
 
+def test_starting_copies_range(binary: Path, tmp: Path) -> None:
+    """-p must name a state this model has (guard 3).
+
+    The refusals go through assert_refused, so they get the same five
+    structural checks (exit 1 not a signal, a diagnostic on stderr, no results
+    on stdout, no --output-Q file, no nan token) as every other fault here.
+    What is specific to this guard is the ACCEPTED half below: the pre-fix
+    failure mode was an all-zero spectrum printed at exit 0, so a guard that
+    over-refuses would look identical to a fix in the fault list alone.
+    """
+    print("wfafs_stochastic: -p names a state this model has (guard 3)")
+    for i, (label, args, wanted) in enumerate(STARTING_COPIES_FAULTS):
+        assert_refused(binary, tmp, f"p{i}", label, args, wanted)
+
+    for label, args, n_states in STARTING_COPIES_ACCEPTED:
+        proc = run(binary, args + ["--json"])
+        if not check(f"[{label}] exits 0", proc.returncode == 0,
+                     f"exit {proc.returncode}: {text(proc).strip()[:400]}"):
+            # Keep the count fixed whatever happens: six checks per accepted
+            # case, so a refusal here cannot read as CHECKS LOST in
+            # run_all_suites.py.
+            for tail in ("stdout parses with json.load",
+                         f"spectrum has {n_states} states",
+                         "all probabilities finite and in [0, 1]",
+                         "sums to 1 within 1e-9",
+                         "spectrum is not all-zero"):
+                check(f"[{label}] {tail}", False, "run was refused")
+            continue
+        doc = parse_json(proc.stdout.decode())
+        if not check(f"[{label}] stdout parses with json.load", doc is not None,
+                     text(proc)[:400]):
+            for tail in (f"spectrum has {n_states} states",
+                         "all probabilities finite and in [0, 1]",
+                         "sums to 1 within 1e-9",
+                         "spectrum is not all-zero"):
+                check(f"[{label}] {tail}", False, "stdout did not parse")
+            continue
+        probs = [e["probability"] for e in doc["results"]["distribution"]]
+        check(f"[{label}] spectrum has {n_states} states",
+              len(probs) == n_states, f"got {len(probs)}")
+        check(f"[{label}] all probabilities finite and in [0, 1]",
+              all(p == p and 0.0 <= p <= 1.0 for p in probs),
+              f"min {min(probs)}, max {max(probs)}")
+        check(f"[{label}] sums to 1 within 1e-9",
+              abs(sum(probs) - 1.0) < 1e-9, f"sum {sum(probs)!r}")
+        # The pre-fix fabrication signature, asserted directly: an
+        # out-of-range -p wrote its 1.0 outside the vector, so the vector the
+        # solver was handed was all zeros and the spectrum came back all zeros
+        # at exit 0.
+        check(f"[{label}] spectrum is not all-zero",
+              any(p != 0.0 for p in probs),
+              "every probability is exactly 0 -- the pre-fix out-of-range "
+              "signature")
+
+
 def test_legitimate_models(binary: Path, reference: Path | None) -> None:
     print("wfafs_stochastic: legitimate models are untouched")
     for label, args, digest, ship_match in LEGIT_CASES:
@@ -525,6 +668,7 @@ def main() -> int:
         test_inv2_repro(binary, tmp)
         test_length_guard(binary, tmp)
         test_psi_guard(binary, tmp)
+        test_starting_copies_range(binary, tmp)
         test_legitimate_models(binary, reference)
         test_healthy_distribution_is_a_distribution(binary)
 

@@ -2082,7 +2082,53 @@ CommandLineOptions Args_Parser::parse_wfafs_stochastic_args(int argc, char const
     options.alpha = alpha_f ? args::get(alpha_f) : 1e-20;
     options.num_threads = n_threads_f ? args::get(n_threads_f) : 1;
     options.initial_distribution_path = initial_f ? args::get(initial_f) : "";
-    options.initial_count = initial_count_f ? args::get(initial_count_f) : -1;
+    // Starting copies (-p/--starting-copies). The value is used as a DIRECT
+    // SUBSCRIPT of a dvec of length 2N+1 (wfafs_stochastic_main.cpp, the
+    // `initial[options.initial_count] = 1.0` branch), so every value outside
+    // 0..2N is an out-of-bounds write. The check has two halves and they live
+    // in two places, because only one of them can honestly be decided here:
+    //
+    //   * The SENTINEL half is decided HERE, where wfes_single's -p and -x
+    //     checks are. -1 means "flag absent"; the old
+    //     `initial_count_f ? get : -1` stored a supplied negative verbatim, so
+    //     a supplied value collided with the sentinel and the run silently
+    //     answered a DIFFERENT question. Measured on the pre-fix binary:
+    //     `-N 10 -G 100 -f 1 --starting-copies=-5` exited 0 with output
+    //     byte-identical (md5 479b597369902d13c162535f66aab3e3) to the
+    //     equilibrium-start run that omits the flag entirely. Every supplied
+    //     value stored below is >= 0, so the two can no longer collide.
+    //
+    //   * The UPPER bound cannot be decided here, and must not be faked here.
+    //     This tool divides every N by its -f factor before building anything,
+    //     so the state space is the counts 0..2*(N/f), not 0..2N as typed. A
+    //     check against the typed value would both MISS and FALSELY REFUSE:
+    //     `-N 100 -f 10 -p 150` is inside the typed 2N = 200 yet indexes 150
+    //     into a 21-entry vector (measured: exit 0, all-zero spectrum), while
+    //     `-N 10 -f 0.5 -p 30` is outside the typed 2N = 20 and perfectly
+    //     valid in the model actually solved. So the bound lives at the one
+    //     place that knows the rescaled sizes, immediately next to the vector
+    //     it protects -- see the matching note in wfafs_stochastic_main.cpp.
+    //     This is the same reasoning validate_wfafs_stochastic_parameters
+    //     below already gives for not pre-checking the N floor here.
+    //
+    // Like the wfes_single -p/-x checks, this is deliberately NOT bypassable
+    // by --force: an out-of-range state index is a hard indexing error, not a
+    // judgement call about a model.
+    if (initial_count_f) {
+        llong p_count = args::get(initial_count_f);
+        if (p_count < 0) {
+            throw std::runtime_error(
+                "Starting copies (-p/--starting-copies) must be between 0 and "
+                "2N, where N is the -f-rescaled size of the first model; got " +
+                std::to_string(p_count) +
+                ". Omit -p to start from the equilibrium distribution, or give "
+                "--integration-cutoff to integrate over the mutational "
+                "injection distribution");
+        }
+        options.initial_count = p_count;
+    } else {
+        options.initial_count = -1; // no -p given
+    }
     // -1 marks "not requested": DEFAULT_INTEGRATION_CUTOFF would make the
     // injection distribution the silent default here, displacing the
     // equilibrium start this tool has always used when no flag is given.

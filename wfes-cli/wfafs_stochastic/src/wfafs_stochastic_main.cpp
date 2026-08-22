@@ -381,6 +381,52 @@ int main(int argc, char const *argv[]) {
         dvec u = u_unsc.array() * factors.array();
         dvec v = v_unsc.array() * factors.array();
 
+        // Starting copies (-p), against the state space this tool ACTUALLY
+        // builds. The `initial[options.initial_count] = 1.0` branch ~150 lines
+        // below subscripts a dvec of length 2*population_sizes[0] + 1 and
+        // nothing bounded the subscript. Measured on the pre-fix binary at
+        // -N 10 -G 100 -f 1 (state space 0..20): `-p 21` and `-p 100` each
+        // exited 0 with an EMPTY stderr and an all-zero spectrum, byte-
+        // identical to one another (md5 67a8cdc09afc78de4a47a3996ec264b5) --
+        // so the number printed did not depend on what was asked for, and
+        // nothing in the run said so. Under NDEBUG, which is how these
+        // binaries ship, the write itself lands outside the vector.
+        //
+        // The bound has to be read off the RESCALED size, which is exactly why
+        // it cannot sit in the parser beside its wfes_single sibling (see the
+        // note at the matching site in args_parser.cpp): population_sizes has
+        // already been divided by -f four lines above, and `-N 100 -f 10 -p
+        // 150` is inside the typed 2N = 200 while indexing 150 into a 21-entry
+        // vector. The parser refuses the half it can decide without the model
+        // (a negative -p, which used to collide with the "flag absent"
+        // sentinel); this is the half that needs the model.
+        //
+        // Valid counts are 0..2N INCLUSIVE. This tool builds WF::NON_ABSORBING,
+        // which keeps every one of the 2N+1 rows, so the boundary counts 0 and
+        // 2N are ordinary states here -- unlike the both-absorbing models,
+        // where wfes_single's parser refuses -p 0 as an absorbing start.
+        //
+        // Conditioned on -p being the start this run will actually use, which
+        // is the same predicate the branch below tests: --initial wins over -p
+        // there, and a supplied distribution carries its own support (the same
+        // split wfafs_deterministic makes). Placed before the first matrix is
+        // built, so a refused run leaves no --output-Q file behind. Not
+        // --force-bypassable: an out-of-range state index is an indexing
+        // error, not a judgement call.
+        if (options.initial_distribution_path.empty() && options.initial_count >= 0) {
+            const llong max_count = 2 * population_sizes[0];
+            if (options.initial_count > max_count) {
+                throw std::runtime_error(
+                    "Starting copies (-p) must be between 0 and 2N = " +
+                    std::to_string(max_count) + ", got " +
+                    std::to_string(options.initial_count) +
+                    ". N here is the -f-rescaled size of the first model (" +
+                    std::to_string(population_sizes[0]) +
+                    "), so this model's states are the allele counts 0.." +
+                    std::to_string(max_count));
+            }
+        }
+
         // Per-model domain checks, on the FACTOR-SCALED values that actually
         // reach the Wright-Fisher matrix rather than on what the user typed.
         // The scaling is what can push a legitimate-looking rate out of range.

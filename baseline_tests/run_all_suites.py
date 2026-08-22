@@ -184,7 +184,21 @@ EXPECTED = [
     ("test_numeric_switching_sequential.py",   _pass_fail,          330),
     ("test_degenerate_time_dist_family.py",    _slash_passed,        93),
     ("test_degenerate_wfafs_deterministic.py", _passed_slash,       185),
-    ("test_degenerate_wfafs_stochastic.py",    _passed_slash,       190),
+    # 190 -> 242 (2026-08-21, task FINAL): +52 for the missing -p range check,
+    # in test_starting_copies_range. The starting copy count was used as a
+    # direct subscript of a 2N+1 vector with no bound anywhere, so at
+    # -N 10 -G 100 -f 1 both `-p 21` and `-p 100` exited 0 with an empty
+    # stderr and an all-zero spectrum -- byte-identical to each other, so the
+    # published answer did not depend on what was asked for. Four faults
+    # through the suite's own assert_refused (34: the two measured ones, the
+    # supplied-negative that used to collide with the "flag absent" sentinel
+    # and silently return the equilibrium start, and the -f case that fixes
+    # WHERE the bound must be checked) plus three accepted counts at six
+    # checks each (18) -- both boundaries and the -f 0.5 case that a
+    # typed-value check would falsely refuse. The accepted half is not
+    # optional: the pre-fix failure was an all-zero spectrum at exit 0, so an
+    # over-refusing guard would look identical in the fault list alone.
+    ("test_degenerate_wfafs_stochastic.py",    _passed_slash,       242),
     ("test_degenerate_wfafs_sweep.py",         _passed_slash,        47),
     # 189 -> 309 (2026-08-21, task CX8): +120 checks for solver-backend
     # provenance. The eleven tools now publish library_requested and
