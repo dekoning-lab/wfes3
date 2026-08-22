@@ -293,7 +293,12 @@ int main(int argc, char const *argv[]) {
                                        wrightfisher::psi_diploid(0, population_size, selection_coefficient(0), h(0), u(0), v(0)), 
                                        a).Q;
         dvec starting_copies_p = first_row.tail(first_row.size() - 1);
-        starting_copies_p /= 1 - first_row(0); // renormalize
+        // Renormalize by the tail's OWN sum, not by 1 - first_row(0): binom_row
+        // sum-normalizes the row, so the two are the same quantity, but the
+        // subtraction cancels to roundoff (first_row(0) = 1 - O(2Nv)) and
+        // rescales every integrated output by a common factor. See the long
+        // note at the wfes_single site (wfes_single_main.cpp).
+        starting_copies_p /= starting_copies_p.sum();
 
         // Snapshot the freshly-computed distribution for --output-I. The
         // actual file write happens after the z == 0 refusal below (so a

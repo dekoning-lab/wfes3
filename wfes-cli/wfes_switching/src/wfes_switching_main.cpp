@@ -705,7 +705,14 @@ int main(int argc, char const *argv[]) {
                     wfes::wrightfisher::psi_diploid(0, pop_size, s(i), h(i), u(i), v(i)), 
                     options.alpha
                 );
-                p0[i] = first_row.Q.tail(first_row.Q.size() - 1) / (1 - first_row.Q(0));
+                // Renormalize the >= 1-copy tail by its OWN sum, not by
+                // 1 - first_row.Q(0): binom_row sum-normalizes the row, so the
+                // two are the same quantity, but the subtraction cancels to
+                // roundoff and rescales every integrated output by a common
+                // factor. See the long note at the wfes_single site
+                // (wfes_single_main.cpp, default initial distribution).
+                p0[i] = first_row.Q.tail(first_row.Q.size() - 1) /
+                        first_row.Q.tail(first_row.Q.size() - 1).sum();
                 nnz_p0[i] = (p0[i].array() > options.integration_cutoff).count();
             }
             

@@ -72,12 +72,18 @@ namespace {
 // Boundary between floating-point roundoff and computation failure for an
 // absorption probability. The B vectors come out of one sparse LU solve of
 // (I - Q); the entrywise error of that solve is relative, of order
-// cond(I - Q) * eps. Observed overshoot on representative problems is
-// ~5e-11 (e.g. B_ext(0) = 1 + 3.4e-11 at N = 200). 1e-8 leaves more than
-// two orders of headroom over that while still refusing anything that
-// cannot plausibly be roundoff of a probability: a value outside [0,1] by
-// more than 1e-8 means the solve lost at least half its digits, and nothing
-// downstream of it could be trusted either.
+// cond(I - Q) * eps. Measured solver-level overshoot at representative
+// parameters is ulp-scale: worst B_ext excursion 1.33e-15 at N = 200,
+// s = -0.09, h = 0.5. (This comment previously cited "B_ext(0) = 1 + 3.4e-11
+// at N = 200" as the observed solver overshoot. That figure was never the
+// solve: it was the injection-weight renormalizer's cancellation error,
+// which showed up in P_ext -- B_ext's own entries were fine -- and it is
+// now fixed at source; see the tail-sum note at the default-initial-
+// distribution site below.) 1e-8 therefore sits far above the excursions
+// actually observed, while still refusing anything that cannot plausibly be
+// roundoff of a probability: a value outside [0,1] by more than 1e-8 means
+// the solve lost at least half its digits, and nothing downstream of it
+// could be trusted either.
 constexpr double PROB_RANGE_TOL = 1e-8;
 
 // Ceiling on the MEASURED forward-error bound (solve_error_scale) above which
@@ -1036,9 +1042,19 @@ int main(int argc, char const *argv[]) {
             dvec first_row = first_row_obj.Q;
             int first_row_start = first_row_obj.start;
             
-            // Renormalize
+            // Condition on at least one copy appearing: drop the count-0 entry
+            // and renormalize over counts >= 1 -- by the tail's own sum, NOT by
+            // 1 - first_row(0). first_row(0) is 1 - O(2Nv), so that subtraction
+            // cancels to roundoff (relative error up to ~eps/(2*2Nv): ~3e-11 at
+            // N = 200 with v = 1e-9, and growing as 2Nv shrinks), and the error
+            // rescaled EVERY injection-integrated output (P_ext, P_fix, T_abs,
+            // ...) as a common factor -- the old P_ext = 1 + 3.4e-11 headline
+            // artifact at N = 200 was exactly this factor. binom_row sum-
+            // normalizes the row, so the tail sum IS 1 - first_row(0), computed
+            // from small same-sign entries with no cancellation; the weights
+            // then sum to 1 at machine precision by construction.
             starting_copies_p = first_row.tail(first_row.size() - 1);
-            starting_copies_p /= 1 - first_row(0);
+            starting_copies_p /= starting_copies_p.sum();
             starting_copies_start = first_row_start + 1; // Skip the 0 copies
         }
         

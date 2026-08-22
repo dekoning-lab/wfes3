@@ -460,7 +460,11 @@ int main(int argc, char* argv[]) {
                     "--integration-cutoff has nothing to integrate over.");
             }
             dvec tail = first.tail(first.size() - 1);
-            tail /= 1 - first(0);
+            // Renormalize by the tail's OWN sum, not by 1 - first(0): binom_row
+            // sum-normalizes the row, so the two are the same quantity, but the
+            // subtraction cancels to roundoff (first(0) = 1 - O(2Nv)). See the
+            // long note at the wfes_single site (wfes_single_main.cpp).
+            tail /= tail.sum();
             llong z = 0;
             if (options.integration_cutoff > 0) {
                 while (z < tail.size() && tail(z) > options.integration_cutoff) z++;

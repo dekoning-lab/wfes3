@@ -519,7 +519,11 @@ int main(int argc, char const *argv[]) {
                     "--integration-cutoff has nothing to integrate over.");
             }
             dvec tail = row.Q.tail(row.Q.size() - 1);
-            tail /= 1 - row.Q(0);
+            // Renormalize by the tail's OWN sum, not by 1 - row.Q(0): binom_row
+            // sum-normalizes the row, so the two are the same quantity, but the
+            // subtraction cancels to roundoff (row.Q(0) = 1 - O(2Nv)). See the
+            // long note at the wfes_single site (wfes_single_main.cpp).
+            tail /= tail.sum();
             initial = dvec::Zero(2 * population_sizes[0] + 1);
             llong z = 0;
             if (options.integration_cutoff > 0) {
