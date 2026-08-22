@@ -56,6 +56,22 @@ test_invalid_output_single.py (same directory).
 
 Usage:
     python3 baseline_tests/test_single_output_matrix.py [--bin DIR] [--skip-dense]
+
+stderr-scope convention (shared by every suite in this directory)
+-----------------------------------------------------------------
+The nan/inf TOKEN SWEEP scans **stdout only**. stderr is asserted against
+EXPECTED DIAGNOSTIC SUBSTRINGS and is never swept for tokens.
+
+stdout is the published result: a bare `nan` or `inf` there is not valid JSON,
+jq coerces it to 1.797e308, and a pipeline consumes a fake number. stderr is
+where the tool EXPLAINS itself, and a good explanation often has to name the
+value it is refusing ("rate would be 1/0 = inf") -- sweeping the combined
+streams makes the better diagnostic the failing one. Suites here used to
+disagree; they were aligned in task C6 (2026-08-21). Full statement and
+rationale: baseline_tests/README.md.
+
+This suite runs no token sweep; it asserts structure and recomputed values
+on stdout. stderr is asserted only against expected diagnostic substrings.
 """
 from __future__ import annotations
 

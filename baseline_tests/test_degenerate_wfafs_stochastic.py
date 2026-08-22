@@ -89,22 +89,41 @@ e46d55da...) were recorded independently during the investigation that found
 these defects and are reproduced here unchanged; 2a401eaf... is additionally
 the value already locked by test_degenerate_wfafs_sweep.py.
 
-Twelve of the fifteen are also byte-identical to the shipped
-/Applications/WFES3.app binary. Three are not, for reasons that predate this
-work and are unrelated to it:
+Thirteen of the fifteen are also byte-identical to the shipped
+/Applications/WFES3.app binary. Two are not, for reasons that predate this work
+and are unrelated to it:
 
-  * the two --no-project cases, because the --no-project semantics fix (it now
-    keeps the up-projected spectrum, as its help says) landed after that app
-    was built;
+  * the single --no-project case, because the --no-project semantics fix (it
+    now keeps the up-projected spectrum, as its help says) landed after that
+    app was built;
   * the --csv case, because csv output moved from the stream default of 6
     significant figures to round-trip precision.
 
-Those three carry ship_match=False and are skipped by the --reference
-comparison rather than being asserted against a stale binary.
+Those two carry ship_match=False and are skipped by the --reference comparison
+rather than being asserted against a stale binary. Count them from the list
+itself, not from this paragraph: it said "twelve"/"three"/"the two --no-project
+cases" through one review cycle while the list held 13 True and 2 False.
 
 A mismatch on any recorded md5 means either a regression in the healthy path or
 an unrelated change to how this tool formats output; check which before
 assuming the worst.
+
+stderr-scope convention (shared by every suite in this directory)
+-----------------------------------------------------------------
+The nan/inf TOKEN SWEEP scans **stdout only**. stderr is asserted against
+EXPECTED DIAGNOSTIC SUBSTRINGS and is never swept for tokens.
+
+stdout is the published result: a bare `nan` or `inf` there is not valid JSON,
+jq coerces it to 1.797e308, and a pipeline consumes a fake number. stderr is
+where the tool EXPLAINS itself, and a good explanation often has to name the
+value it is refusing ("rate would be 1/0 = inf") -- sweeping the combined
+streams makes the better diagnostic the failing one. Suites here used to
+disagree; they were aligned in task C6 (2026-08-21). Full statement and
+rationale: baseline_tests/README.md.
+
+This suite's sweep is NONFINITE_RE over `proc.stdout`; `text()` appears
+only in the DETAIL of a failed check. The healthy-model site swept both
+streams until task C6 aligned it -- see the comment there for why.
 """
 from __future__ import annotations
 
@@ -380,10 +399,17 @@ def test_legitimate_models(binary: Path, reference: Path | None) -> None:
         got = hashlib.md5(proc.stdout).hexdigest()
         check(f"[{label}] stdout matches the recorded pre-fix md5",
               got == digest, f"recorded {digest}, got {got}")
-        # A healthy run says nothing at all about nan, so here the sweep does
-        # cover stderr as well.
-        hits = NONFINITE_RE.findall(text(proc))
-        check(f"[{label}] no inf/nan token anywhere in the output", not hits,
+        # stdout only, per the stderr-scope convention in the module docstring.
+        # This site used to sweep both streams, on the argument that a healthy
+        # run "says nothing at all about nan" so stderr costs nothing to
+        # include. That is true of today's binary and is exactly why it is the
+        # wrong place to draw the line: it makes the suite's scope depend on
+        # the tool staying silent, so the first legitimate advisory that names
+        # a non-finite quantity fails a HEALTHY-run check for saying something
+        # useful. The healthy run's real obligation, byte-for-byte identity of
+        # its published stdout, is asserted immediately above.
+        hits = NONFINITE_RE.findall(proc.stdout.decode("utf-8", "replace"))
+        check(f"[{label}] no inf/nan token on stdout", not hits,
               f"found {sorted(set(hits))} in: {text(proc).strip()[:300]}")
         if reference is not None:
             if ship_match:

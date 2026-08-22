@@ -30,6 +30,26 @@ Usage
 --bin is a DIRECTORY containing wfes_sweep and wfafs_stochastic
 (default: wfes-cli/build-cx4/bin). Exit status is 0 only if every check passes.
 
+stderr-scope convention (shared by every suite in this directory)
+-----------------------------------------------------------------
+The nan/inf TOKEN SWEEP scans **stdout only**. stderr is asserted against
+EXPECTED DIAGNOSTIC SUBSTRINGS ("cutoff", "-p", the offending parameter's
+name) and is never swept for tokens.
+
+The reason is that the two streams carry opposite obligations. stdout is the
+published result: a bare `nan` or `inf` there is not valid JSON, jq coerces it
+to 1.797e308, and a pipeline consumes a fake number -- so a token there is
+always a defect. stderr is where the tool EXPLAINS itself, and a good
+explanation often has to name the value it is refusing ("rate would be 1/0 =
+inf"). Sweeping the combined streams makes the better diagnostic the failing
+one, which pushes tool authors toward vaguer messages to keep the suite green.
+
+Suites in this directory used to disagree about this -- some swept
+stdout+stderr, some stdout alone -- so a check moved between suites changed
+meaning silently. They are aligned as of task C6 (2026-08-21). Where a helper
+returns both streams it is for the human-readable DETAIL of a failed check,
+never for the sweep; `text()` below says so in its own docstring.
+
 Note on the recorded md5
 -----------------------
 WFAFS_DEFAULT_MD5 below locks the DEFAULT (no --no-project) output of
@@ -95,7 +115,25 @@ def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run([str(binary), *args], capture_output=True)
 
 
+def out_text(proc: subprocess.CompletedProcess) -> str:
+    """stdout only. This is what the nan/inf token sweep scans -- see the
+    stderr-scope convention in the module docstring."""
+    return proc.stdout.decode("utf-8", "replace")
+
+
+def err_text(proc: subprocess.CompletedProcess) -> str:
+    """stderr only. Asserted against EXPECTED diagnostic substrings, never
+    swept for tokens."""
+    return proc.stderr.decode("utf-8", "replace")
+
+
 def text(proc: subprocess.CompletedProcess) -> str:
+    """Both streams, for the human-readable DETAIL of a failed check only.
+
+    Never pass this to NONFINITE_RE: sweeping a diagnostic for the word it was
+    written to say is how a better error message becomes a test failure. See
+    the module docstring.
+    """
     return (proc.stdout + proc.stderr).decode("utf-8", "replace")
 
 
@@ -137,15 +175,20 @@ def test_sweep_degenerate_refuses(sweep: Path) -> None:
     print("wfes_sweep: cutoff above every starting-copy probability")
     for label, fmt in (("json", ["--json"]), ("csv", ["--csv"]), ("plain", [])):
         proc = run(sweep, SWEEP_DEGENERATE + fmt)
-        out = text(proc)
+        published = out_text(proc)
         check(f"[{label}] exits nonzero", proc.returncode != 0,
-              f"exit {proc.returncode}; output: {out.strip()[:400]}")
-        hits = NONFINITE_RE.findall(out)
-        check(f"[{label}] no inf/nan anywhere in the output", not hits,
-              f"found {hits} in: {out.strip()[:400]}")
+              f"exit {proc.returncode}; output: {text(proc).strip()[:400]}")
+        # stdout only, per the stderr-scope convention: this run is a REFUSAL,
+        # and its diagnostic is entitled to name the value it is refusing --
+        # "rate would be 1/0 = inf" is a better message than the one shipped
+        # today, and sweeping the combined streams would fail the suite for
+        # writing it. What must be inf/nan-free is the PUBLISHED output.
+        hits = NONFINITE_RE.findall(published)
+        check(f"[{label}] no inf/nan token on stdout", not hits,
+              f"found {hits} in: {published.strip()[:400]}")
         check(f"[{label}] diagnostic mentions the cutoff",
-              "cutoff" in proc.stderr.decode("utf-8", "replace").lower(),
-              f"stderr: {proc.stderr.decode('utf-8', 'replace').strip()[:400]}")
+              "cutoff" in err_text(proc).lower(),
+              f"stderr: {err_text(proc).strip()[:400]}")
         # Belt and braces on the refusal itself: a regression that printed
         # results to stdout and THEN exited nonzero (e.g. a check added after
         # the output block instead of before it) would still pass the two
@@ -161,7 +204,7 @@ def test_sweep_degenerate_refuses(sweep: Path) -> None:
         # with more than two comma-separated fields that all parse as
         # floats), which is what a printed csv results row actually looks
         # like.
-        stdout_only = proc.stdout.decode("utf-8", "replace")
+        stdout_only = published
         if label == "csv":
             check(f"[{label}] stdout contains no numeric data row (no results were printed)",
                   not stdout_has_csv_data_row(stdout_only),

@@ -57,6 +57,24 @@ binaries for the checker's negative control; the check is skipped, not failed,
 if they are absent. Exit status is 0 only if every check passes.
 
 Standard library only, no third-party imports, no fixtures on disk.
+
+stderr-scope convention (shared by every suite in this directory)
+-----------------------------------------------------------------
+The nan/inf TOKEN SWEEP scans **stdout only**. stderr is asserted against
+EXPECTED DIAGNOSTIC SUBSTRINGS and is never swept for tokens.
+
+stdout is the published result: a bare `nan` or `inf` there is not valid JSON,
+jq coerces it to 1.797e308, and a pipeline consumes a fake number. stderr is
+where the tool EXPLAINS itself, and a good explanation often has to name the
+value it is refusing ("rate would be 1/0 = inf") -- sweeping the combined
+streams makes the better diagnostic the failing one. Suites here used to
+disagree; they were aligned in task C6 (2026-08-21). Full statement and
+rationale: baseline_tests/README.md.
+
+This suite runs no token sweep. Its `output()` helper deliberately joins
+both streams, because it searches for EXPECTED substrings (a trap message
+naming the old meaning and the new spelling) that a tool may legitimately
+print to either stream. That is a substring assertion, not a sweep.
 """
 from __future__ import annotations
 

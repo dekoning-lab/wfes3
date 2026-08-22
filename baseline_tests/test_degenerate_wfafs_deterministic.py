@@ -97,6 +97,23 @@ that the numbers stay locked to the original recording anyway:
 
   json    unchanged, byte for byte, against both the recording and the shipped
           binary.
+
+stderr-scope convention (shared by every suite in this directory)
+-----------------------------------------------------------------
+The nan/inf TOKEN SWEEP scans **stdout only**. stderr is asserted against
+EXPECTED DIAGNOSTIC SUBSTRINGS and is never swept for tokens.
+
+stdout is the published result: a bare `nan` or `inf` there is not valid JSON,
+jq coerces it to 1.797e308, and a pipeline consumes a fake number. stderr is
+where the tool EXPLAINS itself, and a good explanation often has to name the
+value it is refusing ("rate would be 1/0 = inf") -- sweeping the combined
+streams makes the better diagnostic the failing one. Suites here used to
+disagree; they were aligned in task C6 (2026-08-21). Full statement and
+rationale: baseline_tests/README.md.
+
+This suite's sweep is NONFINITE_RE over `out_text(proc)` and over written
+output files; `both_text()` appears only in the DETAIL of a failed check.
+Two healthy-run sites swept `both_text()` until task C6 aligned them.
 """
 from __future__ import annotations
 
@@ -188,14 +205,20 @@ def run(binary: Path, args: list[str]) -> subprocess.CompletedProcess:
 
 
 def out_text(proc: subprocess.CompletedProcess) -> str:
+    """stdout only -- the published result, and the only stream the nan/inf
+    token sweep scans (see the stderr-scope convention in the docstring)."""
     return proc.stdout.decode("utf-8", "replace")
 
 
 def err_text(proc: subprocess.CompletedProcess) -> str:
+    """stderr only -- asserted against expected diagnostic substrings, never
+    swept for tokens."""
     return proc.stderr.decode("utf-8", "replace")
 
 
 def both_text(proc: subprocess.CompletedProcess) -> str:
+    """Both streams, for the human-readable DETAIL of a failed check only.
+    Never pass this to NONFINITE_RE."""
     return out_text(proc) + err_text(proc)
 
 
@@ -383,8 +406,8 @@ def test_healthy_unchanged(tool: Path) -> dict[str, str]:
         if not check(f"{tag} exits 0", proc.returncode == 0,
                      f"exit {proc.returncode}: {both_text(proc)[:400]}"):
             continue
-        check(f"{tag} no nan/inf token anywhere in the output",
-              not NONFINITE_RE.findall(both_text(proc)),
+        check(f"{tag} no nan/inf token on stdout",
+              not NONFINITE_RE.findall(stdout),
               f"output: {both_text(proc)[:400]}")
         if fmt_name == "plain":
             stdout_bytes = strip_banner(stdout_bytes)
@@ -470,7 +493,7 @@ def test_guard_does_not_over_refuse(tool: Path) -> None:
         check(f"accepted: {label}", proc.returncode == 0,
               f"exit {proc.returncode}: {both_text(proc)[:400]}")
         check(f"finite output: {label}",
-              not NONFINITE_RE.findall(both_text(proc)),
+              not NONFINITE_RE.findall(out_text(proc)),
               f"output: {both_text(proc)[:400]}")
 
 
