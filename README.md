@@ -57,6 +57,10 @@ This is an initial beta release.
 
 ## What's New (WFES3 beta)
 
+<p align="center">
+  <img src="doc/assets/wfes3-banner.svg" width="557" alt="WFES3 ASCII banner: WFES in gold, 3 in sterling, over the subtitle Wright-Fisher Exact Solver">
+</p>
+
 - Support for macOS and Apple Silicon. WFES2 required Intel MKL, which no longer works on current Apple hardware.
 - A factory-pattern backend that supports several computational linear
   algebra libraries, including MKL/PARDISO, Apple Accelerate, SuiteSparse
